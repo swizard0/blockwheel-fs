@@ -1,3 +1,8 @@
+use std::{
+    io,
+    path::PathBuf,
+};
+
 use futures::{
     select,
     stream,
@@ -6,6 +11,10 @@ use futures::{
         oneshot,
     },
     StreamExt,
+};
+
+use tokio::{
+    fs,
 };
 
 use ero::{
@@ -40,12 +49,40 @@ pub enum Request {
     },
 }
 
+#[derive(Debug)]
+pub enum Error {
+    WheelFileMetadata {
+        wheel_filename: PathBuf,
+        error: io::Error,
+    },
+}
+
 pub struct State {
     pub fused_request_rx: stream::Fuse<mpsc::Receiver<Request>>,
     pub params: Params,
 }
 
-pub async fn busyloop(mut state: State) -> Result<(), ErrorSeverity<State, ()>> {
+pub async fn busyloop_init(state: State) -> Result<(), ErrorSeverity<State, Error>> {
+    let (wheel, state) = match fs::metadata(&state.params.wheel_filename).await {
+        Ok(ref metadata) if metadata.file_type().is_file() =>
+            wheel_open(state).await?,
+        Ok(_metadata) => {
+            log::error!("[ {:?} ] is not a file", state.params.wheel_filename);
+            return Err(ErrorSeverity::Recoverable { state, });
+        },
+        Err(ref error) if error.kind() == io::ErrorKind::NotFound =>
+            wheel_create(state).await?,
+        Err(error) =>
+            return Err(ErrorSeverity::Fatal(Error::WheelFileMetadata {
+                wheel_filename: state.params.wheel_filename,
+                error,
+            })),
+    };
+
+    busyloop(state, wheel).await
+}
+
+async fn busyloop(mut state: State, wheel: Wheel) -> Result<(), ErrorSeverity<State, Error>> {
     let mut blocks_pool = BlocksPool::new();
 
     loop {
@@ -86,6 +123,8 @@ pub async fn busyloop(mut state: State) -> Result<(), ErrorSeverity<State, ()>> 
     }
 }
 
+struct Wheel;
+
 struct BlocksPool {
     pool: Vec<block::Bytes>,
 }
@@ -116,4 +155,16 @@ impl BlocksPool {
     fn repay(&mut self, block_bytes: block::Bytes) {
         self.pool.push(block_bytes)
     }
+}
+
+async fn wheel_open(state: State) -> Result<(Wheel, State), ErrorSeverity<State, Error>> {
+    log::debug!("opening existing wheel file [ {:?} ]", state.params.wheel_filename);
+
+    unimplemented!()
+}
+
+async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<State, Error>> {
+    log::debug!("creating new wheel file [ {:?} ]", state.params.wheel_filename);
+
+    unimplemented!()
 }

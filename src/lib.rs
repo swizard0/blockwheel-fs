@@ -65,7 +65,7 @@ impl GenServer {
                 fused_request_rx: self.fused_request_rx,
                 params,
             },
-            wheel::busyloop,
+            wheel::busyloop_init,
         ).await;
         if let Err(error) = terminate_result {
             log::error!("fatal error: {:?}", error);
