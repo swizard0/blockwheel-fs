@@ -25,7 +25,19 @@ mod wheel;
 pub struct Params {
     pub wheel_filename: PathBuf,
     pub init_wheel_size_bytes: usize,
-    pub wheel_task_restart_holdon: usize,
+    pub wheel_task_restart_sec: usize,
+    pub work_block_size: usize,
+}
+
+impl Default for Params {
+    fn default() -> Params {
+        Params {
+            wheel_filename: "wheel".to_string().into(),
+            init_wheel_size_bytes: 64 * 1024 * 1024,
+            wheel_task_restart_sec: 4,
+            work_block_size: 8 * 1024 * 1024,
+        }
+    }
 }
 
 pub struct GenServer {
@@ -58,7 +70,7 @@ impl GenServer {
             ero::Params {
                 name: format!("ero-blockwheel on {:?}", params.wheel_filename),
                 restart_strategy: RestartStrategy::Delay {
-                    restart_after: Duration::from_secs(params.wheel_task_restart_holdon as u64),
+                    restart_after: Duration::from_secs(params.wheel_task_restart_sec as u64),
                 },
             },
             wheel::State {
