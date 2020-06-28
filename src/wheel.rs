@@ -1,6 +1,10 @@
 use std::{
     io,
     path::PathBuf,
+    collections::{
+        HashMap,
+        BTreeMap,
+    },
 };
 
 use futures::{
@@ -176,19 +180,54 @@ impl BlocksPool {
     }
 }
 
-struct Wheel;
+#[derive(Debug)]
+struct Wheel {
+    next_block_id: block::Id,
+    blocks_index: HashMap<block::Id, BlockEntry>,
+    gaps: BTreeMap<usize, GapBetween>,
+}
+
+#[derive(Debug)]
+struct BlockEntry {
+    offset: u64,
+    header: BlockHeader,
+}
+
+#[derive(Debug)]
+enum GapBetween {
+    StartAndBlock {
+        right_block_id: block::Id,
+    },
+    TwoBlocks {
+        left_block_id: block::Id,
+        right_block_id: block::Id,
+    },
+    BlockAndEnd {
+        left_block_id: block::Id,
+    },
+}
+
+impl Wheel {
+    pub fn new() -> Wheel {
+        Wheel {
+            next_block_id: block::Id::init(),
+            blocks_index: HashMap::new(),
+            gaps: BTreeMap::new(),
+        }
+    }
+}
 
 const WHEEL_MAGIC: u64 = 0xc0f124c9f1ba71d5;
 const WHEEL_VERSION: usize = 1;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct WheelHeader {
     magic: u64,
     version: usize,
     size_bytes: usize,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 enum BlockHeader {
     EndOfFile,
 }
@@ -196,6 +235,7 @@ enum BlockHeader {
 struct WheelWriter<'a> {
     wheel_file_writer: BufWriter<&'a mut fs::File>,
     work_block: &'a mut Vec<u8>,
+    cursor: u64,
 }
 
 impl<'a> WheelWriter<'a> {
@@ -203,6 +243,7 @@ impl<'a> WheelWriter<'a> {
         WheelWriter {
             wheel_file_writer: BufWriter::with_capacity(work_block_size, wheel_file),
             work_block,
+            cursor: 0,
         }
     }
 
@@ -227,6 +268,7 @@ impl<'a> WheelWriter<'a> {
         self.wheel_file_writer.write_all(self.work_block).await
             .map_err(write_map_err)
             .map_err(ErrorSeverity::Fatal)?;
+        self.cursor += self.work_block.len() as u64;
         self.work_block.clear();
         Ok(())
     }
@@ -271,9 +313,11 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
     wheel_writer.write_serialize(&wheel_header, Error::WheelFileWheelHeaderEncode, Error::WheelFileWheelHeaderWrite).await?;
 
     let eof_block_header = BlockHeader::EndOfFile;
+    let eof_block_start_offset = wheel_writer.cursor;
     wheel_writer.write_serialize(&eof_block_header, Error::WheelFileEofBlockHeaderEncode, Error::WheelFileEofBlockHeaderWrite).await?;
+    let eof_block_end_offset = wheel_writer.cursor;
 
-    let mut total_initialized = 0;
+    let mut total_initialized = eof_block_end_offset as usize;
     while total_initialized < state.params.init_wheel_size_bytes {
         let bytes_remain = state.params.init_wheel_size_bytes - total_initialized;
         let write_amount = if bytes_remain < state.params.init_wheel_size_bytes {
@@ -285,6 +329,25 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
         wheel_writer.write_work_block(Error::WheelFileZeroInitWrite).await?;
     }
     wheel_writer.flush(Error::WheelFileZeroInitFlush).await?;
+
+    let mut wheel = Wheel::new();
+    wheel.blocks_index.insert(
+        wheel.next_block_id.clone(),
+        BlockEntry {
+            offset: eof_block_start_offset,
+            header: eof_block_header,
+        },
+    );
+
+    let space_available = state.params.init_wheel_size_bytes - eof_block_end_offset as usize;
+    wheel.gaps.insert(
+        space_available,
+        GapBetween::BlockAndEnd {
+            left_block_id: wheel.next_block_id.clone(),
+        },
+    );
+
+    wheel.next_block_id = wheel.next_block_id.next();
 
     unimplemented!()
 }

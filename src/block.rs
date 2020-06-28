@@ -16,6 +16,20 @@ pub struct Id {
     serial: u64,
 }
 
+impl Id {
+    pub fn init() -> Id {
+        Id {
+            serial: 0,
+        }
+    }
+
+    pub fn next(&self) -> Id {
+        Id {
+            serial: self.serial + 1,
+        }
+    }
+}
+
 #[derive(Clone, Hash, Debug)]
 pub struct Bytes {
     bytes: Arc<Vec<u8>>,
