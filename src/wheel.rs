@@ -317,13 +317,13 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
     wheel_writer.write_serialize(&eof_block_header, Error::WheelFileEofBlockHeaderEncode, Error::WheelFileEofBlockHeaderWrite).await?;
     let eof_block_end_offset = wheel_writer.cursor;
 
-    let mut total_initialized = eof_block_end_offset as usize;
-    while total_initialized < state.params.init_wheel_size_bytes {
-        let bytes_remain = state.params.init_wheel_size_bytes - total_initialized;
-        let write_amount = if bytes_remain < state.params.init_wheel_size_bytes {
+    let size_bytes_total = state.params.init_wheel_size_bytes as u64;
+    while wheel_writer.cursor < size_bytes_total {
+        let bytes_remain = size_bytes_total - wheel_writer.cursor;
+        let write_amount = if bytes_remain < size_bytes_total {
             bytes_remain
         } else {
-            state.params.init_wheel_size_bytes
+            size_bytes_total
         };
         wheel_writer.work_block.extend((0 .. write_amount).map(|_| 0));
         wheel_writer.write_work_block(Error::WheelFileZeroInitWrite).await?;
@@ -339,9 +339,9 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
         },
     );
 
-    let space_available = state.params.init_wheel_size_bytes - eof_block_end_offset as usize;
+    let space_available = size_bytes_total - eof_block_end_offset;
     wheel.gaps.insert(
-        space_available,
+        space_available as usize,
         GapBetween::BlockAndEnd {
             left_block_id: wheel.next_block_id.clone(),
         },
@@ -349,7 +349,9 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
 
     wheel.next_block_id = wheel.next_block_id.next();
 
-    unimplemented!()
+    log::debug!("initialized wheel: {:?}", wheel);
+
+    Ok((wheel, state))
 }
 
 async fn wheel_open(state: State) -> Result<(Wheel, State), ErrorSeverity<State, Error>> {
