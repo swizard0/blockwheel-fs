@@ -16,6 +16,12 @@ pub struct Id {
     serial: u64,
 }
 
+impl Default for Id {
+    fn default() -> Id {
+        Id::init()
+    }
+}
+
 impl Id {
     pub fn init() -> Id {
         Id {

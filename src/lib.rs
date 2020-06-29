@@ -19,7 +19,10 @@ use ero::{
 };
 
 pub mod block;
+
 mod wheel;
+mod proto;
+mod storage;
 
 #[derive(Clone, Debug)]
 pub struct Params {
@@ -41,13 +44,13 @@ impl Default for Params {
 }
 
 pub struct GenServer {
-    request_tx: mpsc::Sender<wheel::Request>,
-    fused_request_rx: stream::Fuse<mpsc::Receiver<wheel::Request>>,
+    request_tx: mpsc::Sender<proto::Request>,
+    fused_request_rx: stream::Fuse<mpsc::Receiver<proto::Request>>,
 }
 
 #[derive(Clone)]
 pub struct Pid {
-    request_tx: mpsc::Sender<wheel::Request>,
+    request_tx: mpsc::Sender<proto::Request>,
 }
 
 impl GenServer {
@@ -89,7 +92,7 @@ impl Pid {
     pub async fn lend_block(&mut self) -> Result<block::BytesMut, ero::NoProcError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
-            self.request_tx.send(wheel::Request::LendBlock { reply_tx, }).await
+            self.request_tx.send(proto::Request::LendBlock(proto::RequestLendBlock { reply_tx, })).await
                 .map_err(|_send_error| ero::NoProcError)?;
             match reply_rx.await {
                 Ok(block) =>
@@ -101,7 +104,7 @@ impl Pid {
     }
 
     pub async fn repay_block(&mut self, block_bytes: block::Bytes) -> Result<(), ero::NoProcError> {
-        self.request_tx.send(wheel::Request::RepayBlock { block_bytes, }).await
+        self.request_tx.send(proto::Request::RepayBlock(proto::RequestRepayBlock { block_bytes, })).await
             .map_err(|_send_error| ero::NoProcError)
     }
 
@@ -110,10 +113,10 @@ impl Pid {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
-                .send(wheel::Request::WriteBlock {
+                .send(proto::Request::WriteBlock(proto::RequestWriteBlock {
                     block_bytes: block_bytes.clone(),
                     reply_tx,
-                })
+                }))
                 .await
                 .map_err(|_send_error| ero::NoProcError)?;
 
@@ -130,10 +133,10 @@ impl Pid {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
-                .send(wheel::Request::ReadBlock {
+                .send(proto::Request::ReadBlock(proto::RequestReadBlock {
                     block_id: block_id.clone(),
                     reply_tx,
-                })
+                }))
                 .await
                 .map_err(|_send_error| ero::NoProcError)?;
 
@@ -146,14 +149,14 @@ impl Pid {
         }
     }
 
-    pub async fn delete_block(&mut self, block_id: block::Id) -> Result<Deleted, ero::NoProcError> {
+    pub async fn delete_block(&mut self, block_id: block::Id) -> Result<proto::Deleted, ero::NoProcError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
-                .send(wheel::Request::DeleteBlock {
+                .send(proto::Request::DeleteBlock(proto::RequestDeleteBlock {
                     block_id: block_id.clone(),
                     reply_tx,
-                })
+                }))
                 .await
                 .map_err(|_send_error| ero::NoProcError)?;
 
@@ -166,6 +169,3 @@ impl Pid {
         }
     }
 }
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Deleted;
