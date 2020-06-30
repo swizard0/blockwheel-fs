@@ -42,6 +42,7 @@ use super::{
 
 mod gaps;
 mod task;
+mod pool;
 mod index;
 mod defrag;
 
@@ -94,7 +95,7 @@ pub async fn busyloop_init(state: State) -> Result<(), ErrorSeverity<State, Erro
 }
 
 async fn busyloop(mut state: State, mut wheel: Wheel) -> Result<(), ErrorSeverity<State, Error>> {
-    let mut blocks_pool = BlocksPool::new();
+    let mut blocks_pool = pool::Blocks::new();
 
     let mut wheel_queue = BinaryHeap::new();
 
@@ -172,38 +173,6 @@ fn process_write_block_request(
     }
 
     Ok(())
-}
-
-struct BlocksPool {
-    pool: Vec<block::Bytes>,
-}
-
-impl BlocksPool {
-    fn new() -> BlocksPool {
-        BlocksPool {
-            pool: Vec::new(),
-        }
-    }
-
-    fn lend(&mut self) -> block::BytesMut {
-        let mut cursor = self.pool.len();
-        while cursor > 0 {
-            cursor -= 1;
-            let frozen_block = self.pool.swap_remove(cursor);
-            match frozen_block.into_mut() {
-                Ok(block) =>
-                    return block,
-                Err(frozen_block) =>
-                    self.pool.push(frozen_block),
-            }
-        }
-
-        block::BytesMut::new()
-    }
-
-    fn repay(&mut self, block_bytes: block::Bytes) {
-        self.pool.push(block_bytes)
-    }
 }
 
 #[derive(Debug)]
