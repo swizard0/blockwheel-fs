@@ -1,6 +1,5 @@
 use std::{
     io,
-    cmp,
     path::PathBuf,
     collections::{
         BinaryHeap,
@@ -12,7 +11,6 @@ use futures::{
     stream,
     channel::{
         mpsc,
-        oneshot,
     },
     StreamExt,
 };
@@ -43,7 +41,9 @@ use super::{
 };
 
 mod gaps;
+mod task;
 mod index;
+mod defrag;
 
 #[derive(Debug)]
 pub enum Error {
@@ -96,7 +96,7 @@ pub async fn busyloop_init(state: State) -> Result<(), ErrorSeverity<State, Erro
 async fn busyloop(mut state: State, mut wheel: Wheel) -> Result<(), ErrorSeverity<State, Error>> {
     let mut blocks_pool = BlocksPool::new();
 
-    let mut wheel_queue: BinaryHeap<WheelTask> = BinaryHeap::new();
+    let mut wheel_queue = BinaryHeap::new();
 
     loop {
         enum Source<A> {
@@ -142,13 +142,13 @@ async fn busyloop(mut state: State, mut wheel: Wheel) -> Result<(), ErrorSeverit
 fn process_write_block_request(
     proto::RequestWriteBlock { block_bytes, reply_tx, }: proto::RequestWriteBlock,
     wheel: &mut Wheel,
-    wheel_queue: &mut BinaryHeap<WheelTask>,
+    wheel_queue: &mut BinaryHeap<task::Task>,
 )
     -> Result<(), ErrorSeverity<State, Error>>
 {
     let block_id = wheel.next_block_id.clone();
     wheel.next_block_id = wheel.next_block_id.next();
-    let task_write_block = TaskWriteBlock { block_id, block_bytes, reply_tx, };
+    let task_write_block = task::WriteBlock { block_id, block_bytes, reply_tx, };
 
     let space_required = task_write_block.block_bytes.len();
 
@@ -158,8 +158,11 @@ fn process_write_block_request(
             unimplemented!()
         },
         Ok(gaps::Allocated::PendingDefragmentation) => {
-
-            unimplemented!()
+            log::debug!(
+                "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
+                task_write_block.block_bytes.len(),
+            );
+            wheel.defrag_queue.push(task_write_block);
         },
         Err(gaps::Error::NoSpaceLeft) => {
             if let Err(_send_error) = task_write_block.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
@@ -169,44 +172,6 @@ fn process_write_block_request(
     }
 
     Ok(())
-}
-
-#[derive(Debug)]
-struct WheelTask {
-    offset: u64,
-    task: WheelTaskKind,
-}
-
-impl PartialEq for WheelTask {
-    fn eq(&self, other: &WheelTask) -> bool {
-        self.offset == other.offset
-    }
-}
-
-impl Eq for WheelTask { }
-
-impl PartialOrd for WheelTask {
-    fn partial_cmp(&self, other: &WheelTask) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for WheelTask {
-    fn cmp(&self, other: &WheelTask) -> cmp::Ordering {
-        other.offset.cmp(&self.offset)
-    }
-}
-
-#[derive(Debug)]
-enum WheelTaskKind {
-    WriteBlock(TaskWriteBlock),
-}
-
-#[derive(Debug)]
-struct TaskWriteBlock {
-    block_id: block::Id,
-    block_bytes: block::Bytes,
-    reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
 }
 
 struct BlocksPool {
@@ -247,6 +212,7 @@ struct Wheel {
     regular_block_size: usize,
     blocks_index: index::Blocks,
     gaps: gaps::Index,
+    defrag_queue: defrag::PendingDefragQueue,
 }
 
 impl Wheel {
@@ -256,6 +222,7 @@ impl Wheel {
             regular_block_size,
             blocks_index: index::Blocks::new(),
             gaps: gaps::Index::new(),
+            defrag_queue: defrag::PendingDefragQueue::new(),
         }
     }
 }
