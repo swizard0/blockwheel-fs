@@ -158,10 +158,12 @@ impl Index {
 mod tests {
     use super::{
         super::{
-            block,
-            index,
-            storage,
+            super::{
+                block,
+                storage,
+            },
         },
+        index,
         Index,
         Error,
         Allocated,

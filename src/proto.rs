@@ -24,9 +24,14 @@ pub struct RequestRepayBlock {
     pub block_bytes: block::Bytes,
 }
 
+#[derive(Debug)]
+pub enum RequestWriteBlockError {
+    NoSpaceLeft,
+}
+
 pub struct RequestWriteBlock {
     pub block_bytes: block::Bytes,
-    pub reply_tx: oneshot::Sender<block::Id>,
+    pub reply_tx: oneshot::Sender<Result<block::Id, RequestWriteBlockError>>,
 }
 
 pub struct RequestReadBlock {

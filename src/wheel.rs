@@ -32,10 +32,8 @@ use ero::{
 };
 
 use super::{
-    gaps,
     block,
     proto,
-    index,
     Params,
     storage::{
         WheelHeader,
@@ -43,6 +41,9 @@ use super::{
         BlockHeaderRegular,
     },
 };
+
+mod gaps;
+mod index;
 
 #[derive(Debug)]
 pub enum Error {
@@ -161,8 +162,9 @@ fn process_write_block_request(
             unimplemented!()
         },
         Err(gaps::Error::NoSpaceLeft) => {
-
-            unimplemented!()
+            if let Err(_send_error) = task_write_block.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
+                log::warn!("process_write_block_request: reply channel has been closed");
+            }
         }
     }
 
@@ -204,7 +206,7 @@ enum WheelTaskKind {
 struct TaskWriteBlock {
     block_id: block::Id,
     block_bytes: block::Bytes,
-    reply_tx: oneshot::Sender<block::Id>,
+    reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
 }
 
 struct BlocksPool {

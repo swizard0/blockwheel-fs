@@ -20,9 +20,7 @@ use ero::{
 
 pub mod block;
 
-mod gaps;
 mod wheel;
-mod index;
 mod proto;
 mod storage;
 
@@ -90,6 +88,12 @@ impl GenServer {
     }
 }
 
+#[derive(Debug)]
+pub enum WriteBlockError {
+    GenServer(ero::NoProcError),
+    NoSpaceLeft,
+}
+
 impl Pid {
     pub async fn lend_block(&mut self) -> Result<block::BytesMut, ero::NoProcError> {
         loop {
@@ -111,7 +115,7 @@ impl Pid {
     }
 
 
-    pub async fn write_block(&mut self, block_bytes: block::Bytes) -> Result<block::Id, ero::NoProcError> {
+    pub async fn write_block(&mut self, block_bytes: block::Bytes) -> Result<block::Id, WriteBlockError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
@@ -120,11 +124,13 @@ impl Pid {
                     reply_tx,
                 }))
                 .await
-                .map_err(|_send_error| ero::NoProcError)?;
+                .map_err(|_send_error| WriteBlockError::GenServer(ero::NoProcError))?;
 
             match reply_rx.await {
-                Ok(block_id) =>
+                Ok(Ok(block_id)) =>
                     return Ok(block_id),
+                Ok(Err(proto::RequestWriteBlockError::NoSpaceLeft)) =>
+                    return Err(WriteBlockError::NoSpaceLeft),
                 Err(oneshot::Canceled) =>
                     (),
             }

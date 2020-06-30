@@ -6,7 +6,7 @@ use std::{
 
 use super::{
     block,
-    storage,
+    super::storage,
 };
 
 #[derive(Debug)]
