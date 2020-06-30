@@ -1,6 +1,5 @@
 use futures::{
     channel::{
-        mpsc,
         oneshot,
     },
 };

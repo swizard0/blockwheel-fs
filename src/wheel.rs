@@ -3,8 +3,6 @@ use std::{
     cmp,
     path::PathBuf,
     collections::{
-        HashMap,
-        BTreeMap,
         BinaryHeap,
     },
 };
@@ -29,18 +27,15 @@ use tokio::{
     },
 };
 
-use serde_derive::{
-    Serialize,
-    Deserialize,
-};
-
 use ero::{
     ErrorSeverity,
 };
 
 use super::{
+    gaps,
     block,
     proto,
+    index,
     Params,
     storage::{
         WheelHeader,
@@ -155,23 +150,20 @@ fn process_write_block_request(
     let task_write_block = TaskWriteBlock { block_id, block_bytes, reply_tx, };
 
     let space_required = task_write_block.block_bytes.len();
-    match wheel.gaps.range(space_required ..).next() {
-        None => {
+
+    match wheel.gaps.allocate(space_required, &wheel.blocks_index) {
+        Ok(gaps::Allocated::Success { space_available, between, }) => {
 
             unimplemented!()
         },
-        Some((&space_available, GapBetween::StartAndBlock { right_block_id, })) => {
+        Ok(gaps::Allocated::PendingDefragmentation) => {
 
             unimplemented!()
         },
-        Some((&space_available, GapBetween::TwoBlocks { left_block_id, right_block_id, })) => {
+        Err(gaps::Error::NoSpaceLeft) => {
 
             unimplemented!()
-        },
-        Some((&space_available, GapBetween::BlockAndEnd { left_block_id, })) => {
-
-            unimplemented!()
-        },
+        }
     }
 
     Ok(())
@@ -251,28 +243,8 @@ impl BlocksPool {
 struct Wheel {
     next_block_id: block::Id,
     regular_block_size: usize,
-    blocks_index: HashMap<block::Id, BlockEntry>,
-    gaps: BTreeMap<usize, GapBetween>,
-}
-
-#[derive(Debug)]
-struct BlockEntry {
-    offset: u64,
-    header: BlockHeader,
-}
-
-#[derive(Debug)]
-enum GapBetween {
-    StartAndBlock {
-        right_block_id: block::Id,
-    },
-    TwoBlocks {
-        left_block_id: block::Id,
-        right_block_id: block::Id,
-    },
-    BlockAndEnd {
-        left_block_id: block::Id,
-    },
+    blocks_index: index::Blocks,
+    gaps: gaps::Index,
 }
 
 impl Wheel {
@@ -280,8 +252,8 @@ impl Wheel {
         Wheel {
             next_block_id: block::Id::init(),
             regular_block_size,
-            blocks_index: HashMap::new(),
-            gaps: BTreeMap::new(),
+            blocks_index: index::Blocks::new(),
+            gaps: gaps::Index::new(),
         }
     }
 }
@@ -399,7 +371,7 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
     let mut wheel = Wheel::new(regular_block_size);
     wheel.blocks_index.insert(
         wheel.next_block_id.clone(),
-        BlockEntry {
+        index::BlockEntry {
             offset: eof_block_start_offset,
             header: eof_block_header,
         },
@@ -409,8 +381,8 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
     if space_available > 0 {
         wheel.gaps.insert(
             space_available as usize,
-            GapBetween::BlockAndEnd {
-                left_block_id: wheel.next_block_id.clone(),
+            gaps::GapBetween::BlockAndEnd {
+                left_block: wheel.next_block_id.clone(),
             },
         );
     }

@@ -20,7 +20,9 @@ use ero::{
 
 pub mod block;
 
+mod gaps;
 mod wheel;
+mod index;
 mod proto;
 mod storage;
 
@@ -161,8 +163,8 @@ impl Pid {
                 .map_err(|_send_error| ero::NoProcError)?;
 
             match reply_rx.await {
-                Ok(Deleted) =>
-                    return Ok(Deleted),
+                Ok(proto::Deleted) =>
+                    return Ok(proto::Deleted),
                 Err(oneshot::Canceled) =>
                     (),
             }
