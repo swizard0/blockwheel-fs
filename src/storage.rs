@@ -38,3 +38,42 @@ pub struct BlockHeaderRegular {
     pub block_id: block::Id,
     pub block_size: usize,
 }
+
+pub const COMMIT_TAG_MAGIC: u64 = 0xdb68d2d17dfe9811;
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CommitTag {
+    pub magic: u64,
+    pub block_id: block::Id,
+}
+
+impl Default for CommitTag {
+    fn default() -> CommitTag {
+        CommitTag {
+            magic: COMMIT_TAG_MAGIC,
+            block_id: block::Id::default(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Default, Debug)]
+pub struct Layout {
+    pub wheel_header_size: usize,
+    pub eof_block_header_size: usize,
+    pub regular_block_header_size: usize,
+    pub commit_tag_size: usize,
+}
+
+impl Layout {
+    pub fn data_size_service_min(&self) -> usize {
+        self.wheel_header_size +
+            self.eof_block_header_size
+    }
+
+    pub fn data_size_block_min(&self) -> usize {
+        self.wheel_header_size +
+            self.regular_block_header_size +
+            self.commit_tag_size +
+            self.eof_block_header_size
+    }
+}

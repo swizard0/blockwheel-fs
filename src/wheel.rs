@@ -32,12 +32,8 @@ use ero::{
 use super::{
     block,
     proto,
+    storage,
     Params,
-    storage::{
-        WheelHeader,
-        BlockHeader,
-        BlockHeaderRegular,
-    },
 };
 
 mod gaps;
@@ -61,6 +57,7 @@ pub enum Error {
         error: io::Error,
     },
     WheelFileDefaultRegularHeaderEncode(bincode::Error),
+    WheelFileDefaultCommitTagEncode(bincode::Error),
     WheelFileWheelHeaderEncode(bincode::Error),
     WheelFileWheelHeaderWrite(io::Error),
     WheelFileEofBlockHeaderEncode(bincode::Error),
@@ -154,7 +151,15 @@ fn process_write_block_request(
     let space_required = task_write_block.block_bytes.len();
 
     match wheel.gaps.allocate(space_required, &wheel.blocks_index) {
-        Ok(gaps::Allocated::Success { space_available, between, }) => {
+        Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndBlock { right_block, }, }) => {
+
+            unimplemented!()
+        },
+        Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::TwoBlocks { left_block, right_block, }, }) => {
+
+            unimplemented!()
+        },
+        Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::BlockAndEnd { left_block, }, }) => {
 
             unimplemented!()
         },
@@ -178,17 +183,17 @@ fn process_write_block_request(
 #[derive(Debug)]
 struct Wheel {
     next_block_id: block::Id,
-    regular_block_size: usize,
+    storage_layout: storage::Layout,
     blocks_index: index::Blocks,
     gaps: gaps::Index,
     defrag_queue: defrag::PendingDefragQueue,
 }
 
 impl Wheel {
-    pub fn new(regular_block_size: usize) -> Wheel {
+    pub fn new(storage_layout: storage::Layout) -> Wheel {
         Wheel {
             next_block_id: block::Id::init(),
-            regular_block_size,
+            storage_layout,
             blocks_index: index::Blocks::new(),
             gaps: gaps::Index::new(),
             defrag_queue: defrag::PendingDefragQueue::new(),
@@ -267,30 +272,46 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
             })),
     };
     let mut work_block: Vec<u8> = Vec::with_capacity(state.params.work_block_size);
-    bincode::serialize_into(&mut work_block, &BlockHeader::Regular(BlockHeaderRegular::default()))
+
+    bincode::serialize_into(&mut work_block, &storage::BlockHeader::Regular(storage::BlockHeaderRegular::default()))
         .map_err(Error::WheelFileDefaultRegularHeaderEncode)
         .map_err(ErrorSeverity::Fatal)?;
-    let regular_block_size = work_block.len();
+    let regular_block_header_size = work_block.len();
+    work_block.clear();
+
+    bincode::serialize_into(&mut work_block, &storage::CommitTag::default())
+        .map_err(Error::WheelFileDefaultCommitTagEncode)
+        .map_err(ErrorSeverity::Fatal)?;
+    let commit_tag_size = work_block.len();
     work_block.clear();
 
     let mut wheel_writer = WheelWriter::new(&mut wheel_file, &mut work_block, state.params.work_block_size);
 
-    let wheel_header = WheelHeader {
+    let wheel_header = storage::WheelHeader {
         size_bytes: state.params.init_wheel_size_bytes,
-        ..WheelHeader::default()
+        ..storage::WheelHeader::default()
     };
     wheel_writer.write_serialize(&wheel_header, Error::WheelFileWheelHeaderEncode, Error::WheelFileWheelHeaderWrite).await?;
+    let wheel_header_size = wheel_writer.cursor as usize;
 
-    let eof_block_header = BlockHeader::EndOfFile;
+    let eof_block_header = storage::BlockHeader::EndOfFile;
     let eof_block_start_offset = wheel_writer.cursor;
     wheel_writer.write_serialize(&eof_block_header, Error::WheelFileEofBlockHeaderEncode, Error::WheelFileEofBlockHeaderWrite).await?;
-    let eof_block_end_offset = wheel_writer.cursor;
+    let eof_block_header_size = wheel_writer.cursor as usize - wheel_header_size;
+
+    let storage_layout = storage::Layout {
+        wheel_header_size,
+        regular_block_header_size,
+        eof_block_header_size,
+        commit_tag_size,
+    };
 
     let size_bytes_total = state.params.init_wheel_size_bytes as u64;
-    if size_bytes_total < eof_block_end_offset + regular_block_size as u64 {
+
+    if size_bytes_total < storage_layout.data_size_service_min() as u64 {
         return Err(ErrorSeverity::Fatal(Error::InitWheelSizeIsTooSmall {
             provided: size_bytes_total,
-            required_min: eof_block_end_offset + regular_block_size as u64,
+            required_min: storage_layout.data_size_service_min() as u64,
         }));
     }
 
@@ -306,7 +327,8 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
     }
     wheel_writer.flush(Error::WheelFileZeroInitFlush).await?;
 
-    let mut wheel = Wheel::new(regular_block_size);
+    let mut wheel = Wheel::new(storage_layout);
+
     wheel.blocks_index.insert(
         wheel.next_block_id.clone(),
         index::BlockEntry {
@@ -315,8 +337,8 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
         },
     );
 
-    let space_available = size_bytes_total - eof_block_end_offset - regular_block_size as u64;
-    if space_available > 0 {
+    if size_bytes_total > wheel.storage_layout.data_size_block_min() as u64 {
+        let space_available = size_bytes_total - wheel.storage_layout.data_size_block_min() as u64;
         wheel.gaps.insert(
             space_available as usize,
             gaps::GapBetween::BlockAndEnd {

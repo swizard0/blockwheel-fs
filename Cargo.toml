@@ -1,6 +1,6 @@
 [package]
 name = "ero-blockwheel"
-version = "0.1.11"
+version = "0.1.12"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Persistent binary blocks with rotating wheel like access."
 edition = "2018"
