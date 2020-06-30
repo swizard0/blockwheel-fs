@@ -27,13 +27,13 @@ impl Default for WheelHeader {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub enum BlockHeader {
     EndOfFile,
     Regular(BlockHeaderRegular),
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default, Debug)]
 pub struct BlockHeaderRegular {
     pub block_id: block::Id,
     pub block_size: usize,

@@ -14,13 +14,13 @@ pub struct Blocks {
     index: HashMap<block::Id, BlockEntry>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct BlockEntry {
     pub offset: u64,
     pub header: storage::BlockHeader,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct BlockInfo<'a> {
     pub block_id: block::Id,
     pub block_entry: &'a BlockEntry,

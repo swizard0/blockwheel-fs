@@ -17,7 +17,7 @@ pub struct Index {
     remove_buf: Vec<SpaceKey>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum GapBetween<B> {
     StartAndBlock {
         right_block: B,
@@ -37,6 +37,7 @@ struct SpaceKey {
     serial: usize,
 }
 
+#[derive(Clone, PartialEq, Debug)]
 pub enum Allocated<'a> {
     Success {
         space_available: usize,
@@ -45,7 +46,7 @@ pub enum Allocated<'a> {
     PendingDefragmentation,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Error {
     NoSpaceLeft,
 }
@@ -143,6 +144,126 @@ impl Index {
             Ok(Allocated::PendingDefragmentation)
         } else {
             Err(Error::NoSpaceLeft)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        super::{
+            block,
+            index,
+            storage,
+        },
+        Index,
+        Error,
+        Allocated,
+        GapBetween,
+    };
+
+    #[test]
+    fn allocated_success_between_two_blocks() {
+        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+
+        assert_eq!(
+            gaps.allocate(3, &blocks_index),
+            Ok(Allocated::Success {
+                space_available: 4,
+                between: GapBetween::TwoBlocks {
+                    left_block: index::BlockInfo {
+                        block_id: block_a_id.clone(),
+                        block_entry: &index::BlockEntry {
+                            offset: 0,
+                            header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                                block_id: block_a_id.clone(),
+                                block_size: 4,
+                            }),
+                        },
+                    },
+                    right_block: index::BlockInfo {
+                        block_id: block_b_id.clone(),
+                        block_entry: &index::BlockEntry {
+                            offset: 8,
+                            header: storage::BlockHeader::EndOfFile,
+                        },
+                    },
+                },
+            }),
+        );
+    }
+
+    #[test]
+    fn allocated_success_between_block_and_end() {
+        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+
+        assert_eq!(
+            gaps.allocate(33, &blocks_index),
+            Ok(Allocated::Success {
+                space_available: 60,
+                between: GapBetween::BlockAndEnd {
+                    left_block: index::BlockInfo {
+                        block_id: block_b_id.clone(),
+                        block_entry: &index::BlockEntry {
+                            offset: 8,
+                            header: storage::BlockHeader::EndOfFile,
+                        },
+                    },
+                },
+            }),
+        );
+    }
+
+    #[test]
+    fn allocated_success_pending_defragmentation() {
+        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+
+        assert_eq!(
+            gaps.allocate(61, &blocks_index),
+            Ok(Allocated::PendingDefragmentation),
+        );
+    }
+
+    #[test]
+    fn allocated_error_no_space_left() {
+        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+
+        assert_eq!(
+            gaps.allocate(65, &blocks_index),
+            Err(Error::NoSpaceLeft),
+        );
+    }
+
+    struct Init {
+        block_a_id: block::Id,
+        block_b_id: block::Id,
+        blocks_index: index::Blocks,
+        gaps: Index,
+    }
+
+    impl Init {
+        fn new() -> Init {
+            let block_a_id = block::Id::init();
+
+            let mut blocks_index = index::Blocks::new();
+            blocks_index.insert(block_a_id.clone(), index::BlockEntry {
+                offset: 0,
+                header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                    block_id: block_a_id.clone(),
+                    block_size: 4,
+                }),
+            });
+            let block_b_id = block_a_id.next();
+            blocks_index.insert(block_b_id.clone(), index::BlockEntry {
+                offset: 8,
+                header: storage::BlockHeader::EndOfFile,
+            });
+
+            let mut gaps = Index::new();
+            gaps.insert(4, GapBetween::TwoBlocks { left_block: block_a_id.clone(), right_block: block_b_id.clone(), });
+            gaps.insert(60, GapBetween::BlockAndEnd { left_block: block_b_id.clone(), });
+
+            Init { block_a_id, block_b_id, blocks_index, gaps, }
         }
     }
 }
