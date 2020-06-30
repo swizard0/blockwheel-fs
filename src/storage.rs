@@ -66,14 +66,12 @@ pub struct Layout {
 
 impl Layout {
     pub fn data_size_service_min(&self) -> usize {
-        self.wheel_header_size +
-            self.eof_block_header_size
+        self.wheel_header_size
+            + self.eof_block_header_size
     }
 
     pub fn data_size_block_min(&self) -> usize {
-        self.wheel_header_size +
-            self.regular_block_header_size +
-            self.commit_tag_size +
-            self.eof_block_header_size
+        self.regular_block_header_size
+            + self.commit_tag_size
     }
 }

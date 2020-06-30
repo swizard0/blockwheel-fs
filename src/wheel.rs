@@ -152,8 +152,44 @@ fn process_write_block_request(
 
     match wheel.gaps.allocate(space_required, &wheel.blocks_index) {
         Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndBlock { right_block, }, }) => {
+            let block_offset = wheel.storage_layout.wheel_header_size as u64;
+            let right_block_id = right_block.block_id.clone();
+            wheel.blocks_index.insert(
+                task_write_block.block_id.clone(),
+                index::BlockEntry {
+                    offset: block_offset,
+                    header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                        block_id: task_write_block.block_id.clone(),
+                        block_size: space_required,
+                    }),
+                },
+            );
 
-            unimplemented!()
+            let space_left = space_available - space_required;
+            if space_left >= wheel.storage_layout.data_size_block_min() {
+                let space_left_available = space_left - wheel.storage_layout.data_size_block_min();
+                wheel.gaps.insert(
+                    space_left_available,
+                    gaps::GapBetween::TwoBlocks {
+                        left_block: task_write_block.block_id.clone(),
+                        right_block: right_block_id.clone(),
+                    },
+                );
+            }
+            if space_left > 0 {
+                let free_space_offset = block_offset
+                    + wheel.storage_layout.data_size_block_min() as u64
+                    + space_required as u64;
+                wheel.defrag_task_queue.push(free_space_offset, defrag::DefragPosition::TwoBlocks {
+                    left_block_id: task_write_block.block_id.clone(),
+                    right_block_id: right_block_id.clone(),
+                });
+            }
+
+            wheel_queue.push(task::Task {
+                offset: block_offset,
+                task: task::TaskKind::WriteBlock(task_write_block),
+            });
         },
         Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::TwoBlocks { left_block, right_block, }, }) => {
 
@@ -168,7 +204,7 @@ fn process_write_block_request(
                 "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
                 task_write_block.block_bytes.len(),
             );
-            wheel.defrag_queue.push(task_write_block);
+            wheel.defrag_pending_queue.push(task_write_block);
         },
         Err(gaps::Error::NoSpaceLeft) => {
             if let Err(_send_error) = task_write_block.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
@@ -186,7 +222,8 @@ struct Wheel {
     storage_layout: storage::Layout,
     blocks_index: index::Blocks,
     gaps: gaps::Index,
-    defrag_queue: defrag::PendingDefragQueue,
+    defrag_pending_queue: defrag::PendingQueue,
+    defrag_task_queue: defrag::TaskQueue,
 }
 
 impl Wheel {
@@ -196,7 +233,8 @@ impl Wheel {
             storage_layout,
             blocks_index: index::Blocks::new(),
             gaps: gaps::Index::new(),
-            defrag_queue: defrag::PendingDefragQueue::new(),
+            defrag_pending_queue: defrag::PendingQueue::new(),
+            defrag_task_queue: defrag::TaskQueue::new(),
         }
     }
 }
@@ -337,8 +375,10 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
         },
     );
 
-    if size_bytes_total > wheel.storage_layout.data_size_block_min() as u64 {
-        let space_available = size_bytes_total - wheel.storage_layout.data_size_block_min() as u64;
+    let total_service_size = wheel.storage_layout.data_size_service_min()
+        + wheel.storage_layout.data_size_block_min();
+    if size_bytes_total > total_service_size as u64 {
+        let space_available = size_bytes_total - total_service_size as u64;
         wheel.gaps.insert(
             space_available as usize,
             gaps::GapBetween::BlockAndEnd {
