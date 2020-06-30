@@ -94,6 +94,8 @@ impl Index {
                                         },
                                     },
                                 });
+                                assert!(key.space_available <= self.space_total);
+                                self.space_total -= key.space_available;
                                 break;
                             },
                         GapBetween::TwoBlocks { left_block, right_block, } => {
@@ -113,6 +115,8 @@ impl Index {
                                         },
                                     },
                                 });
+                                assert!(key.space_available <= self.space_total);
+                                self.space_total -= key.space_available;
                                 break;
                             }
                         },
@@ -127,6 +131,8 @@ impl Index {
                                         },
                                     },
                                 });
+                                assert!(key.space_available <= self.space_total);
+                                self.space_total -= key.space_available;
                                 break;
                             },
                     }
@@ -195,7 +201,7 @@ mod tests {
 
     #[test]
     fn allocated_success_between_block_and_end() {
-        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+        let Init { block_b_id, blocks_index, mut gaps, .. } = Init::new();
 
         assert_eq!(
             gaps.allocate(33, &blocks_index),
@@ -216,7 +222,7 @@ mod tests {
 
     #[test]
     fn allocated_success_pending_defragmentation() {
-        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+        let Init { blocks_index, mut gaps, .. } = Init::new();
 
         assert_eq!(
             gaps.allocate(61, &blocks_index),
@@ -226,10 +232,60 @@ mod tests {
 
     #[test]
     fn allocated_error_no_space_left() {
-        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+        let Init { blocks_index, mut gaps, .. } = Init::new();
 
         assert_eq!(
             gaps.allocate(65, &blocks_index),
+            Err(Error::NoSpaceLeft),
+        );
+    }
+
+    #[test]
+    fn allocate_until_no_space() {
+        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+
+        assert_eq!(
+            gaps.allocate(3, &blocks_index),
+            Ok(Allocated::Success {
+                space_available: 4,
+                between: GapBetween::TwoBlocks {
+                    left_block: index::BlockInfo {
+                        block_id: block_a_id.clone(),
+                        block_entry: &index::BlockEntry {
+                            offset: 0,
+                            header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                                block_id: block_a_id.clone(),
+                                block_size: 4,
+                            }),
+                        },
+                    },
+                    right_block: index::BlockInfo {
+                        block_id: block_b_id.clone(),
+                        block_entry: &index::BlockEntry {
+                            offset: 8,
+                            header: storage::BlockHeader::EndOfFile,
+                        },
+                    },
+                },
+            }),
+        );
+        assert_eq!(
+            gaps.allocate(3, &blocks_index),
+            Ok(Allocated::Success {
+                space_available: 60,
+                between: GapBetween::BlockAndEnd {
+                    left_block: index::BlockInfo {
+                        block_id: block_b_id.clone(),
+                        block_entry: &index::BlockEntry {
+                            offset: 8,
+                            header: storage::BlockHeader::EndOfFile,
+                        },
+                    },
+                },
+            }),
+        );
+        assert_eq!(
+            gaps.allocate(3, &blocks_index),
             Err(Error::NoSpaceLeft),
         );
     }
