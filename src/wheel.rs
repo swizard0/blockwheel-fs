@@ -1,9 +1,6 @@
 use std::{
     io,
     path::PathBuf,
-    collections::{
-        BinaryHeap,
-    },
 };
 
 use futures::{
@@ -41,6 +38,7 @@ mod task;
 mod pool;
 mod index;
 mod defrag;
+mod schema;
 
 #[derive(Debug)]
 pub enum Error {
@@ -91,10 +89,10 @@ pub async fn busyloop_init(state: State) -> Result<(), ErrorSeverity<State, Erro
     busyloop(state, wheel).await
 }
 
-async fn busyloop(mut state: State, mut wheel: Wheel) -> Result<(), ErrorSeverity<State, Error>> {
+async fn busyloop(mut state: State, mut schema: schema::Schema) -> Result<(), ErrorSeverity<State, Error>> {
     let mut blocks_pool = pool::Blocks::new();
 
-    let mut wheel_queue = BinaryHeap::new();
+    let mut tasks_queue = task::Queue::new();
 
     loop {
         enum Source<A> {
@@ -122,7 +120,7 @@ async fn busyloop(mut state: State, mut wheel: Wheel) -> Result<(), ErrorSeverit
             },
 
             Source::Pid(Some(proto::Request::WriteBlock(request_write_block))) =>
-                process_write_block_request(request_write_block, &mut wheel, &mut wheel_queue)?,
+                schema.process_write_block_request(request_write_block, &mut tasks_queue),
 
             Source::Pid(Some(proto::Request::ReadBlock(proto::RequestReadBlock { block_id, reply_tx, }))) => {
 
@@ -133,108 +131,6 @@ async fn busyloop(mut state: State, mut wheel: Wheel) -> Result<(), ErrorSeverit
 
                 unimplemented!()
             },
-        }
-    }
-}
-
-fn process_write_block_request(
-    proto::RequestWriteBlock { block_bytes, reply_tx, }: proto::RequestWriteBlock,
-    wheel: &mut Wheel,
-    wheel_queue: &mut BinaryHeap<task::Task>,
-)
-    -> Result<(), ErrorSeverity<State, Error>>
-{
-    let block_id = wheel.next_block_id.clone();
-    wheel.next_block_id = wheel.next_block_id.next();
-    let task_write_block = task::WriteBlock { block_id, block_bytes, reply_tx, };
-
-    let space_required = task_write_block.block_bytes.len();
-
-    match wheel.gaps.allocate(space_required, &wheel.blocks_index) {
-        Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndBlock { right_block, }, }) => {
-            let block_offset = wheel.storage_layout.wheel_header_size as u64;
-            let right_block_id = right_block.block_id.clone();
-            wheel.blocks_index.insert(
-                task_write_block.block_id.clone(),
-                index::BlockEntry {
-                    offset: block_offset,
-                    header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
-                        block_id: task_write_block.block_id.clone(),
-                        block_size: space_required,
-                    }),
-                },
-            );
-
-            let space_left = space_available - space_required;
-            if space_left >= wheel.storage_layout.data_size_block_min() {
-                let space_left_available = space_left - wheel.storage_layout.data_size_block_min();
-                wheel.gaps.insert(
-                    space_left_available,
-                    gaps::GapBetween::TwoBlocks {
-                        left_block: task_write_block.block_id.clone(),
-                        right_block: right_block_id.clone(),
-                    },
-                );
-            }
-            if space_left > 0 {
-                let free_space_offset = block_offset
-                    + wheel.storage_layout.data_size_block_min() as u64
-                    + space_required as u64;
-                wheel.defrag_task_queue.push(free_space_offset, defrag::DefragPosition::TwoBlocks {
-                    left_block_id: task_write_block.block_id.clone(),
-                    right_block_id: right_block_id.clone(),
-                });
-            }
-
-            wheel_queue.push(task::Task {
-                offset: block_offset,
-                task: task::TaskKind::WriteBlock(task_write_block),
-            });
-        },
-        Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::TwoBlocks { left_block, right_block, }, }) => {
-
-            unimplemented!()
-        },
-        Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::BlockAndEnd { left_block, }, }) => {
-
-            unimplemented!()
-        },
-        Ok(gaps::Allocated::PendingDefragmentation) => {
-            log::debug!(
-                "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
-                task_write_block.block_bytes.len(),
-            );
-            wheel.defrag_pending_queue.push(task_write_block);
-        },
-        Err(gaps::Error::NoSpaceLeft) => {
-            if let Err(_send_error) = task_write_block.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
-                log::warn!("process_write_block_request: reply channel has been closed");
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Debug)]
-struct Wheel {
-    next_block_id: block::Id,
-    storage_layout: storage::Layout,
-    blocks_index: index::Blocks,
-    gaps: gaps::Index,
-    defrag_pending_queue: defrag::PendingQueue,
-    defrag_task_queue: defrag::TaskQueue,
-}
-
-impl Wheel {
-    pub fn new(storage_layout: storage::Layout) -> Wheel {
-        Wheel {
-            next_block_id: block::Id::init(),
-            storage_layout,
-            blocks_index: index::Blocks::new(),
-            gaps: gaps::Index::new(),
-            defrag_pending_queue: defrag::PendingQueue::new(),
-            defrag_task_queue: defrag::TaskQueue::new(),
         }
     }
 }
@@ -291,7 +187,7 @@ impl<'a> WheelWriter<'a> {
     }
 }
 
-async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<State, Error>> {
+async fn wheel_create(state: State) -> Result<(schema::Schema, State), ErrorSeverity<State, Error>> {
     log::debug!("creating new wheel file [ {:?} ]", state.params.wheel_filename);
 
     let maybe_file = fs::OpenOptions::new()
@@ -365,36 +261,19 @@ async fn wheel_create(state: State) -> Result<(Wheel, State), ErrorSeverity<Stat
     }
     wheel_writer.flush(Error::WheelFileZeroInitFlush).await?;
 
-    let mut wheel = Wheel::new(storage_layout);
-
-    wheel.blocks_index.insert(
-        wheel.next_block_id.clone(),
-        index::BlockEntry {
-            offset: eof_block_start_offset,
-            header: eof_block_header,
-        },
+    let mut schema = schema::Schema::new(storage_layout);
+    schema.initialize_empty(
+        eof_block_start_offset,
+        eof_block_header,
+        size_bytes_total,
     );
 
-    let total_service_size = wheel.storage_layout.data_size_service_min()
-        + wheel.storage_layout.data_size_block_min();
-    if size_bytes_total > total_service_size as u64 {
-        let space_available = size_bytes_total - total_service_size as u64;
-        wheel.gaps.insert(
-            space_available as usize,
-            gaps::GapBetween::BlockAndEnd {
-                left_block: wheel.next_block_id.clone(),
-            },
-        );
-    }
+    log::debug!("initialized wheel schema: {:?}", schema);
 
-    wheel.next_block_id = wheel.next_block_id.next();
-
-    log::debug!("initialized wheel: {:?}", wheel);
-
-    Ok((wheel, state))
+    Ok((schema, state))
 }
 
-async fn wheel_open(state: State) -> Result<(Wheel, State), ErrorSeverity<State, Error>> {
+async fn wheel_open(state: State) -> Result<(schema::Schema, State), ErrorSeverity<State, Error>> {
     log::debug!("opening existing wheel file [ {:?} ]", state.params.wheel_filename);
 
     unimplemented!()

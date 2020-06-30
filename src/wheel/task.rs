@@ -1,4 +1,9 @@
-use std::cmp;
+use std::{
+    cmp,
+    collections::{
+        BinaryHeap,
+    },
+};
 
 use futures::{
     channel::{
@@ -11,11 +16,26 @@ use super::{
     proto,
 };
 
+pub struct Queue {
+    queue: BinaryHeap<Task>,
+}
+
+impl Queue {
+    pub fn new() -> Queue {
+        Queue {
+            queue: BinaryHeap::new(),
+        }
+    }
+
+    pub fn push(&mut self, offset: u64, task: TaskKind) {
+        self.queue.push(Task { offset, task, });
+    }
+}
 
 #[derive(Debug)]
-pub struct Task {
-    pub offset: u64,
-    pub task: TaskKind,
+struct Task {
+    offset: u64,
+    task: TaskKind,
 }
 
 impl PartialEq for Task {
