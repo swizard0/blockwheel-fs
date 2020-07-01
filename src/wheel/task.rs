@@ -1,5 +1,5 @@
 use std::{
-    cmp,
+    cmp, mem,
     collections::{
         BinaryHeap,
     },
@@ -17,18 +17,45 @@ use super::{
 };
 
 pub struct Queue {
-    queue: BinaryHeap<Task>,
+    queue_left: BinaryHeap<Task>,
+    queue_right: BinaryHeap<Task>,
 }
 
 impl Queue {
     pub fn new() -> Queue {
         Queue {
-            queue: BinaryHeap::new(),
+            queue_left: BinaryHeap::new(),
+            queue_right: BinaryHeap::new(),
         }
     }
 
     pub fn push(&mut self, offset: u64, task: TaskKind) {
-        self.queue.push(Task { offset, task, });
+        let queue = match (self.queue_left.peek(), self.queue_right.peek()) {
+            (None, None) =>
+                &mut self.queue_right,
+            (_, Some(right_task)) if offset >= right_task.offset =>
+                &mut self.queue_right,
+            (_, Some(..)) =>
+                &mut self.queue_left,
+            (Some(..), None) => {
+                // rotate
+                mem::swap(&mut self.queue_left, &mut self.queue_right);
+                &mut self.queue_right
+            },
+        };
+        queue.push(Task { offset, task, });
+    }
+
+    pub fn pop(&mut self) -> Option<(u64, TaskKind)> {
+        if let Some(Task { offset, task, }) = self.queue_right.pop() {
+            Some((offset, task))
+        } else if let Some(Task { offset, task, }) = self.queue_left.pop() {
+            // rotate
+            mem::swap(&mut self.queue_left, &mut self.queue_right);
+            Some((offset, task))
+        } else {
+            None
+        }
     }
 }
 

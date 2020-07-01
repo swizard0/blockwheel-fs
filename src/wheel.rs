@@ -4,12 +4,16 @@ use std::{
 };
 
 use futures::{
+    future,
     select,
     stream,
     channel::{
         mpsc,
+        oneshot,
     },
+    SinkExt,
     StreamExt,
+    FutureExt,
 };
 
 use tokio::{
@@ -17,11 +21,13 @@ use tokio::{
     io::{
         BufWriter,
         AsyncWriteExt,
+        AsyncSeekExt,
     },
 };
 
 use ero::{
     ErrorSeverity,
+    supervisor::SupervisorPid,
 };
 
 use super::{
@@ -60,15 +66,22 @@ pub enum Error {
     WheelFileEofBlockHeaderWrite(io::Error),
     WheelFileZeroInitWrite(io::Error),
     WheelFileZeroInitFlush(io::Error),
+    WheelFileInitialSeek(io::Error),
+    WheelFileSeek {
+        offset: u64,
+        cursor: u64,
+        error: io::Error,
+    },
 }
 
 pub struct State {
+    pub parent_supervisor: SupervisorPid,
     pub fused_request_rx: stream::Fuse<mpsc::Receiver<proto::Request>>,
     pub params: Params,
 }
 
-pub async fn busyloop_init(state: State) -> Result<(), ErrorSeverity<State, Error>> {
-    let (wheel, state) = match fs::metadata(&state.params.wheel_filename).await {
+pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> Result<(), ErrorSeverity<State, Error>> {
+    let WheelState { wheel_file, schema, state, } = match fs::metadata(&state.params.wheel_filename).await {
         Ok(ref metadata) if metadata.file_type().is_file() =>
             wheel_open(state).await?,
         Ok(_metadata) => {
@@ -84,22 +97,65 @@ pub async fn busyloop_init(state: State) -> Result<(), ErrorSeverity<State, Erro
             })),
     };
 
-    busyloop(state, wheel).await
+    let (interpret_tx, interpret_rx) = mpsc::channel(0);
+    let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
+    supervisor_pid.spawn_link_permanent(
+        async move {
+            if let Err(interpret_error) = interpret_loop(interpret_rx, wheel_file).await {
+                interpret_error_tx.send(interpret_error).ok();
+            }
+        },
+    );
+
+    busyloop(supervisor_pid, interpret_tx, interpret_error_rx.fuse(), state, schema).await
 }
 
-async fn busyloop(mut state: State, mut schema: schema::Schema) -> Result<(), ErrorSeverity<State, Error>> {
+async fn busyloop(
+    _supervisor_pid: SupervisorPid,
+    mut interpret_tx: mpsc::Sender<InterpretRequest>,
+    mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
+    mut state: State,
+    mut schema: schema::Schema,
+)
+    -> Result<(), ErrorSeverity<State, Error>>
+{
     let mut blocks_pool = pool::Blocks::new();
-
     let mut tasks_queue = task::Queue::new();
+    let mut bg_task: Option<future::Fuse<oneshot::Receiver<Interpreted>>> = None;
 
     loop {
-        enum Source<A> {
+        enum Source<A, B, C> {
             Pid(A),
+            InterpreterDone(B),
+            InterpreterError(C),
         }
-        let req = select! {
-            result = state.fused_request_rx.next() =>
-                Source::Pid(result),
+
+        let req = if let Some(mut fused_interpret_result_rx) = bg_task.as_mut() {
+            select! {
+                result = state.fused_request_rx.next() =>
+                    Source::Pid(result),
+                result = fused_interpret_result_rx =>
+                    Source::InterpreterDone(result),
+                result = fused_interpret_error_rx =>
+                    Source::InterpreterError(result),
+            }
+        } else if let Some((offset, task_kind)) = tasks_queue.pop() {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            if let Err(_send_error) = interpret_tx.send(InterpretRequest { offset, task_kind, reply_tx, }).await {
+                log::warn!("interpreter request channel closed");
+            }
+
+            bg_task = Some(reply_rx.fuse());
+            continue;
+        } else {
+            select! {
+                result = state.fused_request_rx.next() =>
+                    Source::Pid(result),
+                result = fused_interpret_error_rx =>
+                    Source::InterpreterError(result),
+            }
         };
+
         match req {
             Source::Pid(None) => {
                 log::debug!("all Pid frontends have been terminated");
@@ -129,8 +185,53 @@ async fn busyloop(mut state: State, mut schema: schema::Schema) -> Result<(), Er
 
                 unimplemented!()
             },
+
+            Source::InterpreterDone(Ok(Interpreted)) => {
+                bg_task = None;
+            },
+
+            Source::InterpreterDone(Err(oneshot::Canceled)) => {
+                log::debug!("interpreter reply channel closed: shutting down");
+                return Ok(());
+            },
+
+            Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+                return Err(ErrorSeverity::Recoverable { state, }),
+
+            Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+                return Err(ErrorSeverity::Fatal(error)),
+
+            Source::InterpreterError(Err(oneshot::Canceled)) => {
+                log::debug!("interpreter error channel closed: shutting down");
+                return Ok(());
+            },
         }
     }
+}
+
+struct InterpretRequest {
+    offset: u64,
+    task_kind: task::TaskKind,
+    reply_tx: oneshot::Sender<Interpreted>,
+}
+
+struct Interpreted;
+
+async fn interpret_loop(mut interpret_rx: mpsc::Receiver<InterpretRequest>, mut wheel_file: fs::File) -> Result<(), ErrorSeverity<(), Error>> {
+    let mut cursor = 0;
+    wheel_file.seek(io::SeekFrom::Start(cursor)).await
+        .map_err(Error::WheelFileInitialSeek)
+        .map_err(ErrorSeverity::Fatal)?;
+
+    while let Some(InterpretRequest { offset, task_kind, reply_tx, }) = interpret_rx.next().await {
+        if cursor != offset {
+            wheel_file.seek(io::SeekFrom::Start(offset)).await
+                .map_err(|error| ErrorSeverity::Fatal(Error::WheelFileSeek { offset, cursor, error, }))?;
+            cursor = offset;
+        }
+    }
+
+    Ok(())
 }
 
 struct WheelWriter<'a> {
@@ -185,7 +286,13 @@ impl<'a> WheelWriter<'a> {
     }
 }
 
-async fn wheel_create(state: State) -> Result<(schema::Schema, State), ErrorSeverity<State, Error>> {
+struct WheelState {
+    wheel_file: fs::File,
+    schema: schema::Schema,
+    state: State,
+}
+
+async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {
     log::debug!("creating new wheel file [ {:?} ]", state.params.wheel_filename);
 
     let maybe_file = fs::OpenOptions::new()
@@ -264,10 +371,10 @@ async fn wheel_create(state: State) -> Result<(schema::Schema, State), ErrorSeve
 
     log::debug!("initialized wheel schema: {:?}", schema);
 
-    Ok((schema, state))
+    Ok(WheelState { wheel_file, schema, state, })
 }
 
-async fn wheel_open(state: State) -> Result<(schema::Schema, State), ErrorSeverity<State, Error>> {
+async fn wheel_open(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {
     log::debug!("opening existing wheel file [ {:?} ]", state.params.wheel_filename);
 
     unimplemented!()

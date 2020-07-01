@@ -16,6 +16,7 @@ use futures::{
 use ero::{
     restart,
     RestartStrategy,
+    supervisor::SupervisorPid,
 };
 
 pub mod block;
@@ -68,7 +69,7 @@ impl GenServer {
         }
     }
 
-    pub async fn run(self, params: Params) {
+    pub async fn run(self, parent_supervisor: SupervisorPid, params: Params) {
         let terminate_result = restart::restartable(
             ero::Params {
                 name: format!("ero-blockwheel on {:?}", params.wheel_filename),
@@ -77,10 +78,18 @@ impl GenServer {
                 },
             },
             wheel::State {
+                parent_supervisor,
                 fused_request_rx: self.fused_request_rx,
                 params,
             },
-            wheel::busyloop_init,
+            |mut state| async move {
+                let child_supervisor_gen_server = state.parent_supervisor.child_supevisor();
+                let child_supervisor_pid = child_supervisor_gen_server.pid();
+                state.parent_supervisor.spawn_link_temporary(
+                    child_supervisor_gen_server.run(),
+                );
+                wheel::busyloop_init(child_supervisor_pid, state).await
+            },
         ).await;
         if let Err(error) = terminate_result {
             log::error!("fatal error: {:?}", error);
