@@ -171,7 +171,7 @@ impl Schema {
                 let eof_block_id = self.next_block_id.clone();
                 self.next_block_id = self.next_block_id.next();
                 self.blocks_index.insert(
-                    eof_block_id,
+                    eof_block_id.clone(),
                     index::BlockEntry {
                         offset: block_offset
                             + space_required as u64
@@ -186,7 +186,7 @@ impl Schema {
                     self.gaps.insert(
                         space_left_available,
                         gaps::GapBetween::BlockAndEnd {
-                            left_block: task_write_block.block_id.clone(),
+                            left_block: eof_block_id.clone(),
                         },
                     );
                 }
@@ -245,10 +245,9 @@ mod tests {
     #[test]
     fn process_write_block_request() {
         let (mut schema, mut tasks_queue) = init();
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-
         assert_eq!(schema.gaps.space_total(), 64);
 
+        let (reply_tx, mut reply_rx) = oneshot::channel();
         schema.process_write_block_request(
             proto::RequestWriteBlock {
                 block_bytes: sample_hello_world(),
@@ -277,9 +276,58 @@ mod tests {
             }),
         );
         assert_eq!(schema.gaps.space_total(), 15);
-
-        // panic!("{:#?}", schema);
-
         assert_eq!(reply_rx.try_recv(), Ok(None));
+
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        schema.process_write_block_request(
+            proto::RequestWriteBlock {
+                block_bytes: sample_hello_world(),
+                reply_tx,
+            },
+            &mut tasks_queue,
+        );
+
+        assert_eq!(schema.next_block_id, block::Id::init().next().next().next().next().next());
+        assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init().next()),
+            Some(&index::BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                    block_id: block::Id::init().next(),
+                    block_size: 13,
+                }),
+            }),
+        );
+        assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init().next().next().next()),
+            Some(&index::BlockEntry {
+                offset: 73,
+                header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                    block_id: block::Id::init().next().next().next(),
+                    block_size: 13,
+                }),
+            }),
+        );
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init().next().next().next().next()),
+            Some(&index::BlockEntry {
+                offset: 122,
+                header: storage::BlockHeader::EndOfFile,
+            }),
+        );
+        assert_eq!(schema.gaps.space_total(), 0);
+        assert_eq!(reply_rx.try_recv(), Ok(None));
+
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        schema.process_write_block_request(
+            proto::RequestWriteBlock {
+                block_bytes: sample_hello_world(),
+                reply_tx,
+            },
+            &mut tasks_queue,
+        );
+        assert_eq!(reply_rx.try_recv(), Ok(Some(Err(proto::RequestWriteBlockError::NoSpaceLeft))));
     }
 }
