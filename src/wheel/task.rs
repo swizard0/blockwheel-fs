@@ -103,3 +103,14 @@ pub enum CommitType {
     CommitOnly,
     CommitAndEof,
 }
+
+#[derive(Debug)]
+pub enum TaskDone {
+    WriteBlock(TaskDoneWriteBlock),
+}
+
+#[derive(Debug)]
+pub struct TaskDoneWriteBlock {
+    pub block_id: block::Id,
+    pub reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
+}

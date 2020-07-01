@@ -128,7 +128,7 @@ async fn busyloop(
 {
     let mut blocks_pool = pool::Blocks::new();
     let mut tasks_queue = task::Queue::new();
-    let mut bg_task: Option<future::Fuse<oneshot::Receiver<Interpreted>>> = None;
+    let mut bg_task: Option<future::Fuse<oneshot::Receiver<task::TaskDone>>> = None;
 
     loop {
         enum Source<A, B, C> {
@@ -193,8 +193,11 @@ async fn busyloop(
                 unimplemented!()
             },
 
-            Source::InterpreterDone(Ok(Interpreted)) => {
+            Source::InterpreterDone(Ok(task::TaskDone::WriteBlock(write_block))) => {
                 bg_task = None;
+                if let Err(_send_error) = write_block.reply_tx.send(Ok(write_block.block_id)) {
+                    log::warn!("client channel was closed before a block is actually written");
+                }
             },
 
             Source::InterpreterDone(Err(oneshot::Canceled)) => {
@@ -219,10 +222,8 @@ async fn busyloop(
 struct InterpretRequest {
     offset: u64,
     task_kind: task::TaskKind,
-    reply_tx: oneshot::Sender<Interpreted>,
+    reply_tx: oneshot::Sender<task::TaskDone>,
 }
-
-struct Interpreted;
 
 async fn interpret_loop(
     mut interpret_rx: mpsc::Receiver<InterpretRequest>,
@@ -278,14 +279,14 @@ async fn interpret_loop(
                 }
                 wheel_writer.flush(Error::WheelFileBlockFlush).await?;
 
-                if let Err(_send_error) = write_block.reply_tx.send(Ok(write_block.block_id)) {
-                    log::warn!("client channel was closed before a block is actually written");
+                let task_done = task::TaskDone::WriteBlock(task::TaskDoneWriteBlock {
+                    block_id: write_block.block_id,
+                    reply_tx: write_block.reply_tx,
+                });
+                if let Err(_send_error) = reply_tx.send(task_done) {
+                    break;
                 }
             },
-        }
-
-        if let Err(_send_error) = reply_tx.send(Interpreted) {
-            break;
         }
     }
 
