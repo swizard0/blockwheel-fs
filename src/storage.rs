@@ -33,6 +33,17 @@ pub enum BlockHeader {
     Regular(BlockHeaderRegular),
 }
 
+impl BlockHeader {
+    pub fn block_size(&self) -> usize {
+        match self {
+            BlockHeader::EndOfFile =>
+                0,
+            BlockHeader::Regular(header) =>
+                header.block_size,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize, Default, Debug)]
 pub struct BlockHeaderRegular {
     pub block_id: block::Id,

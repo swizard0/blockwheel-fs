@@ -61,6 +61,10 @@ impl Index {
         }
     }
 
+    pub fn space_total(&self) -> usize {
+        self.space_total
+    }
+
     pub fn insert(&mut self, space_available: usize, between: GapBetween<block::Id>) {
         self.serial += 1;
         self.gaps.insert(SpaceKey { space_available, serial: self.serial, }, between);

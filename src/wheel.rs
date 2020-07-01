@@ -15,9 +15,7 @@ use futures::{
 use tokio::{
     fs,
     io::{
-        BufReader,
         BufWriter,
-        AsyncReadExt,
         AsyncWriteExt,
     },
 };
@@ -262,11 +260,7 @@ async fn wheel_create(state: State) -> Result<(schema::Schema, State), ErrorSeve
     wheel_writer.flush(Error::WheelFileZeroInitFlush).await?;
 
     let mut schema = schema::Schema::new(storage_layout);
-    schema.initialize_empty(
-        eof_block_start_offset,
-        eof_block_header,
-        size_bytes_total,
-    );
+    schema.initialize_empty(size_bytes_total);
 
     log::debug!("initialized wheel schema: {:?}", schema);
 

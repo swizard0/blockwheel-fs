@@ -95,11 +95,11 @@ impl AsRef<[u8]> for BytesMut {
 }
 
 impl Deref for BytesMut {
-    type Target = [u8];
+    type Target = Vec<u8>;
 
     #[inline]
-    fn deref(&self) -> &[u8] {
-        self.as_ref()
+    fn deref(&self) -> &Vec<u8> {
+        &self.bytes
     }
 }
 
@@ -111,7 +111,7 @@ impl AsMut<[u8]> for BytesMut {
 
 impl DerefMut for BytesMut {
     #[inline]
-    fn deref_mut(&mut self) -> &mut [u8] {
-        self.as_mut()
+    fn deref_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.bytes
     }
 }

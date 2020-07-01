@@ -24,7 +24,7 @@ pub struct RequestRepayBlock {
     pub block_bytes: block::Bytes,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RequestWriteBlockError {
     NoSpaceLeft,
 }
