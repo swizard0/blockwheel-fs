@@ -95,15 +95,7 @@ pub struct WriteBlock {
     pub block_id: block::Id,
     pub block_bytes: block::Bytes,
     pub reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
-    pub state: WriteBlockState,
     pub commit_type: CommitType,
-}
-
-#[derive(Debug)]
-pub enum WriteBlockState {
-    Header,
-    Data,
-    Commit,
 }
 
 #[derive(Debug)]

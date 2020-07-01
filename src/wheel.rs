@@ -72,6 +72,13 @@ pub enum Error {
         cursor: u64,
         error: io::Error,
     },
+    WheelFileBlockHeaderEncode(bincode::Error),
+    WheelFileBlockHeaderWrite(io::Error),
+    WheelFileBlockHeaderFlush(io::Error),
+    WheelFileBlockWrite(io::Error),
+    WheelFileCommitTagEncode(bincode::Error),
+    WheelFileCommitTagWrite(io::Error),
+    WheelFileBlockFlush(io::Error),
 }
 
 pub struct State {
@@ -81,7 +88,7 @@ pub struct State {
 }
 
 pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> Result<(), ErrorSeverity<State, Error>> {
-    let WheelState { wheel_file, schema, state, } = match fs::metadata(&state.params.wheel_filename).await {
+    let WheelState { wheel_file, work_block, schema, state, } = match fs::metadata(&state.params.wheel_filename).await {
         Ok(ref metadata) if metadata.file_type().is_file() =>
             wheel_open(state).await?,
         Ok(_metadata) => {
@@ -101,7 +108,7 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
     let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
     supervisor_pid.spawn_link_permanent(
         async move {
-            if let Err(interpret_error) = interpret_loop(interpret_rx, wheel_file).await {
+            if let Err(interpret_error) = interpret_loop(interpret_rx, wheel_file, work_block).await {
                 interpret_error_tx.send(interpret_error).ok();
             }
         },
@@ -217,7 +224,13 @@ struct InterpretRequest {
 
 struct Interpreted;
 
-async fn interpret_loop(mut interpret_rx: mpsc::Receiver<InterpretRequest>, mut wheel_file: fs::File) -> Result<(), ErrorSeverity<(), Error>> {
+async fn interpret_loop(
+    mut interpret_rx: mpsc::Receiver<InterpretRequest>,
+    mut wheel_file: fs::File,
+    mut work_block: Vec<u8>,
+)
+    -> Result<(), ErrorSeverity<(), Error>>
+{
     let mut cursor = 0;
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)
@@ -229,8 +242,54 @@ async fn interpret_loop(mut interpret_rx: mpsc::Receiver<InterpretRequest>, mut 
                 .map_err(|error| ErrorSeverity::Fatal(Error::WheelFileSeek { offset, cursor, error, }))?;
             cursor = offset;
         }
+
+        match task_kind {
+            task::TaskKind::WriteBlock(write_block) => {
+                let mut wheel_writer = WheelWriter::new(
+                    &mut wheel_file,
+                    &mut work_block,
+                );
+                let block_header = storage::BlockHeader::Regular(
+                    storage::BlockHeaderRegular {
+                        block_id: write_block.block_id.clone(),
+                        block_size: write_block.block_bytes.len(),
+                    },
+                );
+                wheel_writer.write_serialize(&block_header, Error::WheelFileBlockHeaderEncode, Error::WheelFileBlockHeaderWrite).await?;
+                wheel_writer.flush(Error::WheelFileBlockHeaderFlush).await?;
+                wheel_writer.work_block().extend(write_block.block_bytes.iter());
+                wheel_writer.write_work_block(Error::WheelFileBlockWrite).await?;
+                let commit_tag = storage::CommitTag {
+                    block_id: write_block.block_id.clone(),
+                    ..Default::default()
+                };
+                wheel_writer.write_serialize(&commit_tag, Error::WheelFileCommitTagEncode, Error::WheelFileCommitTagWrite).await?;
+                match write_block.commit_type {
+                    task::CommitType::CommitOnly =>
+                        (),
+                    task::CommitType::CommitAndEof => {
+                        let eof_block_header = storage::BlockHeader::EndOfFile;
+                        wheel_writer.write_serialize(
+                            &eof_block_header,
+                            Error::WheelFileEofBlockHeaderEncode,
+                            Error::WheelFileEofBlockHeaderWrite,
+                        ).await?;
+                    },
+                }
+                wheel_writer.flush(Error::WheelFileBlockFlush).await?;
+
+                if let Err(_send_error) = write_block.reply_tx.send(Ok(write_block.block_id)) {
+                    log::warn!("client channel was closed before a block is actually written");
+                }
+            },
+        }
+
+        if let Err(_send_error) = reply_tx.send(Interpreted) {
+            break;
+        }
     }
 
+    log::debug!("master channel closed in interpret_loop, shutting down");
     Ok(())
 }
 
@@ -241,9 +300,9 @@ struct WheelWriter<'a> {
 }
 
 impl<'a> WheelWriter<'a> {
-    fn new(wheel_file: &'a mut fs::File, work_block: &'a mut Vec<u8>, work_block_size: usize) -> WheelWriter<'a> {
+    fn new(wheel_file: &'a mut fs::File, work_block: &'a mut Vec<u8>) -> WheelWriter<'a> {
         WheelWriter {
-            wheel_file_writer: BufWriter::with_capacity(work_block_size, wheel_file),
+            wheel_file_writer: BufWriter::with_capacity(work_block.capacity(), wheel_file),
             work_block,
             cursor: 0,
         }
@@ -288,6 +347,7 @@ impl<'a> WheelWriter<'a> {
 
 struct WheelState {
     wheel_file: fs::File,
+    work_block: Vec<u8>,
     schema: schema::Schema,
     state: State,
 }
@@ -324,7 +384,7 @@ async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, E
     let commit_tag_size = work_block.len();
     work_block.clear();
 
-    let mut wheel_writer = WheelWriter::new(&mut wheel_file, &mut work_block, state.params.work_block_size);
+    let mut wheel_writer = WheelWriter::new(&mut wheel_file, &mut work_block);
 
     let wheel_header = storage::WheelHeader {
         size_bytes: state.params.init_wheel_size_bytes,
@@ -371,7 +431,7 @@ async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, E
 
     log::debug!("initialized wheel schema: {:?}", schema);
 
-    Ok(WheelState { wheel_file, schema, state, })
+    Ok(WheelState { wheel_file, work_block, schema, state, })
 }
 
 async fn wheel_open(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {

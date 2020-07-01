@@ -66,7 +66,6 @@ impl Schema {
             block_id,
             block_bytes,
             reply_tx,
-            state: task::WriteBlockState::Header,
             commit_type: task::CommitType::CommitOnly,
         };
 
