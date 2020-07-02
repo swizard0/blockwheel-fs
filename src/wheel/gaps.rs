@@ -197,17 +197,20 @@ mod tests {
                         block_id: block_a_id.clone(),
                         block_entry: &index::BlockEntry {
                             offset: 0,
-                            header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                            header: storage::BlockHeader {
                                 block_id: block_a_id.clone(),
                                 block_size: 4,
-                            }),
+                            },
                         },
                     },
                     right_block: index::BlockInfo {
                         block_id: block_b_id.clone(),
                         block_entry: &index::BlockEntry {
                             offset: 8,
-                            header: storage::BlockHeader::EndOfFile,
+                            header: storage::BlockHeader {
+                                block_id: block_b_id.clone(),
+                                block_size: 0,
+                            },
                         },
                     },
                 },
@@ -228,7 +231,10 @@ mod tests {
                         block_id: block_b_id.clone(),
                         block_entry: &index::BlockEntry {
                             offset: 8,
-                            header: storage::BlockHeader::EndOfFile,
+                            header: storage::BlockHeader {
+                                block_id: block_b_id.clone(),
+                                block_size: 0,
+                            },
                         },
                     },
                 },
@@ -269,17 +275,20 @@ mod tests {
                         block_id: block_a_id.clone(),
                         block_entry: &index::BlockEntry {
                             offset: 0,
-                            header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                            header: storage::BlockHeader {
                                 block_id: block_a_id.clone(),
                                 block_size: 4,
-                            }),
+                            },
                         },
                     },
                     right_block: index::BlockInfo {
                         block_id: block_b_id.clone(),
                         block_entry: &index::BlockEntry {
                             offset: 8,
-                            header: storage::BlockHeader::EndOfFile,
+                            header: storage::BlockHeader {
+                                block_id: block_b_id.clone(),
+                                block_size: 0,
+                            },
                         },
                     },
                 },
@@ -294,7 +303,10 @@ mod tests {
                         block_id: block_b_id.clone(),
                         block_entry: &index::BlockEntry {
                             offset: 8,
-                            header: storage::BlockHeader::EndOfFile,
+                            header: storage::BlockHeader {
+                                block_id: block_b_id.clone(),
+                                block_size: 0,
+                            },
                         },
                     },
                 },
@@ -320,15 +332,18 @@ mod tests {
             let mut blocks_index = index::Blocks::new();
             blocks_index.insert(block_a_id.clone(), index::BlockEntry {
                 offset: 0,
-                header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                header: storage::BlockHeader {
                     block_id: block_a_id.clone(),
                     block_size: 4,
-                }),
+                },
             });
             let block_b_id = block_a_id.next();
             blocks_index.insert(block_b_id.clone(), index::BlockEntry {
                 offset: 8,
-                header: storage::BlockHeader::EndOfFile,
+                header: storage::BlockHeader {
+                    block_id: block_b_id.clone(),
+                    block_size: 0,
+                },
             });
 
             let mut gaps = Index::new();

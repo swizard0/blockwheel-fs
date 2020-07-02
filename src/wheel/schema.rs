@@ -246,9 +246,9 @@ mod tests {
     fn init() -> (Schema, task::Queue) {
         let storage_layout = storage::Layout {
             wheel_header_size: 24,
-            eof_block_header_size: 4,
-            regular_block_header_size: 20,
+            block_header_size: 16,
             commit_tag_size: 16,
+            eof_tag_size: 8,
         };
         let mut schema = Schema::new(storage_layout);
         schema.initialize_empty(128);
@@ -276,26 +276,19 @@ mod tests {
             &mut tasks_queue,
         );
 
-        assert_eq!(schema.next_block_id, block::Id::init().next().next().next());
-        assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
+        assert_eq!(schema.next_block_id, block::Id::init().next());
         assert_eq!(
-            schema.blocks_index.get(&block::Id::init().next()),
+            schema.blocks_index.get(&block::Id::init()),
             Some(&index::BlockEntry {
                 offset: 24,
-                header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
-                    block_id: block::Id::init().next(),
+                header: storage::BlockHeader {
+                    block_id: block::Id::init(),
                     block_size: 13,
-                }),
+                },
             }),
         );
-        assert_eq!(
-            schema.blocks_index.get(&block::Id::init().next().next()),
-            Some(&index::BlockEntry {
-                offset: 73,
-                header: storage::BlockHeader::EndOfFile,
-            }),
-        );
-        assert_eq!(schema.gaps.space_total(), 15);
+        assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
+        assert_eq!(schema.gaps.space_total(), 19);
         assert_eq!(reply_rx.try_recv(), Ok(None));
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
@@ -307,36 +300,28 @@ mod tests {
             &mut tasks_queue,
         );
 
-        assert_eq!(schema.next_block_id, block::Id::init().next().next().next().next().next());
-        assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
+        assert_eq!(schema.next_block_id, block::Id::init().next().next());
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init()),
+            Some(&index::BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    block_id: block::Id::init(),
+                    block_size: 13,
+                },
+            }),
+        );
         assert_eq!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&index::BlockEntry {
-                offset: 24,
-                header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                offset: 69,
+                header: storage::BlockHeader {
                     block_id: block::Id::init().next(),
                     block_size: 13,
-                }),
+                },
             }),
         );
         assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
-        assert_eq!(
-            schema.blocks_index.get(&block::Id::init().next().next().next()),
-            Some(&index::BlockEntry {
-                offset: 73,
-                header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
-                    block_id: block::Id::init().next().next().next(),
-                    block_size: 13,
-                }),
-            }),
-        );
-        assert_eq!(
-            schema.blocks_index.get(&block::Id::init().next().next().next().next()),
-            Some(&index::BlockEntry {
-                offset: 122,
-                header: storage::BlockHeader::EndOfFile,
-            }),
-        );
         assert_eq!(schema.gaps.space_total(), 0);
         assert_eq!(reply_rx.try_recv(), Ok(None));
 

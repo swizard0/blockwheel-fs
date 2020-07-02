@@ -41,6 +41,7 @@ async fn main() {
     let blockwheel_pid = blockwheel_gen_server.pid();
 
     supervisor_pid.spawn_link_permanent(blockwheel_gen_server.run(
+        supervisor_pid.clone(),
         blockwheel::Params {
             wheel_filename: opts.wheel_filename.into(),
             init_wheel_size_bytes: opts.init_wheel_size_bytes,
