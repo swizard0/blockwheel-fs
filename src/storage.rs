@@ -27,27 +27,25 @@ impl Default for WheelHeader {
     }
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
-pub enum BlockHeader {
-    EndOfFile,
-    Regular(BlockHeaderRegular),
-}
-
-impl BlockHeader {
-    pub fn block_size(&self) -> usize {
-        match self {
-            BlockHeader::EndOfFile =>
-                0,
-            BlockHeader::Regular(header) =>
-                header.block_size,
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Serialize, Deserialize, Default, Debug)]
-pub struct BlockHeaderRegular {
+pub struct BlockHeader {
     pub block_id: block::Id,
     pub block_size: usize,
+}
+
+pub const EOF_TAG_MAGIC: u64 = 0x1cfccad598b6f785;
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct EofTag {
+    pub magic: u64,
+}
+
+impl Default for EofTag {
+    fn default() -> EofTag {
+        EofTag {
+            magic: EOF_TAG_MAGIC,
+        }
+    }
 }
 
 pub const COMMIT_TAG_MAGIC: u64 = 0xdb68d2d17dfe9811;
@@ -70,19 +68,60 @@ impl Default for CommitTag {
 #[derive(Clone, PartialEq, Default, Debug)]
 pub struct Layout {
     pub wheel_header_size: usize,
-    pub eof_block_header_size: usize,
-    pub regular_block_header_size: usize,
+    pub block_header_size: usize,
     pub commit_tag_size: usize,
+    pub eof_tag_size: usize,
+}
+
+#[derive(Debug)]
+pub enum LayoutError {
+    WheelHeaderSerialize(bincode::Error),
+    BlockHeaderSerialize(bincode::Error),
+    CommitTagSerialize(bincode::Error),
+    EofTagSerialize(bincode::Error),
 }
 
 impl Layout {
-    pub fn data_size_service_min(&self) -> usize {
-        self.wheel_header_size
-            + self.eof_block_header_size
+    pub fn calculate(mut work_block: &mut Vec<u8>) -> Result<Layout, LayoutError> {
+        let mut cursor = work_block.len();
+
+        bincode::serialize_into(&mut work_block, &WheelHeader::default())
+            .map_err(LayoutError::WheelHeaderSerialize)?;
+        let wheel_header_size = work_block.len() - cursor;
+        cursor = work_block.len();
+
+        bincode::serialize_into(&mut work_block, &BlockHeader::default())
+            .map_err(LayoutError::BlockHeaderSerialize)?;
+        let block_header_size = work_block.len() - cursor;
+        cursor = work_block.len();
+
+        bincode::serialize_into(&mut work_block, &CommitTag::default())
+            .map_err(LayoutError::CommitTagSerialize)?;
+        let commit_tag_size = work_block.len() - cursor;
+        cursor = work_block.len();
+
+        bincode::serialize_into(&mut work_block, &EofTag::default())
+            .map_err(LayoutError::EofTagSerialize)?;
+        let eof_tag_size = work_block.len() - cursor;
+
+        work_block.clear();
+        Ok(Layout {
+            wheel_header_size,
+            block_header_size,
+            commit_tag_size,
+            eof_tag_size,
+        })
     }
 
     pub fn data_size_block_min(&self) -> usize {
-        self.regular_block_header_size
+        self.block_header_size
             + self.commit_tag_size
+    }
+
+    pub fn total_size(&self) -> usize {
+        self.wheel_header_size
+            + self.block_header_size
+            + self.commit_tag_size
+            + self.eof_tag_size
     }
 }

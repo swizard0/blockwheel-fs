@@ -29,6 +29,7 @@ pub enum GapBetween<B> {
     BlockAndEnd {
         left_block: B,
     },
+    StartAndEnd,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -87,6 +88,15 @@ impl Index {
                 Some((key, between)) => {
                     self.remove_buf.push(*key);
                     match between {
+                        GapBetween::StartAndEnd => {
+                            maybe_result = Some(Allocated::Success {
+                                space_available: key.space_available,
+                                between: GapBetween::StartAndEnd,
+                            });
+                            assert!(key.space_available <= self.space_total);
+                            self.space_total -= key.space_available;
+                            break;
+                        },
                         GapBetween::StartAndBlock { right_block, } =>
                             if let Some(block_entry) = blocks_index.get(right_block) {
                                 maybe_result = Some(Allocated::Success {

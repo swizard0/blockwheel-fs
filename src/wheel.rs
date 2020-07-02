@@ -20,8 +20,9 @@ use tokio::{
     fs,
     io::{
         BufWriter,
+        BufReader,
+        AsyncReadExt,
         AsyncWriteExt,
-        AsyncSeekExt,
     },
 };
 
@@ -47,8 +48,8 @@ mod schema;
 #[derive(Debug)]
 pub enum Error {
     InitWheelSizeIsTooSmall {
-        provided: u64,
-        required_min: u64,
+        provided: usize,
+        required_min: usize,
     },
     WheelFileMetadata {
         wheel_filename: PathBuf,
@@ -58,27 +59,22 @@ pub enum Error {
         wheel_filename: PathBuf,
         error: io::Error,
     },
-    WheelFileDefaultRegularHeaderEncode(bincode::Error),
-    WheelFileDefaultCommitTagEncode(bincode::Error),
-    WheelFileWheelHeaderEncode(bincode::Error),
-    WheelFileWheelHeaderWrite(io::Error),
-    WheelFileEofBlockHeaderEncode(bincode::Error),
-    WheelFileEofBlockHeaderWrite(io::Error),
-    WheelFileZeroInitWrite(io::Error),
-    WheelFileZeroInitFlush(io::Error),
+    StorageLayoutCalculate(storage::LayoutError),
+    WheelHeaderSerialize(bincode::Error),
+    EofTagSerialize(bincode::Error),
+    WheelHeaderAndEofTagWrite(io::Error),
+    ZeroChunkWrite(io::Error),
+    WheelCreateFlush(io::Error),
     WheelFileInitialSeek(io::Error),
     WheelFileSeek {
         offset: u64,
         cursor: u64,
         error: io::Error,
     },
-    WheelFileBlockHeaderEncode(bincode::Error),
-    WheelFileBlockHeaderWrite(io::Error),
-    WheelFileBlockHeaderFlush(io::Error),
-    WheelFileBlockWrite(io::Error),
-    WheelFileCommitTagEncode(bincode::Error),
-    WheelFileCommitTagWrite(io::Error),
-    WheelFileBlockFlush(io::Error),
+    BlockHeaderSerialize(bincode::Error),
+    CommitTagSerialize(bincode::Error),
+    BlockWrite(io::Error),
+    BlockFlush(io::Error),
 }
 
 pub struct State {
@@ -183,9 +179,9 @@ async fn busyloop(
             Source::Pid(Some(proto::Request::WriteBlock(request_write_block))) =>
                 schema.process_write_block_request(request_write_block, &mut tasks_queue),
 
-            Source::Pid(Some(proto::Request::ReadBlock(proto::RequestReadBlock { block_id, reply_tx, }))) => {
-
-                unimplemented!()
+            Source::Pid(Some(proto::Request::ReadBlock(request_read_block))) => {
+                let block = blocks_pool.lend();
+                schema.process_read_block_request(request_read_block, block, &mut tasks_queue);
             },
 
             Source::Pid(Some(proto::Request::DeleteBlock(proto::RequestDeleteBlock { block_id, reply_tx, }))) => {
@@ -197,6 +193,15 @@ async fn busyloop(
                 bg_task = None;
                 if let Err(_send_error) = write_block.reply_tx.send(Ok(write_block.block_id)) {
                     log::warn!("client channel was closed before a block is actually written");
+                }
+            },
+
+            Source::InterpreterDone(Ok(task::TaskDone::ReadBlock(read_block))) => {
+                // TODO: update LRU
+
+                bg_task = None;
+                if let Err(_send_error) = read_block.reply_tx.send(Ok(read_block.block_bytes.freeze())) {
+                    log::warn!("client channel was closed before a block is actually read");
                 }
             },
 
@@ -246,38 +251,38 @@ async fn interpret_loop(
 
         match task_kind {
             task::TaskKind::WriteBlock(write_block) => {
-                let mut wheel_writer = WheelWriter::new(
-                    &mut wheel_file,
-                    &mut work_block,
-                );
-                let block_header = storage::BlockHeader::Regular(
-                    storage::BlockHeaderRegular {
-                        block_id: write_block.block_id.clone(),
-                        block_size: write_block.block_bytes.len(),
-                    },
-                );
-                wheel_writer.write_serialize(&block_header, Error::WheelFileBlockHeaderEncode, Error::WheelFileBlockHeaderWrite).await?;
-                wheel_writer.flush(Error::WheelFileBlockHeaderFlush).await?;
-                wheel_writer.work_block().extend(write_block.block_bytes.iter());
-                wheel_writer.write_work_block(Error::WheelFileBlockWrite).await?;
+                let block_header = storage::BlockHeader {
+                    block_id: write_block.block_id.clone(),
+                    block_size: write_block.block_bytes.len(),
+                };
+                bincode::serialize_into(&mut work_block, &block_header)
+                    .map_err(Error::BlockHeaderSerialize)
+                    .map_err(ErrorSeverity::Fatal)?;
+                work_block.extend(write_block.block_bytes.iter());
                 let commit_tag = storage::CommitTag {
                     block_id: write_block.block_id.clone(),
                     ..Default::default()
                 };
-                wheel_writer.write_serialize(&commit_tag, Error::WheelFileCommitTagEncode, Error::WheelFileCommitTagWrite).await?;
+                bincode::serialize_into(&mut work_block, &block_header)
+                    .map_err(Error::CommitTagSerialize)
+                    .map_err(ErrorSeverity::Fatal)?;
+
                 match write_block.commit_type {
                     task::CommitType::CommitOnly =>
                         (),
                     task::CommitType::CommitAndEof => {
-                        let eof_block_header = storage::BlockHeader::EndOfFile;
-                        wheel_writer.write_serialize(
-                            &eof_block_header,
-                            Error::WheelFileEofBlockHeaderEncode,
-                            Error::WheelFileEofBlockHeaderWrite,
-                        ).await?;
+                        bincode::serialize_into(&mut work_block, &storage::EofTag::default())
+                            .map_err(Error::EofTagSerialize)
+                            .map_err(ErrorSeverity::Fatal)?;
                     },
                 }
-                wheel_writer.flush(Error::WheelFileBlockFlush).await?;
+
+                wheel_file.write_all(&work_block).await
+                    .map_err(Error::BlockWrite)
+                    .map_err(ErrorSeverity::Fatal)?;
+                wheel_file.flush().await
+                    .map_err(Error::BlockFlush)
+                    .map_err(ErrorSeverity::Fatal)?;
 
                 let task_done = task::TaskDone::WriteBlock(task::TaskDoneWriteBlock {
                     block_id: write_block.block_id,
@@ -286,64 +291,19 @@ async fn interpret_loop(
                 if let Err(_send_error) = reply_tx.send(task_done) {
                     break;
                 }
+
+                cursor += work_block.len() as u64;
+                work_block.clear();
+            },
+
+            task::TaskKind::ReadBlock(read_block) => {
+
             },
         }
     }
 
     log::debug!("master channel closed in interpret_loop, shutting down");
     Ok(())
-}
-
-struct WheelWriter<'a> {
-    wheel_file_writer: BufWriter<&'a mut fs::File>,
-    work_block: &'a mut Vec<u8>,
-    cursor: u64,
-}
-
-impl<'a> WheelWriter<'a> {
-    fn new(wheel_file: &'a mut fs::File, work_block: &'a mut Vec<u8>) -> WheelWriter<'a> {
-        WheelWriter {
-            wheel_file_writer: BufWriter::with_capacity(work_block.capacity(), wheel_file),
-            work_block,
-            cursor: 0,
-        }
-    }
-
-    async fn write_serialize<T, S, SME, WME>(
-        &mut self,
-        object: &T,
-        serialize_map_err: SME,
-        write_map_err: WME,
-    )
-        -> Result<(), ErrorSeverity<S, Error>>
-    where T: serde::Serialize,
-          SME: Fn(bincode::Error) -> Error,
-          WME: Fn(io::Error) -> Error,
-    {
-        bincode::serialize_into(self.work_block(), object)
-            .map_err(serialize_map_err)
-            .map_err(ErrorSeverity::Fatal)?;
-        self.write_work_block(write_map_err).await
-    }
-
-    async fn write_work_block<S, WME>(&mut self, write_map_err: WME) -> Result<(), ErrorSeverity<S, Error>> where WME: Fn(io::Error) -> Error {
-        self.wheel_file_writer.write_all(self.work_block).await
-            .map_err(write_map_err)
-            .map_err(ErrorSeverity::Fatal)?;
-        self.cursor += self.work_block.len() as u64;
-        self.work_block.clear();
-        Ok(())
-    }
-
-    async fn flush<S, FME>(&mut self, flush_map_err: FME) -> Result<(), ErrorSeverity<S, Error>> where FME: Fn(io::Error) -> Error {
-        self.wheel_file_writer.flush().await
-            .map_err(flush_map_err)
-            .map_err(ErrorSeverity::Fatal)
-    }
-
-    fn work_block(&mut self) -> &mut &'a mut Vec<u8> {
-        &mut self.work_block
-    }
 }
 
 struct WheelState {
@@ -373,59 +333,53 @@ async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, E
     };
     let mut work_block: Vec<u8> = Vec::with_capacity(state.params.work_block_size);
 
-    bincode::serialize_into(&mut work_block, &storage::BlockHeader::Regular(storage::BlockHeaderRegular::default()))
-        .map_err(Error::WheelFileDefaultRegularHeaderEncode)
+    let storage_layout = storage::Layout::calculate(&mut work_block)
+        .map_err(Error::StorageLayoutCalculate)
         .map_err(ErrorSeverity::Fatal)?;
-    let regular_block_header_size = work_block.len();
-    work_block.clear();
-
-    bincode::serialize_into(&mut work_block, &storage::CommitTag::default())
-        .map_err(Error::WheelFileDefaultCommitTagEncode)
-        .map_err(ErrorSeverity::Fatal)?;
-    let commit_tag_size = work_block.len();
-    work_block.clear();
-
-    let mut wheel_writer = WheelWriter::new(&mut wheel_file, &mut work_block);
 
     let wheel_header = storage::WheelHeader {
         size_bytes: state.params.init_wheel_size_bytes,
         ..storage::WheelHeader::default()
     };
-    wheel_writer.write_serialize(&wheel_header, Error::WheelFileWheelHeaderEncode, Error::WheelFileWheelHeaderWrite).await?;
-    let wheel_header_size = wheel_writer.cursor as usize;
+    bincode::serialize_into(&mut work_block, &wheel_header)
+        .map_err(Error::WheelHeaderSerialize)
+        .map_err(ErrorSeverity::Fatal)?;
+    bincode::serialize_into(&mut work_block, &storage::EofTag::default())
+        .map_err(Error::EofTagSerialize)
+        .map_err(ErrorSeverity::Fatal)?;
 
-    let eof_block_header = storage::BlockHeader::EndOfFile;
-    let eof_block_start_offset = wheel_writer.cursor;
-    wheel_writer.write_serialize(&eof_block_header, Error::WheelFileEofBlockHeaderEncode, Error::WheelFileEofBlockHeaderWrite).await?;
-    let eof_block_header_size = wheel_writer.cursor as usize - wheel_header_size;
+    let mut cursor = work_block.len();
+    let min_wheel_file_size = storage_layout.wheel_header_size + storage_layout.eof_tag_size;
+    assert_eq!(cursor, min_wheel_file_size);
+    wheel_file.write_all(&work_block).await
+        .map_err(Error::WheelHeaderAndEofTagWrite)
+        .map_err(ErrorSeverity::Fatal)?;
 
-    let storage_layout = storage::Layout {
-        wheel_header_size,
-        regular_block_header_size,
-        eof_block_header_size,
-        commit_tag_size,
-    };
-
-    let size_bytes_total = state.params.init_wheel_size_bytes as u64;
-
-    if size_bytes_total < storage_layout.data_size_service_min() as u64 {
+    let size_bytes_total = state.params.init_wheel_size_bytes;
+    if size_bytes_total < min_wheel_file_size {
         return Err(ErrorSeverity::Fatal(Error::InitWheelSizeIsTooSmall {
             provided: size_bytes_total,
-            required_min: storage_layout.data_size_service_min() as u64,
+            required_min: min_wheel_file_size,
         }));
     }
 
-    while wheel_writer.cursor < size_bytes_total {
-        let bytes_remain = size_bytes_total - wheel_writer.cursor;
-        let write_amount = if bytes_remain < size_bytes_total {
+    work_block.clear();
+    work_block.extend((0 .. state.params.work_block_size).map(|_| 0));
+
+    while cursor < size_bytes_total {
+        let bytes_remain = size_bytes_total - cursor;
+        let write_amount = if bytes_remain < state.params.work_block_size {
             bytes_remain
         } else {
-            size_bytes_total
+            state.params.work_block_size
         };
-        wheel_writer.work_block.extend((0 .. write_amount).map(|_| 0));
-        wheel_writer.write_work_block(Error::WheelFileZeroInitWrite).await?;
+        wheel_file.write_all(&work_block[ ..bytes_remain]).await
+            .map_err(Error::ZeroChunkWrite)
+            .map_err(ErrorSeverity::Fatal)?;
     }
-    wheel_writer.flush(Error::WheelFileZeroInitFlush).await?;
+    wheel_file.flush().await
+        .map_err(Error::WheelCreateFlush)
+        .map_err(ErrorSeverity::Fatal)?;
 
     let mut schema = schema::Schema::new(storage_layout);
     schema.initialize_empty(size_bytes_total);

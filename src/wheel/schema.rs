@@ -30,28 +30,15 @@ impl Schema {
         }
     }
 
-    pub fn initialize_empty(&mut self, size_bytes_total: u64) {
-        self.blocks_index.insert(
-            self.next_block_id.clone(),
-            index::BlockEntry {
-                offset: self.storage_layout.wheel_header_size as u64,
-                header: storage::BlockHeader::EndOfFile,
-            },
-        );
-
-        let total_service_size = self.storage_layout.data_size_service_min()
-            + self.storage_layout.data_size_block_min();
-        if size_bytes_total > total_service_size as u64 {
-            let space_available = size_bytes_total - total_service_size as u64;
+    pub fn initialize_empty(&mut self, size_bytes_total: usize) {
+        let total_service_size = self.storage_layout.total_size();
+        if size_bytes_total > total_service_size {
+            let space_available = size_bytes_total - total_service_size;
             self.gaps.insert(
-                space_available as usize,
-                gaps::GapBetween::BlockAndEnd {
-                    left_block: self.next_block_id.clone(),
-                },
+                space_available,
+                gaps::GapBetween::StartAndEnd,
             );
         }
-
-        self.next_block_id = self.next_block_id.next();
     }
 
     pub fn process_write_block_request(
@@ -79,10 +66,10 @@ impl Schema {
                     task_write_block.block_id.clone(),
                     index::BlockEntry {
                         offset: block_offset,
-                        header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                        header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
                             block_size: space_required,
-                        }),
+                        },
                     },
                 );
 
@@ -112,16 +99,16 @@ impl Schema {
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::TwoBlocks { left_block, right_block, }, }) => {
                 let block_offset = left_block.block_entry.offset
                     + self.storage_layout.data_size_block_min() as u64
-                    + left_block.block_entry.header.block_size() as u64;
+                    + left_block.block_entry.header.block_size as u64;
                 let right_block_id = right_block.block_id.clone();
                 self.blocks_index.insert(
                     task_write_block.block_id.clone(),
                     index::BlockEntry {
                         offset: block_offset,
-                        header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                        header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
                             block_size: space_required,
-                        }),
+                        },
                     },
                 );
 
@@ -149,33 +136,18 @@ impl Schema {
                 tasks_queue.push(block_offset, task::TaskKind::WriteBlock(task_write_block));
             },
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::BlockAndEnd { left_block, }, }) => {
-                assert_eq!(left_block.block_entry.header, storage::BlockHeader::EndOfFile);
-                let block_offset = left_block.block_entry.offset;
-                let left_block_id = left_block.block_id.clone();
-
-                let maybe_eof = self.blocks_index.remove(left_block_id);
-                assert!(matches!(maybe_eof, Some(index::BlockEntry { header: storage::BlockHeader::EndOfFile, .. })));
+                let block_offset = left_block.block_entry.offset
+                    + self.storage_layout.data_size_block_min() as u64
+                    + left_block.block_entry.header.block_size as u64;
 
                 self.blocks_index.insert(
                     task_write_block.block_id.clone(),
                     index::BlockEntry {
                         offset: block_offset,
-                        header: storage::BlockHeader::Regular(storage::BlockHeaderRegular {
+                        header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
                             block_size: space_required,
-                        }),
-                    },
-                );
-
-                let eof_block_id = self.next_block_id.clone();
-                self.next_block_id = self.next_block_id.next();
-                self.blocks_index.insert(
-                    eof_block_id.clone(),
-                    index::BlockEntry {
-                        offset: block_offset
-                            + space_required as u64
-                            + self.storage_layout.data_size_block_min() as u64,
-                        header: storage::BlockHeader::EndOfFile,
+                        },
                     },
                 );
 
@@ -185,7 +157,35 @@ impl Schema {
                     self.gaps.insert(
                         space_left_available,
                         gaps::GapBetween::BlockAndEnd {
-                            left_block: eof_block_id.clone(),
+                            left_block: task_write_block.block_id.clone(),
+                        },
+                    );
+                }
+
+                task_write_block.commit_type = task::CommitType::CommitAndEof;
+                tasks_queue.push(block_offset, task::TaskKind::WriteBlock(task_write_block));
+            },
+            Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndEnd, }) => {
+                let block_offset = self.storage_layout.wheel_header_size as u64;
+
+                self.blocks_index.insert(
+                    task_write_block.block_id.clone(),
+                    index::BlockEntry {
+                        offset: block_offset,
+                        header: storage::BlockHeader {
+                            block_id: task_write_block.block_id.clone(),
+                            block_size: space_required,
+                        },
+                    },
+                );
+
+                let space_left = space_available - space_required;
+                if space_left >= self.storage_layout.data_size_block_min() {
+                    let space_left_available = space_left - self.storage_layout.data_size_block_min();
+                    self.gaps.insert(
+                        space_left_available,
+                        gaps::GapBetween::BlockAndEnd {
+                            left_block: task_write_block.block_id.clone(),
                         },
                     );
                 }
@@ -204,6 +204,23 @@ impl Schema {
                 if let Err(_send_error) = task_write_block.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
                     log::warn!("process_write_block_request: reply channel has been closed");
                 }
+            }
+        }
+    }
+
+    pub fn process_read_block_request(
+        &mut self,
+        proto::RequestReadBlock { block_id, reply_tx, }: proto::RequestReadBlock,
+        block_bytes: block::BytesMut,
+        tasks_queue: &mut task::Queue,
+    )
+    {
+        if let Some(block_entry) = self.blocks_index.get(&block_id) {
+
+            unimplemented!()
+        } else {
+            if let Err(_send_error) = reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
+                log::warn!("process_read_block_request: reply channel has been closed");
             }
         }
     }

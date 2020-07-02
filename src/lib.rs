@@ -103,6 +103,12 @@ pub enum WriteBlockError {
     NoSpaceLeft,
 }
 
+#[derive(Debug)]
+pub enum ReadBlockError {
+    GenServer(ero::NoProcError),
+    NotFound,
+}
+
 impl Pid {
     pub async fn lend_block(&mut self) -> Result<block::BytesMut, ero::NoProcError> {
         loop {
@@ -146,7 +152,7 @@ impl Pid {
         }
     }
 
-    pub async fn read_block(&mut self, block_id: block::Id) -> Result<block::BytesMut, ero::NoProcError> {
+    pub async fn read_block(&mut self, block_id: block::Id) -> Result<block::Bytes, ReadBlockError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
@@ -155,11 +161,13 @@ impl Pid {
                     reply_tx,
                 }))
                 .await
-                .map_err(|_send_error| ero::NoProcError)?;
+                .map_err(|_send_error| ReadBlockError::GenServer(ero::NoProcError))?;
 
             match reply_rx.await {
-                Ok(block_bytes) =>
+                Ok(Ok(block_bytes)) =>
                     return Ok(block_bytes),
+                Ok(Err(proto::RequestReadBlockError::NotFound)) =>
+                    return Err(ReadBlockError::NotFound),
                 Err(oneshot::Canceled) =>
                     (),
             }

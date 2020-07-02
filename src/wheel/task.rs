@@ -88,6 +88,7 @@ impl Ord for Task {
 #[derive(Debug)]
 pub enum TaskKind {
     WriteBlock(WriteBlock),
+    ReadBlock(ReadBlock),
 }
 
 #[derive(Debug)]
@@ -105,12 +106,27 @@ pub enum CommitType {
 }
 
 #[derive(Debug)]
+pub struct ReadBlock {
+    pub block_id: block::Id,
+    pub block_bytes: block::BytesMut,
+    pub reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
+}
+
+#[derive(Debug)]
 pub enum TaskDone {
     WriteBlock(TaskDoneWriteBlock),
+    ReadBlock(TaskDoneReadBlock),
 }
 
 #[derive(Debug)]
 pub struct TaskDoneWriteBlock {
     pub block_id: block::Id,
     pub reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
+}
+
+#[derive(Debug)]
+pub struct TaskDoneReadBlock {
+    pub block_id: block::Id,
+    pub block_bytes: block::BytesMut,
+    pub reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
 }
