@@ -19,8 +19,10 @@ impl Blocks {
             cursor -= 1;
             let frozen_block = self.pool.swap_remove(cursor);
             match frozen_block.into_mut() {
-                Ok(block) =>
-                    return block,
+                Ok(mut block) => {
+                    block.clear();
+                    return block;
+                },
                 Err(frozen_block) =>
                     self.pool.push(frozen_block),
             }

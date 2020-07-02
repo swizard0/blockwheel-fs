@@ -19,8 +19,6 @@ use futures::{
 use tokio::{
     fs,
     io::{
-        BufWriter,
-        BufReader,
         AsyncReadExt,
         AsyncWriteExt,
     },
@@ -75,6 +73,30 @@ pub enum Error {
     CommitTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockFlush(io::Error),
+    BlockRead(io::Error),
+    BlockHeaderDeserialize(bincode::Error),
+    CommitTagDeserialize(bincode::Error),
+    CorruptedData(CorruptedDataError),
+}
+
+#[derive(Debug)]
+pub enum CorruptedDataError {
+    BlockIdMismatch {
+        offset: u64,
+        block_id_expected: block::Id,
+        block_id_actual: block::Id,
+    },
+    BlockSizeMismatch {
+        offset: u64,
+        block_id: block::Id,
+        block_size_expected: usize,
+        block_size_actual: usize,
+    },
+    CommitTagBlockIdMismatch {
+        offset: u64,
+        block_id_expected: block::Id,
+        block_id_actual: block::Id,
+    },
 }
 
 pub struct State {
@@ -102,9 +124,16 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
 
     let (interpret_tx, interpret_rx) = mpsc::channel(0);
     let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
+    let storage_layout = schema.storage_layout().clone();
     supervisor_pid.spawn_link_permanent(
         async move {
-            if let Err(interpret_error) = interpret_loop(interpret_rx, wheel_file, work_block).await {
+            let interpret_task = interpret_loop(
+                interpret_rx,
+                wheel_file,
+                work_block,
+                storage_layout,
+            );
+            if let Err(interpret_error) = interpret_task.await {
                 interpret_error_tx.send(interpret_error).ok();
             }
         },
@@ -234,6 +263,7 @@ async fn interpret_loop(
     mut interpret_rx: mpsc::Receiver<InterpretRequest>,
     mut wheel_file: fs::File,
     mut work_block: Vec<u8>,
+    storage_layout: storage::Layout,
 )
     -> Result<(), ErrorSeverity<(), Error>>
 {
@@ -296,8 +326,60 @@ async fn interpret_loop(
                 work_block.clear();
             },
 
-            task::TaskKind::ReadBlock(read_block) => {
+            task::TaskKind::ReadBlock(mut read_block) => {
+                let total_chunk_size = storage_layout.data_size_block_min()
+                    + read_block.block_header.block_size;
+                work_block.extend((0 .. total_chunk_size).map(|_| 0));
+                wheel_file.read_exact(&mut work_block).await
+                    .map_err(Error::BlockRead)
+                    .map_err(ErrorSeverity::Fatal)?;
 
+                let block_buffer_start = storage_layout.block_header_size;
+                let block_buffer_end = work_block.len() - storage_layout.commit_tag_size;
+
+                let block_header: storage::BlockHeader = bincode::deserialize_from(&work_block[.. block_buffer_start])
+                    .map_err(Error::BlockHeaderDeserialize)
+                    .map_err(ErrorSeverity::Fatal)?;
+                if block_header.block_id != read_block.block_header.block_id {
+                    return Err(ErrorSeverity::Fatal(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
+                        offset,
+                        block_id_expected: read_block.block_header.block_id,
+                        block_id_actual: block_header.block_id,
+                    })));
+                }
+                if block_header.block_size != read_block.block_header.block_size {
+                    return Err(ErrorSeverity::Fatal(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
+                        offset,
+                        block_id: block_header.block_id,
+                        block_size_expected: read_block.block_header.block_size,
+                        block_size_actual: block_header.block_size,
+                    })));
+                }
+
+                read_block.block_bytes.extend(work_block[block_buffer_start .. block_buffer_end].iter());
+
+                let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[block_buffer_end ..])
+                    .map_err(Error::CommitTagDeserialize)
+                    .map_err(ErrorSeverity::Fatal)?;
+                if commit_tag.block_id != read_block.block_header.block_id {
+                    return Err(ErrorSeverity::Fatal(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
+                        offset,
+                        block_id_expected: read_block.block_header.block_id,
+                        block_id_actual: commit_tag.block_id,
+                    })));
+                }
+
+                let task_done = task::TaskDone::ReadBlock(task::TaskDoneReadBlock {
+                    block_id: read_block.block_header.block_id,
+                    block_bytes: read_block.block_bytes,
+                    reply_tx: read_block.reply_tx,
+                });
+                if let Err(_send_error) = reply_tx.send(task_done) {
+                    break;
+                }
+
+                cursor += work_block.len() as u64;
+                work_block.clear();
             },
         }
     }
@@ -373,9 +455,10 @@ async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, E
         } else {
             state.params.work_block_size
         };
-        wheel_file.write_all(&work_block[ ..bytes_remain]).await
+        wheel_file.write_all(&work_block[.. write_amount]).await
             .map_err(Error::ZeroChunkWrite)
             .map_err(ErrorSeverity::Fatal)?;
+        cursor += write_amount;
     }
     wheel_file.flush().await
         .map_err(Error::WheelCreateFlush)

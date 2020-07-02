@@ -14,6 +14,7 @@ use futures::{
 use super::{
     block,
     proto,
+    storage,
 };
 
 pub struct Queue {
@@ -107,7 +108,7 @@ pub enum CommitType {
 
 #[derive(Debug)]
 pub struct ReadBlock {
-    pub block_id: block::Id,
+    pub block_header: storage::BlockHeader,
     pub block_bytes: block::BytesMut,
     pub reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
 }

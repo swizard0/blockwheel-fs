@@ -41,6 +41,10 @@ impl Schema {
         }
     }
 
+    pub fn storage_layout(&self) -> &storage::Layout {
+        &self.storage_layout
+    }
+
     pub fn process_write_block_request(
         &mut self,
         proto::RequestWriteBlock { block_bytes, reply_tx, }: proto::RequestWriteBlock,
