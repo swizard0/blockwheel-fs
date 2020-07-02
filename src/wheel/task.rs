@@ -18,6 +18,7 @@ use super::{
 };
 
 pub struct Queue {
+    serial: usize,
     queue_left: BinaryHeap<Task>,
     queue_right: BinaryHeap<Task>,
 }
@@ -25,6 +26,7 @@ pub struct Queue {
 impl Queue {
     pub fn new() -> Queue {
         Queue {
+            serial: 0,
             queue_left: BinaryHeap::new(),
             queue_right: BinaryHeap::new(),
         }
@@ -44,13 +46,15 @@ impl Queue {
                 &mut self.queue_right
             },
         };
-        queue.push(Task { offset, task, });
+        let serial = self.serial;
+        self.serial += 1;
+        queue.push(Task { offset, serial, task, });
     }
 
     pub fn pop(&mut self) -> Option<(u64, TaskKind)> {
-        if let Some(Task { offset, task, }) = self.queue_right.pop() {
+        if let Some(Task { offset, task, .. }) = self.queue_right.pop() {
             Some((offset, task))
-        } else if let Some(Task { offset, task, }) = self.queue_left.pop() {
+        } else if let Some(Task { offset, task, .. }) = self.queue_left.pop() {
             // rotate
             mem::swap(&mut self.queue_left, &mut self.queue_right);
             Some((offset, task))
@@ -63,12 +67,13 @@ impl Queue {
 #[derive(Debug)]
 struct Task {
     offset: u64,
+    serial: usize,
     task: TaskKind,
 }
 
 impl PartialEq for Task {
     fn eq(&self, other: &Task) -> bool {
-        self.offset == other.offset
+        self.offset == other.offset && self.serial == other.serial
     }
 }
 
@@ -83,6 +88,7 @@ impl PartialOrd for Task {
 impl Ord for Task {
     fn cmp(&self, other: &Task) -> cmp::Ordering {
         other.offset.cmp(&self.offset)
+            .then_with(|| self.serial.cmp(&other.serial))
     }
 }
 
