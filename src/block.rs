@@ -36,7 +36,7 @@ impl Id {
     }
 }
 
-#[derive(Clone, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Bytes {
     bytes: Arc<Vec<u8>>,
 }

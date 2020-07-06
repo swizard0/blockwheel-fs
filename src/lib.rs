@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::{
     path::PathBuf,
     time::Duration,
@@ -30,7 +32,8 @@ pub struct Params {
     pub wheel_filename: PathBuf,
     pub init_wheel_size_bytes: usize,
     pub wheel_task_restart_sec: usize,
-    pub work_block_size: usize,
+    pub work_block_size_bytes: usize,
+    pub lru_cache_size_bytes: usize,
 }
 
 impl Default for Params {
@@ -39,7 +42,8 @@ impl Default for Params {
             wheel_filename: "wheel".to_string().into(),
             init_wheel_size_bytes: 64 * 1024 * 1024,
             wheel_task_restart_sec: 4,
-            work_block_size: 8 * 1024 * 1024,
+            work_block_size_bytes: 8 * 1024 * 1024,
+            lru_cache_size_bytes: 16 * 1024 * 1024,
         }
     }
 }

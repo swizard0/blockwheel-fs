@@ -220,8 +220,14 @@ impl Schema {
     )
     {
         if let Some(block_entry) = self.blocks_index.get(&block_id) {
-
-            unimplemented!()
+            tasks_queue.push(
+                block_entry.offset,
+                task::TaskKind::ReadBlock(task::ReadBlock {
+                    block_header: block_entry.header.clone(),
+                    block_bytes,
+                    reply_tx,
+                }),
+            );
         } else {
             if let Err(_send_error) = reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
                 log::warn!("process_read_block_request: reply channel has been closed");
@@ -334,5 +340,57 @@ mod tests {
             &mut tasks_queue,
         );
         assert_eq!(reply_rx.try_recv(), Ok(Some(Err(proto::RequestWriteBlockError::NoSpaceLeft))));
+    }
+
+    #[test]
+    fn process_write_read_block_requests() {
+        let (mut schema, mut tasks_queue) = init();
+        assert_eq!(schema.gaps.space_total(), 64);
+
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        schema.process_read_block_request(
+            proto::RequestReadBlock {
+                block_id: block::Id::init(),
+                reply_tx,
+            },
+            block::BytesMut::new(),
+            &mut tasks_queue,
+        );
+        assert_eq!(reply_rx.try_recv(), Ok(Some(Err(proto::RequestReadBlockError::NotFound))));
+
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        schema.process_write_block_request(
+            proto::RequestWriteBlock {
+                block_bytes: sample_hello_world(),
+                reply_tx,
+            },
+            &mut tasks_queue,
+        );
+
+        assert_eq!(schema.next_block_id, block::Id::init().next());
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init()),
+            Some(&index::BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    block_id: block::Id::init(),
+                    block_size: 13,
+                },
+            }),
+        );
+        assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
+        assert_eq!(schema.gaps.space_total(), 19);
+        assert_eq!(reply_rx.try_recv(), Ok(None));
+
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        schema.process_read_block_request(
+            proto::RequestReadBlock {
+                block_id: block::Id::init(),
+                reply_tx,
+            },
+            block::BytesMut::new(),
+            &mut tasks_queue,
+        );
+        assert_eq!(reply_rx.try_recv(), Ok(None));
     }
 }

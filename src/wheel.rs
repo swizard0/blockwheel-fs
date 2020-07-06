@@ -36,6 +36,7 @@ use super::{
     Params,
 };
 
+mod lru;
 mod gaps;
 mod task;
 mod pool;
@@ -151,6 +152,7 @@ async fn busyloop(
 )
     -> Result<(), ErrorSeverity<State, Error>>
 {
+    let mut lru_cache = lru::Cache::new(state.params.lru_cache_size_bytes);
     let mut blocks_pool = pool::Blocks::new();
     let mut tasks_queue = task::Queue::new();
     let mut bg_task: Option<future::Fuse<oneshot::Receiver<task::TaskDone>>> = None;
@@ -197,7 +199,7 @@ async fn busyloop(
             Source::Pid(Some(proto::Request::LendBlock(proto::RequestLendBlock { reply_tx, }))) => {
                 let block = blocks_pool.lend();
                 if let Err(_send_error) = reply_tx.send(block) {
-                    log::warn!("Pid is gone during query result send");
+                    log::warn!("Pid is gone during LendBlock query result send");
                 }
             },
 
@@ -208,12 +210,17 @@ async fn busyloop(
             Source::Pid(Some(proto::Request::WriteBlock(request_write_block))) =>
                 schema.process_write_block_request(request_write_block, &mut tasks_queue),
 
-            Source::Pid(Some(proto::Request::ReadBlock(request_read_block))) => {
-                let block = blocks_pool.lend();
-                schema.process_read_block_request(request_read_block, block, &mut tasks_queue);
-            },
+            Source::Pid(Some(proto::Request::ReadBlock(request_read_block))) =>
+                if let Some(block_bytes) = lru_cache.get(&request_read_block.block_id) {
+                    if let Err(_send_error) = request_read_block.reply_tx.send(Ok(block_bytes.clone())) {
+                        log::warn!("Pid is gone during ReadBlock query result send");
+                    }
+                } else {
+                    let block = blocks_pool.lend();
+                    schema.process_read_block_request(request_read_block, block, &mut tasks_queue);
+                },
 
-            Source::Pid(Some(proto::Request::DeleteBlock(proto::RequestDeleteBlock { block_id, reply_tx, }))) => {
+            Source::Pid(Some(proto::Request::DeleteBlock(proto::RequestDeleteBlock { .. /* block_id, reply_tx, */ }))) => {
 
                 unimplemented!()
             },
@@ -226,10 +233,10 @@ async fn busyloop(
             },
 
             Source::InterpreterDone(Ok(task::TaskDone::ReadBlock(read_block))) => {
-                // TODO: update LRU
-
+                let block_bytes = read_block.block_bytes.freeze();
+                lru_cache.insert(read_block.block_id.clone(), block_bytes.clone());
                 bg_task = None;
-                if let Err(_send_error) = read_block.reply_tx.send(Ok(read_block.block_bytes.freeze())) {
+                if let Err(_send_error) = read_block.reply_tx.send(Ok(block_bytes)) {
                     log::warn!("client channel was closed before a block is actually read");
                 }
             },
@@ -293,7 +300,7 @@ async fn interpret_loop(
                     block_id: write_block.block_id.clone(),
                     ..Default::default()
                 };
-                bincode::serialize_into(&mut work_block, &block_header)
+                bincode::serialize_into(&mut work_block, &commit_tag)
                     .map_err(Error::CommitTagSerialize)
                     .map_err(ErrorSeverity::Fatal)?;
 
@@ -413,7 +420,7 @@ async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, E
                 error,
             })),
     };
-    let mut work_block: Vec<u8> = Vec::with_capacity(state.params.work_block_size);
+    let mut work_block: Vec<u8> = Vec::with_capacity(state.params.work_block_size_bytes);
 
     let storage_layout = storage::Layout::calculate(&mut work_block)
         .map_err(Error::StorageLayoutCalculate)
@@ -446,14 +453,14 @@ async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, E
     }
 
     work_block.clear();
-    work_block.extend((0 .. state.params.work_block_size).map(|_| 0));
+    work_block.extend((0 .. state.params.work_block_size_bytes).map(|_| 0));
 
     while cursor < size_bytes_total {
         let bytes_remain = size_bytes_total - cursor;
-        let write_amount = if bytes_remain < state.params.work_block_size {
+        let write_amount = if bytes_remain < state.params.work_block_size_bytes {
             bytes_remain
         } else {
-            state.params.work_block_size
+            state.params.work_block_size_bytes
         };
         wheel_file.write_all(&work_block[.. write_amount]).await
             .map_err(Error::ZeroChunkWrite)
