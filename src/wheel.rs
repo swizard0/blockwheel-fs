@@ -60,6 +60,7 @@ pub enum Error {
     },
     StorageLayoutCalculate(storage::LayoutError),
     WheelHeaderSerialize(bincode::Error),
+    TombstoneTagSerialize(bincode::Error),
     EofTagSerialize(bincode::Error),
     WheelHeaderAndEofTagWrite(io::Error),
     ZeroChunkWrite(io::Error),
@@ -239,6 +240,11 @@ async fn busyloop(
                 }
             },
 
+            Source::InterpreterDone(Ok(task::TaskDone::MarkTombstone(mark_tombstone))) => {
+
+                unimplemented!()
+            },
+
             Source::InterpreterDone(Err(oneshot::Canceled)) => {
                 log::debug!("interpreter reply channel closed: shutting down");
                 return Ok(());
@@ -289,6 +295,7 @@ async fn interpret_loop(
                 let block_header = storage::BlockHeader {
                     block_id: write_block.block_id.clone(),
                     block_size: write_block.block_bytes.len(),
+                    ..Default::default()
                 };
                 bincode::serialize_into(&mut work_block, &block_header)
                     .map_err(Error::BlockHeaderSerialize)
@@ -385,6 +392,15 @@ async fn interpret_loop(
 
                 cursor += work_block.len() as u64;
                 work_block.clear();
+            },
+
+            task::TaskKind::MarkTombstone(mut mark_tombstone) => {
+                let tombstone_tag = storage::TombstoneTag::default();
+                bincode::serialize_into(&mut work_block, &tombstone_tag)
+                    .map_err(Error::TombstoneTagSerialize)
+                    .map_err(ErrorSeverity::Fatal)?;
+
+                unimplemented!()
             },
         }
     }

@@ -200,6 +200,7 @@ mod tests {
                             header: storage::BlockHeader {
                                 block_id: block_a_id.clone(),
                                 block_size: 4,
+                                ..Default::default()
                             },
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Start,
@@ -214,6 +215,7 @@ mod tests {
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
+                                ..Default::default()
                             },
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
@@ -242,6 +244,7 @@ mod tests {
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
+                                ..Default::default()
                             },
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
@@ -290,6 +293,7 @@ mod tests {
                             header: storage::BlockHeader {
                                 block_id: block_a_id.clone(),
                                 block_size: 4,
+                                ..Default::default()
                             },
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Start,
@@ -304,6 +308,7 @@ mod tests {
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
+                                ..Default::default()
                             },
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
@@ -326,6 +331,7 @@ mod tests {
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
+                                ..Default::default()
                             },
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
@@ -369,6 +375,7 @@ mod tests {
                 header: storage::BlockHeader {
                     block_id: block_a_id.clone(),
                     block_size: 4,
+                    ..Default::default()
                 },
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
@@ -380,6 +387,7 @@ mod tests {
                 header: storage::BlockHeader {
                     block_id: block_b_id.clone(),
                     block_size: 0,
+                    ..Default::default()
                 },
                 environs: index::Environs {
                     left: index::LeftEnvirons::Space { space_key: space_key_a, },

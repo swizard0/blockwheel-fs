@@ -96,6 +96,7 @@ impl Ord for Task {
 pub enum TaskKind {
     WriteBlock(WriteBlock),
     ReadBlock(ReadBlock),
+    MarkTombstone(MarkTombstone),
 }
 
 #[derive(Debug)]
@@ -120,9 +121,16 @@ pub struct ReadBlock {
 }
 
 #[derive(Debug)]
+pub struct MarkTombstone {
+    pub block_id: block::Id,
+    pub reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
+}
+
+#[derive(Debug)]
 pub enum TaskDone {
     WriteBlock(TaskDoneWriteBlock),
     ReadBlock(TaskDoneReadBlock),
+    MarkTombstone(TaskDoneMarkTombstone),
 }
 
 #[derive(Debug)]
@@ -136,4 +144,10 @@ pub struct TaskDoneReadBlock {
     pub block_id: block::Id,
     pub block_bytes: block::BytesMut,
     pub reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
+}
+
+#[derive(Debug)]
+pub struct TaskDoneMarkTombstone {
+    pub block_id: block::Id,
+    pub reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
 }

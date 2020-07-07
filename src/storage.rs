@@ -27,10 +27,38 @@ impl Default for WheelHeader {
     }
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Default, Debug)]
+pub const BLOCK_MAGIC: u64 = 0x1af107518a38d0cf;
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct BlockHeader {
+    pub magic: u64,
     pub block_id: block::Id,
     pub block_size: usize,
+}
+
+impl Default for BlockHeader {
+    fn default() -> BlockHeader {
+        BlockHeader {
+            magic: BLOCK_MAGIC,
+            block_id: block::Id::default(),
+            block_size: 0,
+        }
+    }
+}
+
+pub const TOMBSTONE_TAG_MAGIC: u64 = 0xce1063910922bdd5;
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct TombstoneTag {
+    pub magic: u64,
+}
+
+impl Default for TombstoneTag {
+    fn default() -> TombstoneTag {
+        TombstoneTag {
+            magic: TOMBSTONE_TAG_MAGIC,
+        }
+    }
 }
 
 pub const EOF_TAG_MAGIC: u64 = 0x1cfccad598b6f785;

@@ -94,6 +94,7 @@ impl Schema {
                         header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
                             block_size: space_required,
+                            ..Default::default()
                         },
                         environs: index::Environs {
                             left: index::LeftEnvirons::Start,
@@ -150,6 +151,7 @@ impl Schema {
                         header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
                             block_size: space_required,
+                            ..Default::default()
                         },
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
@@ -203,6 +205,7 @@ impl Schema {
                         header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
                             block_size: space_required,
+                            ..Default::default()
                         },
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
@@ -244,6 +247,7 @@ impl Schema {
                         header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
                             block_size: space_required,
+                            ..Default::default()
                         },
                         environs,
                     },
@@ -297,17 +301,13 @@ impl Schema {
     )
     {
         if let Some(block_entry) = self.blocks_index.get(&block_id) {
-
-            // tasks_queue.push(
-            //     block_entry.offset,
-            //     task::TaskKind::ReadBlock(task::ReadBlock {
-            //         block_header: block_entry.header.clone(),
-            //         block_bytes,
-            //         reply_tx,
-            //     }),
-            // );
-
-            unimplemented!()
+            tasks_queue.push(
+                block_entry.offset,
+                task::TaskKind::MarkTombstone(task::MarkTombstone {
+                    block_id,
+                    reply_tx,
+                }),
+            );
         } else {
             if let Err(_send_error) = reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
                 log::warn!("process_delete_block_request: reply channel has been closed");
@@ -333,12 +333,12 @@ mod tests {
     fn init() -> (Schema, task::Queue) {
         let storage_layout = storage::Layout {
             wheel_header_size: 24,
-            block_header_size: 16,
+            block_header_size: 24,
             commit_tag_size: 16,
             eof_tag_size: 8,
         };
         let mut schema = Schema::new(storage_layout);
-        schema.initialize_empty(128);
+        schema.initialize_empty(144);
 
         (schema, task::Queue::new())
     }
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn process_write_block_request() {
         let (mut schema, mut tasks_queue) = init();
-        assert_eq!(schema.gaps.space_total(), 64);
+        assert_eq!(schema.gaps.space_total(), 72);
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
         schema.process_write_block_request(
@@ -371,6 +371,7 @@ mod tests {
                 header: storage::BlockHeader {
                     block_id: block::Id::init(),
                     block_size: 13,
+                    ..Default::default()
                 },
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
@@ -399,6 +400,7 @@ mod tests {
                 header: storage::BlockHeader {
                     block_id: block::Id::init(),
                     block_size: 13,
+                    ..Default::default()
                 },
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
@@ -409,10 +411,11 @@ mod tests {
         assert_eq!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&index::BlockEntry {
-                offset: 69,
+                offset: 77,
                 header: storage::BlockHeader {
                     block_id: block::Id::init().next(),
                     block_size: 13,
+                    ..Default::default()
                 },
                 environs: index::Environs {
                     left: index::LeftEnvirons::Block { block_id: block::Id::init(), },
@@ -438,7 +441,7 @@ mod tests {
     #[test]
     fn process_write_read_block_requests() {
         let (mut schema, mut tasks_queue) = init();
-        assert_eq!(schema.gaps.space_total(), 64);
+        assert_eq!(schema.gaps.space_total(), 72);
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
         schema.process_read_block_request(
@@ -468,6 +471,7 @@ mod tests {
                 header: storage::BlockHeader {
                     block_id: block::Id::init(),
                     block_size: 13,
+                    ..Default::default()
                 },
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,

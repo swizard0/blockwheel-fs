@@ -77,7 +77,7 @@ impl Blocks {
         block_entry.environs.right = env;
     }
 
-    pub fn remove(&mut self, block_id: block::Id) -> Option<BlockEntry> {
-        self.index.remove(&block_id)
+    pub fn remove(&mut self, block_id: &block::Id) -> Option<BlockEntry> {
+        self.index.remove(block_id)
     }
 }
