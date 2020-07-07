@@ -177,7 +177,12 @@ impl Index {
     }
 
     pub fn remove(&mut self, key: &SpaceKey) -> Option<GapBetween<block::Id>> {
-        self.gaps.remove(key)
+        if let Some(between) = self.gaps.remove(key) {
+            self.space_total -= key.space_available();
+            Some(between)
+        } else {
+            None
+        }
     }
 }
 
