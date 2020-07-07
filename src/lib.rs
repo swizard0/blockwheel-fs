@@ -113,6 +113,12 @@ pub enum ReadBlockError {
     NotFound,
 }
 
+#[derive(Debug)]
+pub enum DeleteBlockError {
+    GenServer(ero::NoProcError),
+    NotFound,
+}
+
 impl Pid {
     pub async fn lend_block(&mut self) -> Result<block::BytesMut, ero::NoProcError> {
         loop {
@@ -178,7 +184,7 @@ impl Pid {
         }
     }
 
-    pub async fn delete_block(&mut self, block_id: block::Id) -> Result<proto::Deleted, ero::NoProcError> {
+    pub async fn delete_block(&mut self, block_id: block::Id) -> Result<proto::Deleted, DeleteBlockError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
@@ -187,11 +193,13 @@ impl Pid {
                     reply_tx,
                 }))
                 .await
-                .map_err(|_send_error| ero::NoProcError)?;
+                .map_err(|_send_error| DeleteBlockError::GenServer(ero::NoProcError))?;
 
             match reply_rx.await {
-                Ok(proto::Deleted) =>
+                Ok(Ok(proto::Deleted)) =>
                     return Ok(proto::Deleted),
+                Ok(Err(proto::RequestDeleteBlockError::NotFound)) =>
+                    return Err(DeleteBlockError::NotFound),
                 Err(oneshot::Canceled) =>
                     (),
             }

@@ -33,9 +33,9 @@ pub enum GapBetween<B> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-struct SpaceKey {
-    space_available: usize,
-    serial: usize,
+pub struct SpaceKey {
+    pub(crate) space_available: usize,
+    pub(crate) serial: usize,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -66,10 +66,13 @@ impl Index {
         self.space_total
     }
 
-    pub fn insert(&mut self, space_available: usize, between: GapBetween<block::Id>) {
+    pub fn insert(&mut self, space_available: usize, between: GapBetween<block::Id>) -> SpaceKey {
         self.serial += 1;
-        self.gaps.insert(SpaceKey { space_available, serial: self.serial, }, between);
+        let space_key = SpaceKey { space_available, serial: self.serial, };
+
+        self.gaps.insert(space_key, between);
         self.space_total += space_available;
+        space_key
     }
 
     pub fn allocate<'a>(
@@ -171,15 +174,12 @@ impl Index {
 #[cfg(test)]
 mod tests {
     use super::{
-        super::{
-            super::{
-                block,
-                storage,
-            },
-        },
+        super::storage,
+        block,
         index,
         Index,
         Error,
+        SpaceKey,
         Allocated,
         GapBetween,
     };
@@ -201,6 +201,10 @@ mod tests {
                                 block_id: block_a_id.clone(),
                                 block_size: 4,
                             },
+                            environs: index::Environs {
+                                left: index::LeftEnvirons::Start,
+                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                            },
                         },
                     },
                     right_block: index::BlockInfo {
@@ -211,6 +215,10 @@ mod tests {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
                             },
+                            environs: index::Environs {
+                                left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
+                            }
                         },
                     },
                 },
@@ -234,6 +242,10 @@ mod tests {
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
+                            },
+                            environs: index::Environs {
+                                left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                         },
                     },
@@ -279,6 +291,10 @@ mod tests {
                                 block_id: block_a_id.clone(),
                                 block_size: 4,
                             },
+                            environs: index::Environs {
+                                left: index::LeftEnvirons::Start,
+                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                            },
                         },
                     },
                     right_block: index::BlockInfo {
@@ -289,6 +305,10 @@ mod tests {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
                             },
+                            environs: index::Environs {
+                                left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
+                            }
                         },
                     },
                 },
@@ -306,6 +326,10 @@ mod tests {
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
+                            },
+                            environs: index::Environs {
+                                left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                         },
                     },
@@ -328,6 +352,16 @@ mod tests {
     impl Init {
         fn new() -> Init {
             let block_a_id = block::Id::init();
+            let block_b_id = block_a_id.next();
+
+            let mut gaps = Index::new();
+            let space_key_a = gaps.insert(4, GapBetween::TwoBlocks {
+                left_block: block_a_id.clone(),
+                right_block: block_b_id.clone(),
+            });
+            let space_key_b = gaps.insert(60, GapBetween::BlockAndEnd {
+                left_block: block_b_id.clone(),
+            });
 
             let mut blocks_index = index::Blocks::new();
             blocks_index.insert(block_a_id.clone(), index::BlockEntry {
@@ -336,19 +370,22 @@ mod tests {
                     block_id: block_a_id.clone(),
                     block_size: 4,
                 },
+                environs: index::Environs {
+                    left: index::LeftEnvirons::Start,
+                    right: index::RightEnvirons::Space { space_key: space_key_a, },
+                },
             });
-            let block_b_id = block_a_id.next();
             blocks_index.insert(block_b_id.clone(), index::BlockEntry {
                 offset: 8,
                 header: storage::BlockHeader {
                     block_id: block_b_id.clone(),
                     block_size: 0,
                 },
+                environs: index::Environs {
+                    left: index::LeftEnvirons::Space { space_key: space_key_a, },
+                    right: index::RightEnvirons::Space { space_key: space_key_b, },
+                },
             });
-
-            let mut gaps = Index::new();
-            gaps.insert(4, GapBetween::TwoBlocks { left_block: block_a_id.clone(), right_block: block_b_id.clone(), });
-            gaps.insert(60, GapBetween::BlockAndEnd { left_block: block_b_id.clone(), });
 
             Init { block_a_id, block_b_id, blocks_index, gaps, }
         }

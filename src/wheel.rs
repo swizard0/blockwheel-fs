@@ -220,10 +220,8 @@ async fn busyloop(
                     schema.process_read_block_request(request_read_block, block, &mut tasks_queue);
                 },
 
-            Source::Pid(Some(proto::Request::DeleteBlock(proto::RequestDeleteBlock { .. /* block_id, reply_tx, */ }))) => {
-
-                unimplemented!()
-            },
+            Source::Pid(Some(proto::Request::DeleteBlock(request_delete_block))) =>
+                schema.process_delete_block_request(request_delete_block, &mut tasks_queue),
 
             Source::InterpreterDone(Ok(task::TaskDone::WriteBlock(write_block))) => {
                 bg_task = None;

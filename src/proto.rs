@@ -44,9 +44,14 @@ pub struct RequestReadBlock {
     pub reply_tx: oneshot::Sender<Result<block::Bytes, RequestReadBlockError>>,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RequestDeleteBlockError {
+    NotFound,
+}
+
 pub struct RequestDeleteBlock {
     pub block_id: block::Id,
-    pub reply_tx: oneshot::Sender<Deleted>,
+    pub reply_tx: oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
