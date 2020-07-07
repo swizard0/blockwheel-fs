@@ -202,6 +202,7 @@ mod tests {
                                 block_size: 4,
                                 ..Default::default()
                             },
+                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Start,
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
@@ -217,6 +218,7 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
+                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
@@ -246,6 +248,7 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
+                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
@@ -295,6 +298,7 @@ mod tests {
                                 block_size: 4,
                                 ..Default::default()
                             },
+                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Start,
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
@@ -310,6 +314,7 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
+                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
@@ -333,6 +338,7 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
+                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
@@ -377,6 +383,7 @@ mod tests {
                     block_size: 4,
                     ..Default::default()
                 },
+                tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
                     right: index::RightEnvirons::Space { space_key: space_key_a, },
@@ -389,6 +396,7 @@ mod tests {
                     block_size: 0,
                     ..Default::default()
                 },
+                tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Space { space_key: space_key_a, },
                     right: index::RightEnvirons::Space { space_key: space_key_b, },

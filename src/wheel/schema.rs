@@ -96,6 +96,7 @@ impl Schema {
                             block_size: space_required,
                             ..Default::default()
                         },
+                        tombstone: false,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Start,
                             right: self_env,
@@ -153,6 +154,7 @@ impl Schema {
                             block_size: space_required,
                             ..Default::default()
                         },
+                        tombstone: false,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
@@ -207,6 +209,7 @@ impl Schema {
                             block_size: space_required,
                             ..Default::default()
                         },
+                        tombstone: false,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
@@ -249,6 +252,7 @@ impl Schema {
                             block_size: space_required,
                             ..Default::default()
                         },
+                        tombstone: false,
                         environs,
                     },
                 );
@@ -278,18 +282,21 @@ impl Schema {
         tasks_queue: &mut task::Queue,
     )
     {
-        if let Some(block_entry) = self.blocks_index.get(&block_id) {
-            tasks_queue.push(
-                block_entry.offset,
-                task::TaskKind::ReadBlock(task::ReadBlock {
-                    block_header: block_entry.header.clone(),
-                    block_bytes,
-                    reply_tx,
-                }),
-            );
-        } else {
-            if let Err(_send_error) = reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
-                log::warn!("process_read_block_request: reply channel has been closed");
+        match self.blocks_index.get(&block_id) {
+            Some(block_entry) if !block_entry.tombstone => {
+                tasks_queue.push(
+                    block_entry.offset,
+                    task::TaskKind::ReadBlock(task::ReadBlock {
+                        block_header: block_entry.header.clone(),
+                        block_bytes,
+                        reply_tx,
+                    }),
+                );
+            },
+            Some(..) | None => {
+                if let Err(_send_error) = reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
+                    log::warn!("process_read_block_request: reply channel has been closed");
+                }
             }
         }
     }
@@ -300,7 +307,8 @@ impl Schema {
         tasks_queue: &mut task::Queue,
     )
     {
-        if let Some(block_entry) = self.blocks_index.get(&block_id) {
+        if let Some(block_entry) = self.blocks_index.get_mut(&block_id) {
+            block_entry.tombstone = true;
             tasks_queue.push(
                 block_entry.offset,
                 task::TaskKind::MarkTombstone(task::MarkTombstone {
@@ -373,6 +381,7 @@ mod tests {
                     block_size: 13,
                     ..Default::default()
                 },
+                tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
                     right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 19, serial: 2, }, },
@@ -402,6 +411,7 @@ mod tests {
                     block_size: 13,
                     ..Default::default()
                 },
+                tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
                     right: index::RightEnvirons::Block { block_id: block::Id::init().next(), },
@@ -417,6 +427,7 @@ mod tests {
                     block_size: 13,
                     ..Default::default()
                 },
+                tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Block { block_id: block::Id::init(), },
                     right: index::RightEnvirons::End,
@@ -473,6 +484,7 @@ mod tests {
                     block_size: 13,
                     ..Default::default()
                 },
+                tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
                     right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 19, serial: 2, }, },
