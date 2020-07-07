@@ -19,7 +19,7 @@ use futures::{
 use tokio::{
     fs,
     io::{
-        AsyncReadExt,
+        // AsyncReadExt,
         AsyncWriteExt,
     },
 };
@@ -188,8 +188,10 @@ async fn busyloop(
                     schema.process_read_block_request(request_read_block, block, &mut tasks_queue);
                 },
 
-            Source::Pid(Some(proto::Request::DeleteBlock(request_delete_block))) =>
-                schema.process_delete_block_request(request_delete_block, &mut tasks_queue),
+            Source::Pid(Some(proto::Request::DeleteBlock(request_delete_block))) => {
+                lru_cache.invalidate(&request_delete_block.block_id);
+                schema.process_delete_block_request(request_delete_block, &mut tasks_queue);
+            },
 
             Source::InterpreterDone(Ok(task::TaskDone::WriteBlock(write_block))) => {
                 bg_task = None;
@@ -208,8 +210,11 @@ async fn busyloop(
             },
 
             Source::InterpreterDone(Ok(task::TaskDone::MarkTombstone(mark_tombstone))) => {
-
-                unimplemented!()
+                schema.process_tombstone_written(mark_tombstone.block_id);
+                bg_task = None;
+                if let Err(_send_error) = mark_tombstone.reply_tx.send(Ok(proto::Deleted)) {
+                    log::warn!("client channel was closed before a block is actually deleted");
+                }
             },
 
             Source::InterpreterDone(Err(oneshot::Canceled)) => {

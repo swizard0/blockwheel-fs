@@ -38,6 +38,12 @@ pub struct SpaceKey {
     pub(crate) serial: usize,
 }
 
+impl SpaceKey {
+    pub fn space_available(&self) -> usize {
+        self.space_available
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Allocated<'a> {
     Success {
@@ -168,6 +174,10 @@ impl Index {
         } else {
             Err(Error::NoSpaceLeft)
         }
+    }
+
+    pub fn remove(&mut self, key: &SpaceKey) -> Option<GapBetween<block::Id>> {
+        self.gaps.remove(key)
     }
 }
 

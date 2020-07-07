@@ -307,19 +307,263 @@ impl Schema {
         tasks_queue: &mut task::Queue,
     )
     {
-        if let Some(block_entry) = self.blocks_index.get_mut(&block_id) {
-            block_entry.tombstone = true;
-            tasks_queue.push(
-                block_entry.offset,
-                task::TaskKind::MarkTombstone(task::MarkTombstone {
-                    block_id,
-                    reply_tx,
-                }),
-            );
-        } else {
-            if let Err(_send_error) = reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
-                log::warn!("process_delete_block_request: reply channel has been closed");
+        match self.blocks_index.get_mut(&block_id) {
+            Some(block_entry) if !block_entry.tombstone => {
+                block_entry.tombstone = true;
+                tasks_queue.push(
+                    block_entry.offset,
+                    task::TaskKind::MarkTombstone(task::MarkTombstone {
+                        block_id,
+                        reply_tx,
+                    }),
+                );
+            },
+            Some(..) | None => {
+                if let Err(_send_error) = reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
+                    log::warn!("process_delete_block_request: reply channel has been closed");
+                }
             }
+        }
+    }
+
+    pub fn process_tombstone_written(&mut self, removed_block_id: block::Id) {
+        let block_entry = self.blocks_index.remove(&removed_block_id).unwrap();
+        assert!(block_entry.tombstone);
+
+        match block_entry.environs {
+
+            index::Environs {
+                left: index::LeftEnvirons::Start,
+                right: index::RightEnvirons::End,
+            } => {
+                assert_eq!(self.gaps.space_total(), 0);
+                let space_available = block_entry.header.block_size;
+                self.gaps.insert(space_available, gaps::GapBetween::StartAndEnd);
+            },
+
+            index::Environs {
+                left: index::LeftEnvirons::Start,
+                right: index::RightEnvirons::Space { space_key, },
+            } =>
+                match self.gaps.remove(&space_key) {
+                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::StartAndBlock { .. }) =>
+                        unreachable!(),
+                    Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
+                        assert_eq!(left_block, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key.space_available();
+                        self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::StartAndBlock { right_block: right_block.clone(), },
+                        );
+                        self.blocks_index.update_env_left(&right_block, index::LeftEnvirons::Start);
+                    },
+                    Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
+                        assert_eq!(left_block, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key.space_available();
+                        self.gaps.insert(space_available, gaps::GapBetween::StartAndEnd);
+                    },
+                },
+
+            index::Environs {
+                left: index::LeftEnvirons::Start,
+                right: index::RightEnvirons::Block { block_id, },
+            } => {
+                let space_available = block_entry.header.block_size;
+                self.gaps.insert(space_available, gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), });
+                self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Start);
+            },
+
+            index::Environs {
+                left: index::LeftEnvirons::Space { space_key, },
+                right: index::RightEnvirons::End,
+            } =>
+                match self.gaps.remove(&space_key) {
+                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
+                        unreachable!(),
+                    Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
+                        assert_eq!(right_block, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key.space_available();
+                        self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::BlockAndEnd { left_block: left_block.clone(), },
+                        );
+                        self.blocks_index.update_env_right(&left_block, index::RightEnvirons::End);
+                    },
+                    Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
+                        assert_eq!(right_block, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key.space_available();
+                        self.gaps.insert(space_available, gaps::GapBetween::StartAndEnd);
+                    },
+                },
+
+            index::Environs {
+                left: index::LeftEnvirons::Space { space_key: space_key_left, },
+                right: index::RightEnvirons::Space { space_key: space_key_right, },
+            } =>
+                match (self.gaps.remove(&space_key_left), self.gaps.remove(&space_key_right)) {
+                    (None, _) | (_, None) |
+                    (Some(gaps::GapBetween::StartAndEnd), _) | (_, Some(gaps::GapBetween::StartAndEnd)) |
+                    (Some(gaps::GapBetween::BlockAndEnd { .. }), _) | (_, Some(gaps::GapBetween::StartAndBlock { .. })) =>
+                        unreachable!(),
+                    (
+                        Some(gaps::GapBetween::StartAndBlock { right_block: right_block_left, }),
+                        Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
+                    ) => {
+                        assert_eq!(right_block_left, removed_block_id);
+                        assert_eq!(left_block_right, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key_left.space_available()
+                            + space_key_right.space_available();
+                        self.gaps.insert(space_available, gaps::GapBetween::StartAndEnd);
+                    },
+                    (
+                        Some(gaps::GapBetween::StartAndBlock { right_block: right_block_left, }),
+                        Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
+                    ) => {
+                        assert_eq!(right_block_left, removed_block_id);
+                        assert_eq!(left_block_right, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key_left.space_available()
+                            + space_key_right.space_available();
+                        let space_key = self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::StartAndBlock { right_block: right_block_right.clone(), },
+                        );
+                        self.blocks_index.update_env_left(&right_block_right, index::LeftEnvirons::Space { space_key, });
+                    },
+                    (
+                        Some(gaps::GapBetween::TwoBlocks { left_block: left_block_left, right_block: right_block_left, }),
+                        Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
+                    ) => {
+                        assert_eq!(right_block_left, removed_block_id);
+                        assert_eq!(left_block_right, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key_left.space_available()
+                            + space_key_right.space_available();
+                        let space_key = self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::BlockAndEnd { left_block: left_block_left.clone(), },
+                        );
+                        self.blocks_index.update_env_right(&left_block_left, index::RightEnvirons::Space { space_key, });
+                    },
+                    (
+                        Some(gaps::GapBetween::TwoBlocks { left_block: left_block_left, right_block: right_block_left, }),
+                        Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
+                    ) => {
+                        assert_eq!(right_block_left, removed_block_id);
+                        assert_eq!(left_block_right, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key_left.space_available()
+                            + space_key_right.space_available();
+                        let space_key = self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::TwoBlocks {
+                                left_block: left_block_left.clone(),
+                                right_block: right_block_right.clone(),
+                            },
+                        );
+                        self.blocks_index.update_env_right(&left_block_left, index::RightEnvirons::Space { space_key, });
+                        self.blocks_index.update_env_left(&right_block_right, index::LeftEnvirons::Space { space_key, });
+                    },
+                },
+
+            index::Environs {
+                left: index::LeftEnvirons::Space { space_key, },
+                right: index::RightEnvirons::Block { block_id, },
+            } =>
+                match self.gaps.remove(&space_key) {
+                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
+                        unreachable!(),
+                    Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
+                        assert_eq!(right_block, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key.space_available();
+                        let space_key = self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::TwoBlocks {
+                                left_block: left_block.clone(),
+                                right_block: block_id.clone(),
+                            },
+                        );
+                        self.blocks_index.update_env_right(&left_block, index::RightEnvirons::Space { space_key, });
+                        self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Space { space_key, });
+                    },
+                    Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
+                        assert_eq!(right_block, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key.space_available();
+                        let space_key = self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), },
+                        );
+                        self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Space { space_key, });
+                    },
+                },
+
+            index::Environs {
+                left: index::LeftEnvirons::Block { block_id, },
+                right: index::RightEnvirons::End,
+            } => {
+                let space_available = block_entry.header.block_size;
+                let space_key = self.gaps.insert(
+                    space_available,
+                    gaps::GapBetween::BlockAndEnd { left_block: block_id.clone(), },
+                );
+                self.blocks_index.update_env_right(&block_id, index::RightEnvirons::Space { space_key, });
+            },
+
+            index::Environs {
+                left: index::LeftEnvirons::Block { block_id, },
+                right: index::RightEnvirons::Space { space_key, },
+            } =>
+                match self.gaps.remove(&space_key) {
+                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::StartAndBlock { .. }) =>
+                        unreachable!(),
+                    Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
+                        assert_eq!(left_block, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key.space_available();
+                        let space_key = self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::TwoBlocks {
+                                left_block: block_id.clone(),
+                                right_block: right_block.clone(),
+                            },
+                        );
+                        self.blocks_index.update_env_right(&block_id, index::RightEnvirons::Space { space_key, });
+                        self.blocks_index.update_env_left(&right_block, index::LeftEnvirons::Space { space_key, });
+                    },
+                    Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
+                        assert_eq!(left_block, removed_block_id);
+                        let space_available = block_entry.header.block_size
+                            + space_key.space_available();
+                        let space_key = self.gaps.insert(
+                            space_available,
+                            gaps::GapBetween::BlockAndEnd { left_block: block_id.clone(), },
+                        );
+                        self.blocks_index.update_env_right(&block_id, index::RightEnvirons::Space { space_key, });
+                    },
+                },
+
+            index::Environs {
+                left: index::LeftEnvirons::Block { block_id: block_id_left, },
+                right: index::RightEnvirons::Block { block_id: block_id_right, },
+            } => {
+                let space_available = block_entry.header.block_size;
+                let space_key = self.gaps.insert(
+                    space_available,
+                    gaps::GapBetween::TwoBlocks {
+                        left_block: block_id_left.clone(),
+                        right_block: block_id_right.clone(),
+                    },
+                );
+                self.blocks_index.update_env_right(&block_id_left, index::RightEnvirons::Space { space_key, });
+                self.blocks_index.update_env_left(&block_id_right, index::LeftEnvirons::Space { space_key, });
+            },
         }
     }
 }
