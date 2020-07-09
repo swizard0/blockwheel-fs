@@ -320,7 +320,8 @@ impl Schema {
                 right: index::RightEnvirons::End,
             } => {
                 assert_eq!(self.gaps.space_total(), 0);
-                let space_available = block_entry.header.block_size;
+                let space_available = block_entry.header.block_size
+                    + self.storage_layout.data_size_block_min();
                 self.gaps.insert(space_available, gaps::GapBetween::StartAndEnd);
             },
 
@@ -334,6 +335,7 @@ impl Schema {
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(left_block, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps.insert(
                             space_available,
@@ -346,6 +348,7 @@ impl Schema {
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         self.gaps.insert(space_available, gaps::GapBetween::StartAndEnd);
                     },
@@ -355,9 +358,10 @@ impl Schema {
                 left: index::LeftEnvirons::Start,
                 right: index::RightEnvirons::Block { block_id, },
             } => {
-                let space_available = block_entry.header.block_size;
+                let space_available = block_entry.header.block_size
+                    + self.storage_layout.data_size_block_min();
                 let space_key = self.gaps.insert(space_available, gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), });
-                self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Start);
+                self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Space { space_key, });
                 assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
                 self.defrag_task_queue.push(block_entry.offset, space_key);
             },
@@ -372,6 +376,7 @@ impl Schema {
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         self.gaps.insert(
                             space_available,
@@ -382,6 +387,7 @@ impl Schema {
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         self.gaps.insert(space_available, gaps::GapBetween::StartAndEnd);
                     },
@@ -403,6 +409,7 @@ impl Schema {
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
                             + space_key_right.space_available();
                         self.gaps.insert(space_available, gaps::GapBetween::StartAndEnd);
@@ -414,6 +421,7 @@ impl Schema {
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
                             + space_key_right.space_available();
                         let space_key = self.gaps.insert(
@@ -431,6 +439,7 @@ impl Schema {
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
                             + space_key_right.space_available();
                         let space_key = self.gaps.insert(
@@ -446,6 +455,7 @@ impl Schema {
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
                             + space_key_right.space_available();
                         let space_key = self.gaps.insert(
@@ -475,6 +485,7 @@ impl Schema {
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps.insert(
                             space_available,
@@ -494,6 +505,7 @@ impl Schema {
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps.insert(
                             space_available,
@@ -509,7 +521,8 @@ impl Schema {
                 left: index::LeftEnvirons::Block { block_id, },
                 right: index::RightEnvirons::End,
             } => {
-                let space_available = block_entry.header.block_size;
+                let space_available = block_entry.header.block_size
+                    + self.storage_layout.data_size_block_min();
                 let space_key = self.gaps.insert(
                     space_available,
                     gaps::GapBetween::BlockAndEnd { left_block: block_id.clone(), },
@@ -527,6 +540,7 @@ impl Schema {
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(left_block, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps.insert(
                             space_available,
@@ -546,6 +560,7 @@ impl Schema {
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
                         let space_available = block_entry.header.block_size
+                            + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps.insert(
                             space_available,
@@ -559,7 +574,8 @@ impl Schema {
                 left: index::LeftEnvirons::Block { block_id: block_id_left, },
                 right: index::RightEnvirons::Block { block_id: block_id_right, },
             } => {
-                let space_available = block_entry.header.block_size;
+                let space_available = block_entry.header.block_size
+                    + self.storage_layout.data_size_block_min();
                 let space_key = self.gaps.insert(
                     space_available,
                     gaps::GapBetween::TwoBlocks {
@@ -757,4 +773,132 @@ mod tests {
         );
         assert_eq!(reply_rx.try_recv(), Ok(None));
     }
+
+    #[test]
+    fn process_delete_block_request() {
+        let (mut schema, mut tasks_queue) = init();
+        assert_eq!(schema.gaps.space_total(), 112);
+
+        let (reply_tx, _reply_rx) = oneshot::channel();
+        schema.process_write_block_request(
+            proto::RequestWriteBlock {
+                block_bytes: sample_hello_world(),
+                reply_tx,
+            },
+            &mut tasks_queue,
+        );
+        let (reply_tx, _reply_rx) = oneshot::channel();
+        schema.process_write_block_request(
+            proto::RequestWriteBlock {
+                block_bytes: sample_hello_world(),
+                reply_tx,
+            },
+            &mut tasks_queue,
+        );
+
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        schema.process_delete_block_request(
+            proto::RequestDeleteBlock { block_id: block::Id::init(), reply_tx, },
+            &mut tasks_queue,
+        );
+
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init()),
+            Some(&index::BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    block_id: block::Id::init(),
+                    block_size: 13,
+                    ..Default::default()
+                },
+                tombstone: true,
+                environs: index::Environs {
+                    left: index::LeftEnvirons::Start,
+                    right: index::RightEnvirons::Block { block_id: block::Id::init().next(), },
+                },
+            }),
+        );
+        assert_eq!(reply_rx.try_recv(), Ok(None));
+
+        schema.process_tombstone_written(block::Id::init());
+
+        assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init().next()),
+            Some(&index::BlockEntry {
+                offset: 77,
+                header: storage::BlockHeader {
+                    block_id: block::Id::init().next(),
+                    block_size: 13,
+                    ..Default::default()
+                },
+                tombstone: false,
+                environs: index::Environs {
+                    left: index::LeftEnvirons::Space { space_key: gaps::SpaceKey { space_available: 53, serial: 4, }, },
+                    right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 6, serial: 3, }, },
+                },
+            }),
+        );
+        assert_eq!(schema.gaps.space_total(), 59);
+        assert_eq!(
+            schema.defrag_task_queue.pop(),
+            Some((24, gaps::SpaceKey { space_available: 53, serial: 4, })),
+        );
+
+        let (reply_tx, _reply_rx) = oneshot::channel();
+        schema.process_write_block_request(
+            proto::RequestWriteBlock {
+                block_bytes: sample_hello_world(),
+                reply_tx,
+            },
+            &mut tasks_queue,
+        );
+
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        schema.process_delete_block_request(
+            proto::RequestDeleteBlock { block_id: block::Id::init().next(), reply_tx, },
+            &mut tasks_queue,
+        );
+
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init().next()),
+            Some(&index::BlockEntry {
+                offset: 77,
+                header: storage::BlockHeader {
+                    block_id: block::Id::init().next(),
+                    block_size: 13,
+                    ..Default::default()
+                },
+                tombstone: true,
+                environs: index::Environs {
+                    left: index::LeftEnvirons::Block { block_id: block::Id::init().next().next(), },
+                    right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 6, serial: 3, }, },
+                },
+            }),
+        );
+        assert_eq!(reply_rx.try_recv(), Ok(None));
+
+        schema.process_tombstone_written(block::Id::init().next());
+
+        assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
+        assert_eq!(
+            schema.blocks_index.get(&block::Id::init().next().next()),
+            Some(&index::BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    block_id: block::Id::init().next().next(),
+                    block_size: 13,
+                    ..Default::default()
+                },
+                tombstone: false,
+                environs: index::Environs {
+                    left: index::LeftEnvirons::Start,
+                    right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 59, serial: 5, }, },
+                },
+            }),
+        );
+        assert_eq!(schema.gaps.space_total(), 59);
+        assert_eq!(schema.defrag_task_queue.pop(), None);
+    }
+
 }
