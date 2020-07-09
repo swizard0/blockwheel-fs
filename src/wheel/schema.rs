@@ -335,11 +335,13 @@ impl Schema {
                         assert_eq!(left_block, removed_block_id);
                         let space_available = block_entry.header.block_size
                             + space_key.space_available();
-                        self.gaps.insert(
+                        let space_key = self.gaps.insert(
                             space_available,
                             gaps::GapBetween::StartAndBlock { right_block: right_block.clone(), },
                         );
                         self.blocks_index.update_env_left(&right_block, index::LeftEnvirons::Start);
+                        assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
+                        self.defrag_task_queue.push(block_entry.offset, space_key);
                     },
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
@@ -354,8 +356,10 @@ impl Schema {
                 right: index::RightEnvirons::Block { block_id, },
             } => {
                 let space_available = block_entry.header.block_size;
-                self.gaps.insert(space_available, gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), });
+                let space_key = self.gaps.insert(space_available, gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), });
                 self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Start);
+                assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
+                self.defrag_task_queue.push(block_entry.offset, space_key);
             },
 
             index::Environs {
@@ -417,6 +421,8 @@ impl Schema {
                             gaps::GapBetween::StartAndBlock { right_block: right_block_right.clone(), },
                         );
                         self.blocks_index.update_env_left(&right_block_right, index::LeftEnvirons::Space { space_key, });
+                        let defrag_offset = self.storage_layout.wheel_header_size as u64;
+                        self.defrag_task_queue.push(defrag_offset, space_key);
                     },
                     (
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_left, right_block: right_block_left, }),
@@ -451,6 +457,11 @@ impl Schema {
                         );
                         self.blocks_index.update_env_right(&left_block_left, index::RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&right_block_right, index::LeftEnvirons::Space { space_key, });
+                        let block_entry_left = self.blocks_index.get(&left_block_left).unwrap();
+                        let defrag_offset = block_entry_left.offset
+                            + self.storage_layout.data_size_block_min() as u64
+                            + block_entry_left.header.block_size as u64;
+                        self.defrag_task_queue.push(defrag_offset, space_key);
                     },
                 },
 
@@ -474,6 +485,11 @@ impl Schema {
                         );
                         self.blocks_index.update_env_right(&left_block, index::RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Space { space_key, });
+                        let block_entry_left = self.blocks_index.get(&left_block).unwrap();
+                        let defrag_offset = block_entry_left.offset
+                            + self.storage_layout.data_size_block_min() as u64
+                            + block_entry_left.header.block_size as u64;
+                        self.defrag_task_queue.push(defrag_offset, space_key);
                     },
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
@@ -484,6 +500,8 @@ impl Schema {
                             gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), },
                         );
                         self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Space { space_key, });
+                        let defrag_offset = self.storage_layout.wheel_header_size as u64;
+                        self.defrag_task_queue.push(defrag_offset, space_key);
                     },
                 },
 
@@ -519,6 +537,11 @@ impl Schema {
                         );
                         self.blocks_index.update_env_right(&block_id, index::RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&right_block, index::LeftEnvirons::Space { space_key, });
+                        let block_entry_left = self.blocks_index.get(&block_id).unwrap();
+                        let defrag_offset = block_entry_left.offset
+                            + self.storage_layout.data_size_block_min() as u64
+                            + block_entry_left.header.block_size as u64;
+                        self.defrag_task_queue.push(defrag_offset, space_key);
                     },
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
@@ -546,6 +569,7 @@ impl Schema {
                 );
                 self.blocks_index.update_env_right(&block_id_left, index::RightEnvirons::Space { space_key, });
                 self.blocks_index.update_env_left(&block_id_right, index::LeftEnvirons::Space { space_key, });
+                self.defrag_task_queue.push(block_entry.offset, space_key);
             },
         }
     }
