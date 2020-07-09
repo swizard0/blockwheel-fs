@@ -141,15 +141,13 @@ impl Layout {
         })
     }
 
+    pub fn service_size_min(&self) -> usize {
+        self.wheel_header_size
+            + self.eof_tag_size
+    }
+
     pub fn data_size_block_min(&self) -> usize {
         self.block_header_size
             + self.commit_tag_size
-    }
-
-    pub fn total_size(&self) -> usize {
-        self.wheel_header_size
-            + self.block_header_size
-            + self.commit_tag_size
-            + self.eof_tag_size
     }
 }

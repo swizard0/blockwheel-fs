@@ -31,7 +31,7 @@ impl Schema {
     }
 
     pub fn initialize_empty(&mut self, size_bytes_total: usize) {
-        let total_service_size = self.storage_layout.total_size();
+        let total_service_size = self.storage_layout.service_size_min();
         if size_bytes_total > total_service_size {
             let space_available = size_bytes_total - total_service_size;
             self.gaps.insert(
@@ -60,7 +60,8 @@ impl Schema {
             commit_type: task::CommitType::CommitOnly,
         };
 
-        let space_required = task_write_block.block_bytes.len();
+        let space_required = task_write_block.block_bytes.len()
+            + self.storage_layout.data_size_block_min();
 
         match self.gaps.allocate(space_required, &self.blocks_index) {
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndBlock { right_block, }, }) => {
@@ -68,15 +69,16 @@ impl Schema {
                 let right_block_id = right_block.block_id.clone();
 
                 let space_left = space_available - space_required;
-                let (self_env, right_env) = if space_left >= self.storage_layout.data_size_block_min() {
-                    let space_left_available = space_left - self.storage_layout.data_size_block_min();
+                let (self_env, right_env) = if space_left > 0 {
                     let space_key = self.gaps.insert(
-                        space_left_available,
+                        space_left,
                         gaps::GapBetween::TwoBlocks {
                             left_block: task_write_block.block_id.clone(),
                             right_block: right_block_id.clone(),
                         },
                     );
+                    let free_space_offset = block_offset + space_required as u64;
+                    self.defrag_task_queue.push(free_space_offset, space_key);
                     (
                         index::RightEnvirons::Space { space_key, },
                         index::LeftEnvirons::Space { space_key, },
@@ -93,7 +95,7 @@ impl Schema {
                         offset: block_offset,
                         header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
-                            block_size: space_required,
+                            block_size: task_write_block.block_bytes.len(),
                             ..Default::default()
                         },
                         tombstone: false,
@@ -104,15 +106,6 @@ impl Schema {
                     },
                 );
                 self.blocks_index.update_env_left(&right_block_id, right_env);
-                if space_left > 0 {
-                    let free_space_offset = block_offset
-                        + self.storage_layout.data_size_block_min() as u64
-                        + space_required as u64;
-                    self.defrag_task_queue.push(free_space_offset, defrag::DefragPosition::TwoBlocks {
-                        left_block_id: task_write_block.block_id.clone(),
-                        right_block_id,
-                    });
-                }
 
                 tasks_queue.push(block_offset, task::TaskKind::WriteBlock(task_write_block));
             },
@@ -124,15 +117,16 @@ impl Schema {
                 let right_block_id = right_block.block_id.clone();
 
                 let space_left = space_available - space_required;
-                let (self_env, left_env, right_env) = if space_left >= self.storage_layout.data_size_block_min() {
-                    let space_left_available = space_left - self.storage_layout.data_size_block_min();
+                let (self_env, left_env, right_env) = if space_left > 0 {
                     let space_key = self.gaps.insert(
-                        space_left_available,
+                        space_left,
                         gaps::GapBetween::TwoBlocks {
                             left_block: task_write_block.block_id.clone(),
                             right_block: right_block_id.clone(),
                         },
                     );
+                    let free_space_offset = block_offset + space_required as u64;
+                    self.defrag_task_queue.push(free_space_offset, space_key);
                     (
                         index::RightEnvirons::Space { space_key, },
                         index::RightEnvirons::Block { block_id: task_write_block.block_id.clone(), },
@@ -151,7 +145,7 @@ impl Schema {
                         offset: block_offset,
                         header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
-                            block_size: space_required,
+                            block_size: task_write_block.block_bytes.len(),
                             ..Default::default()
                         },
                         tombstone: false,
@@ -163,15 +157,6 @@ impl Schema {
                 );
                 self.blocks_index.update_env_right(&left_block_id, left_env);
                 self.blocks_index.update_env_left(&right_block_id, right_env);
-                if space_left > 0 {
-                    let free_space_offset = block_offset
-                        + self.storage_layout.data_size_block_min() as u64
-                        + space_required as u64;
-                    self.defrag_task_queue.push(free_space_offset, defrag::DefragPosition::TwoBlocks {
-                        left_block_id: task_write_block.block_id.clone(),
-                        right_block_id,
-                    });
-                }
 
                 tasks_queue.push(block_offset, task::TaskKind::WriteBlock(task_write_block));
             },
@@ -182,10 +167,9 @@ impl Schema {
                 let left_block_id = left_block.block_id.clone();
 
                 let space_left = space_available - space_required;
-                let (self_env, left_env) = if space_left >= self.storage_layout.data_size_block_min() {
-                    let space_left_available = space_left - self.storage_layout.data_size_block_min();
+                let (self_env, left_env) = if space_left > 0 {
                     let space_key = self.gaps.insert(
-                        space_left_available,
+                        space_left,
                         gaps::GapBetween::BlockAndEnd {
                             left_block: task_write_block.block_id.clone(),
                         },
@@ -206,7 +190,7 @@ impl Schema {
                         offset: block_offset,
                         header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
-                            block_size: space_required,
+                            block_size: task_write_block.block_bytes.len(),
                             ..Default::default()
                         },
                         tombstone: false,
@@ -225,10 +209,9 @@ impl Schema {
                 let block_offset = self.storage_layout.wheel_header_size as u64;
 
                 let space_left = space_available - space_required;
-                let environs = if space_left >= self.storage_layout.data_size_block_min() {
-                    let space_left_available = space_left - self.storage_layout.data_size_block_min();
+                let environs = if space_left > 0 {
                     let space_key = self.gaps.insert(
-                        space_left_available,
+                        space_left,
                         gaps::GapBetween::BlockAndEnd {
                             left_block: task_write_block.block_id.clone(),
                         },
@@ -249,7 +232,7 @@ impl Schema {
                         offset: block_offset,
                         header: storage::BlockHeader {
                             block_id: task_write_block.block_id.clone(),
-                            block_size: space_required,
+                            block_size: task_write_block.block_bytes.len(),
                             ..Default::default()
                         },
                         tombstone: false,
@@ -604,7 +587,7 @@ mod tests {
     #[test]
     fn process_write_block_request() {
         let (mut schema, mut tasks_queue) = init();
-        assert_eq!(schema.gaps.space_total(), 72);
+        assert_eq!(schema.gaps.space_total(), 112);
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
         schema.process_write_block_request(
@@ -628,12 +611,12 @@ mod tests {
                 tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
-                    right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 19, serial: 2, }, },
+                    right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 59, serial: 2, }, },
                 },
             }),
         );
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-        assert_eq!(schema.gaps.space_total(), 19);
+        assert_eq!(schema.gaps.space_total(), 59);
         assert_eq!(reply_rx.try_recv(), Ok(None));
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
@@ -674,12 +657,12 @@ mod tests {
                 tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Block { block_id: block::Id::init(), },
-                    right: index::RightEnvirons::End,
+                    right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 6, serial: 3, }, },
                 },
             }),
         );
         assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
-        assert_eq!(schema.gaps.space_total(), 0);
+        assert_eq!(schema.gaps.space_total(), 6);
         assert_eq!(reply_rx.try_recv(), Ok(None));
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
@@ -696,7 +679,7 @@ mod tests {
     #[test]
     fn process_write_read_block_requests() {
         let (mut schema, mut tasks_queue) = init();
-        assert_eq!(schema.gaps.space_total(), 72);
+        assert_eq!(schema.gaps.space_total(), 112);
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
         schema.process_read_block_request(
@@ -731,12 +714,12 @@ mod tests {
                 tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
-                    right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 19, serial: 2, }, },
+                    right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 59, serial: 2, }, },
                 },
             }),
         );
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-        assert_eq!(schema.gaps.space_total(), 19);
+        assert_eq!(schema.gaps.space_total(), 59);
         assert_eq!(reply_rx.try_recv(), Ok(None));
 
         let (reply_tx, mut reply_rx) = oneshot::channel();

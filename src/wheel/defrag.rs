@@ -7,8 +7,8 @@ use std::{
 };
 
 use super::{
-    block,
     task,
+    gaps,
 };
 
 #[derive(Debug)]
@@ -40,26 +40,15 @@ impl TaskQueue {
         }
     }
 
-    pub fn push(&mut self, offset: u64, position: DefragPosition) {
-        self.queue.push(DefragTask { offset, position, });
+    pub fn push(&mut self, offset: u64, space_key: gaps::SpaceKey) {
+        self.queue.push(DefragTask { offset, space_key, });
     }
 }
 
 #[derive(Clone, Debug)]
 struct DefragTask {
     offset: u64,
-    position: DefragPosition,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum DefragPosition {
-    StartAndBlock {
-        right_block_id: block::Id,
-    },
-    TwoBlocks {
-        left_block_id: block::Id,
-        right_block_id: block::Id,
-    },
+    space_key: gaps::SpaceKey,
 }
 
 impl PartialEq for DefragTask {
