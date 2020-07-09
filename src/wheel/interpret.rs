@@ -65,7 +65,7 @@ pub enum CorruptedDataError {
 pub struct Request {
     pub offset: u64,
     pub task_kind: task::TaskKind,
-    pub reply_tx: oneshot::Sender<task::TaskDone>,
+    pub reply_tx: oneshot::Sender<task::Done>,
 }
 
 pub async fn busyloop(
@@ -118,16 +118,19 @@ pub async fn busyloop(
                 wheel_file.flush().await
                     .map_err(Error::BlockFlush)?;
 
-                let task_done = task::TaskDone::WriteBlock(task::TaskDoneWriteBlock {
-                    block_id: write_block.block_id,
-                    reply_tx: write_block.reply_tx,
-                });
+                cursor += work_block.len() as u64;
+                work_block.clear();
+
+                let task_done = task::Done {
+                    current_offset: cursor,
+                    task: task::TaskDone::WriteBlock(task::TaskDoneWriteBlock {
+                        block_id: write_block.block_id,
+                        reply_tx: write_block.reply_tx,
+                    }),
+                };
                 if let Err(_send_error) = reply_tx.send(task_done) {
                     break;
                 }
-
-                cursor += work_block.len() as u64;
-                work_block.clear();
             },
 
             task::TaskKind::ReadBlock(mut read_block) => {
@@ -170,17 +173,20 @@ pub async fn busyloop(
                     }));
                 }
 
-                let task_done = task::TaskDone::ReadBlock(task::TaskDoneReadBlock {
-                    block_id: read_block.block_header.block_id,
-                    block_bytes: read_block.block_bytes,
-                    reply_tx: read_block.reply_tx,
-                });
+                cursor += work_block.len() as u64;
+                work_block.clear();
+
+                let task_done = task::Done {
+                    current_offset: cursor,
+                    task: task::TaskDone::ReadBlock(task::TaskDoneReadBlock {
+                        block_id: read_block.block_header.block_id,
+                        block_bytes: read_block.block_bytes,
+                        reply_tx: read_block.reply_tx,
+                    }),
+                };
                 if let Err(_send_error) = reply_tx.send(task_done) {
                     break;
                 }
-
-                cursor += work_block.len() as u64;
-                work_block.clear();
             },
 
             task::TaskKind::MarkTombstone(mark_tombstone) => {
@@ -193,16 +199,19 @@ pub async fn busyloop(
                 wheel_file.flush().await
                     .map_err(Error::BlockFlush)?;
 
-                let task_done = task::TaskDone::MarkTombstone(task::TaskDoneMarkTombstone {
-                    block_id: mark_tombstone.block_id,
-                    reply_tx: mark_tombstone.reply_tx,
-                });
+                cursor += work_block.len() as u64;
+                work_block.clear();
+
+                let task_done = task::Done {
+                    current_offset: cursor,
+                    task: task::TaskDone::MarkTombstone(task::TaskDoneMarkTombstone {
+                        block_id: mark_tombstone.block_id,
+                        reply_tx: mark_tombstone.reply_tx,
+                    }),
+                };
                 if let Err(_send_error) = reply_tx.send(task_done) {
                     break;
                 }
-
-                cursor += work_block.len() as u64;
-                work_block.clear();
             },
         }
     }

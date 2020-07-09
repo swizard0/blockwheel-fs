@@ -48,6 +48,7 @@ impl Schema {
     pub fn process_write_block_request(
         &mut self,
         proto::RequestWriteBlock { block_bytes, reply_tx, }: proto::RequestWriteBlock,
+        current_offset: u64,
         tasks_queue: &mut task::Queue,
     )
     {
@@ -107,7 +108,7 @@ impl Schema {
                 );
                 self.blocks_index.update_env_left(&right_block_id, right_env);
 
-                tasks_queue.push(block_offset, task::TaskKind::WriteBlock(task_write_block));
+                tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
             },
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::TwoBlocks { left_block, right_block, }, }) => {
                 let block_offset = left_block.block_entry.offset
@@ -158,7 +159,7 @@ impl Schema {
                 self.blocks_index.update_env_right(&left_block_id, left_env);
                 self.blocks_index.update_env_left(&right_block_id, right_env);
 
-                tasks_queue.push(block_offset, task::TaskKind::WriteBlock(task_write_block));
+                tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
             },
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::BlockAndEnd { left_block, }, }) => {
                 let block_offset = left_block.block_entry.offset
@@ -203,7 +204,7 @@ impl Schema {
                 self.blocks_index.update_env_right(&left_block_id, left_env);
 
                 task_write_block.commit_type = task::CommitType::CommitAndEof;
-                tasks_queue.push(block_offset, task::TaskKind::WriteBlock(task_write_block));
+                tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
             },
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndEnd, }) => {
                 let block_offset = self.storage_layout.wheel_header_size as u64;
@@ -241,7 +242,7 @@ impl Schema {
                 );
 
                 task_write_block.commit_type = task::CommitType::CommitAndEof;
-                tasks_queue.push(block_offset, task::TaskKind::WriteBlock(task_write_block));
+                tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
             },
             Ok(gaps::Allocated::PendingDefragmentation) => {
                 log::debug!(
@@ -262,12 +263,14 @@ impl Schema {
         &mut self,
         proto::RequestReadBlock { block_id, reply_tx, }: proto::RequestReadBlock,
         block_bytes: block::BytesMut,
+        current_offset: u64,
         tasks_queue: &mut task::Queue,
     )
     {
         match self.blocks_index.get(&block_id) {
             Some(block_entry) if !block_entry.tombstone => {
                 tasks_queue.push(
+                    current_offset,
                     block_entry.offset,
                     task::TaskKind::ReadBlock(task::ReadBlock {
                         block_header: block_entry.header.clone(),
@@ -287,6 +290,7 @@ impl Schema {
     pub fn process_delete_block_request(
         &mut self,
         proto::RequestDeleteBlock { block_id, reply_tx, }: proto::RequestDeleteBlock,
+        current_offset: u64,
         tasks_queue: &mut task::Queue,
     )
     {
@@ -294,6 +298,7 @@ impl Schema {
             Some(block_entry) if !block_entry.tombstone => {
                 block_entry.tombstone = true;
                 tasks_queue.push(
+                    current_offset,
                     block_entry.offset,
                     task::TaskKind::MarkTombstone(task::MarkTombstone {
                         block_id,
@@ -635,6 +640,7 @@ mod tests {
                 block_bytes: sample_hello_world(),
                 reply_tx,
             },
+            0,
             &mut tasks_queue,
         );
 
@@ -665,6 +671,7 @@ mod tests {
                 block_bytes: sample_hello_world(),
                 reply_tx,
             },
+            0,
             &mut tasks_queue,
         );
 
@@ -711,6 +718,7 @@ mod tests {
                 block_bytes: sample_hello_world(),
                 reply_tx,
             },
+            0,
             &mut tasks_queue,
         );
         assert_eq!(reply_rx.try_recv(), Ok(Some(Err(proto::RequestWriteBlockError::NoSpaceLeft))));
@@ -728,6 +736,7 @@ mod tests {
                 reply_tx,
             },
             block::BytesMut::new(),
+            0,
             &mut tasks_queue,
         );
         assert_eq!(reply_rx.try_recv(), Ok(Some(Err(proto::RequestReadBlockError::NotFound))));
@@ -738,6 +747,7 @@ mod tests {
                 block_bytes: sample_hello_world(),
                 reply_tx,
             },
+            0,
             &mut tasks_queue,
         );
 
@@ -769,6 +779,7 @@ mod tests {
                 reply_tx,
             },
             block::BytesMut::new(),
+            0,
             &mut tasks_queue,
         );
         assert_eq!(reply_rx.try_recv(), Ok(None));
@@ -785,6 +796,7 @@ mod tests {
                 block_bytes: sample_hello_world(),
                 reply_tx,
             },
+            0,
             &mut tasks_queue,
         );
         let (reply_tx, _reply_rx) = oneshot::channel();
@@ -793,12 +805,14 @@ mod tests {
                 block_bytes: sample_hello_world(),
                 reply_tx,
             },
+            0,
             &mut tasks_queue,
         );
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
         schema.process_delete_block_request(
             proto::RequestDeleteBlock { block_id: block::Id::init(), reply_tx, },
+            0,
             &mut tasks_queue,
         );
 
@@ -851,12 +865,14 @@ mod tests {
                 block_bytes: sample_hello_world(),
                 reply_tx,
             },
+            0,
             &mut tasks_queue,
         );
 
         let (reply_tx, mut reply_rx) = oneshot::channel();
         schema.process_delete_block_request(
             proto::RequestDeleteBlock { block_id: block::Id::init().next(), reply_tx, },
+            0,
             &mut tasks_queue,
         );
 

@@ -32,19 +32,11 @@ impl Queue {
         }
     }
 
-    pub fn push(&mut self, offset: u64, task: TaskKind) {
-        let queue = match (self.queue_left.peek(), self.queue_right.peek()) {
-            (None, None) =>
-                &mut self.queue_right,
-            (_, Some(right_task)) if offset >= right_task.offset =>
-                &mut self.queue_right,
-            (_, Some(..)) =>
-                &mut self.queue_left,
-            (Some(..), None) => {
-                // rotate
-                mem::swap(&mut self.queue_left, &mut self.queue_right);
-                &mut self.queue_right
-            },
+    pub fn push(&mut self, current_offset: u64, offset: u64, task: TaskKind) {
+        let queue = if offset >= current_offset {
+            &mut self.queue_right
+        } else {
+            &mut self.queue_left
         };
         let serial = self.serial;
         self.serial += 1;
@@ -124,6 +116,12 @@ pub struct ReadBlock {
 pub struct MarkTombstone {
     pub block_id: block::Id,
     pub reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
+}
+
+#[derive(Debug)]
+pub struct Done {
+    pub current_offset: u64,
+    pub task: TaskDone,
 }
 
 #[derive(Debug)]

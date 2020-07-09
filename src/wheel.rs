@@ -123,7 +123,19 @@ async fn busyloop(
     let mut lru_cache = lru::Cache::new(state.params.lru_cache_size_bytes);
     let mut blocks_pool = pool::Blocks::new();
     let mut tasks_queue = task::Queue::new();
-    let mut bg_task: Option<future::Fuse<oneshot::Receiver<task::TaskDone>>> = None;
+
+    struct BackgroundTask {
+        current_offset: u64,
+        state: BackgroundTaskState,
+    }
+    enum BackgroundTaskState {
+        Idle,
+        InProgress { done_rx: future::Fuse<oneshot::Receiver<task::Done>>, },
+    }
+    let mut bg_task = BackgroundTask {
+        current_offset: 0,
+        state: BackgroundTaskState::Idle,
+    };
 
     loop {
         enum Source<A, B, C> {
@@ -132,7 +144,8 @@ async fn busyloop(
             InterpreterError(C),
         }
 
-        let req = if let Some(mut fused_interpret_result_rx) = bg_task.as_mut() {
+        let req = if let BackgroundTaskState::InProgress { ref mut done_rx, } = bg_task.state {
+            let mut fused_interpret_result_rx = done_rx;
             select! {
                 result = state.fused_request_rx.next() =>
                     Source::Pid(result),
@@ -147,7 +160,7 @@ async fn busyloop(
                 log::warn!("interpreter request channel closed");
             }
 
-            bg_task = Some(reply_rx.fuse());
+            bg_task.state = BackgroundTaskState::InProgress { done_rx: reply_rx.fuse(), };
             continue;
         } else {
             select! {
@@ -176,7 +189,7 @@ async fn busyloop(
             },
 
             Source::Pid(Some(proto::Request::WriteBlock(request_write_block))) =>
-                schema.process_write_block_request(request_write_block, &mut tasks_queue),
+                schema.process_write_block_request(request_write_block, bg_task.current_offset, &mut tasks_queue),
 
             Source::Pid(Some(proto::Request::ReadBlock(request_read_block))) =>
                 if let Some(block_bytes) = lru_cache.get(&request_read_block.block_id) {
@@ -185,33 +198,33 @@ async fn busyloop(
                     }
                 } else {
                     let block = blocks_pool.lend();
-                    schema.process_read_block_request(request_read_block, block, &mut tasks_queue);
+                    schema.process_read_block_request(request_read_block, block, bg_task.current_offset, &mut tasks_queue);
                 },
 
             Source::Pid(Some(proto::Request::DeleteBlock(request_delete_block))) => {
                 lru_cache.invalidate(&request_delete_block.block_id);
-                schema.process_delete_block_request(request_delete_block, &mut tasks_queue);
+                schema.process_delete_block_request(request_delete_block, bg_task.current_offset, &mut tasks_queue);
             },
 
-            Source::InterpreterDone(Ok(task::TaskDone::WriteBlock(write_block))) => {
-                bg_task = None;
+            Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), })) => {
+                bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 if let Err(_send_error) = write_block.reply_tx.send(Ok(write_block.block_id)) {
                     log::warn!("client channel was closed before a block is actually written");
                 }
             },
 
-            Source::InterpreterDone(Ok(task::TaskDone::ReadBlock(read_block))) => {
+            Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::ReadBlock(read_block), })) => {
                 let block_bytes = read_block.block_bytes.freeze();
                 lru_cache.insert(read_block.block_id.clone(), block_bytes.clone());
-                bg_task = None;
+                bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 if let Err(_send_error) = read_block.reply_tx.send(Ok(block_bytes)) {
                     log::warn!("client channel was closed before a block is actually read");
                 }
             },
 
-            Source::InterpreterDone(Ok(task::TaskDone::MarkTombstone(mark_tombstone))) => {
+            Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::MarkTombstone(mark_tombstone), })) => {
                 schema.process_tombstone_written(mark_tombstone.block_id);
-                bg_task = None;
+                bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 if let Err(_send_error) = mark_tombstone.reply_tx.send(Ok(proto::Deleted)) {
                     log::warn!("client channel was closed before a block is actually deleted");
                 }
