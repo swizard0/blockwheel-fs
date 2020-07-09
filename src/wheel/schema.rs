@@ -57,8 +57,10 @@ impl Schema {
         let mut task_write_block = task::WriteBlock {
             block_id,
             block_bytes,
-            reply_tx,
             commit_type: task::CommitType::CommitOnly,
+            context: task::WriteBlockContext::External(
+                task::WriteBlockContextExternal { reply_tx, },
+            ),
         };
 
         let space_required = task_write_block.block_bytes.len()
@@ -251,11 +253,12 @@ impl Schema {
                 );
                 self.defrag_pending_queue.push(task_write_block);
             },
-            Err(gaps::Error::NoSpaceLeft) => {
-                if let Err(_send_error) = task_write_block.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
-                    log::warn!("process_write_block_request: reply channel has been closed");
-                }
-            }
+            Err(gaps::Error::NoSpaceLeft) =>
+                if let task::WriteBlockContext::External(context) = task_write_block.context {
+                    if let Err(_send_error) = context.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
+                        log::warn!("process_write_block_request: reply channel has been closed");
+                    }
+                },
         }
     }
 
@@ -275,7 +278,9 @@ impl Schema {
                     task::TaskKind::ReadBlock(task::ReadBlock {
                         block_header: block_entry.header.clone(),
                         block_bytes,
-                        reply_tx,
+                        context: task::ReadBlockContext::External(
+                            task::ReadBlockContextExternal { reply_tx, },
+                        ),
                     }),
                 );
             },
@@ -302,7 +307,9 @@ impl Schema {
                     block_entry.offset,
                     task::TaskKind::MarkTombstone(task::MarkTombstone {
                         block_id,
-                        reply_tx,
+                        context: task::MarkTombstoneContext::External(
+                            task::MarkTombstoneContextExternal { reply_tx, },
+                        ),
                     }),
                 );
             },

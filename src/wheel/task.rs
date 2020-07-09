@@ -95,8 +95,8 @@ pub enum TaskKind {
 pub struct WriteBlock {
     pub block_id: block::Id,
     pub block_bytes: block::Bytes,
-    pub reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
     pub commit_type: CommitType,
+    pub context: WriteBlockContext,
 }
 
 #[derive(Debug)]
@@ -106,15 +106,45 @@ pub enum CommitType {
 }
 
 #[derive(Debug)]
+pub enum WriteBlockContext {
+    External(WriteBlockContextExternal),
+}
+
+#[derive(Debug)]
+pub struct WriteBlockContextExternal {
+    pub reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
+}
+
+#[derive(Debug)]
 pub struct ReadBlock {
     pub block_header: storage::BlockHeader,
     pub block_bytes: block::BytesMut,
+    pub context: ReadBlockContext,
+}
+
+#[derive(Debug)]
+pub enum ReadBlockContext {
+    External(ReadBlockContextExternal),
+}
+
+#[derive(Debug)]
+pub struct ReadBlockContextExternal {
     pub reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
 }
 
 #[derive(Debug)]
 pub struct MarkTombstone {
     pub block_id: block::Id,
+    pub context: MarkTombstoneContext,
+}
+
+#[derive(Debug)]
+pub enum MarkTombstoneContext {
+    External(MarkTombstoneContextExternal),
+}
+
+#[derive(Debug)]
+pub struct MarkTombstoneContextExternal {
     pub reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
 }
 
@@ -134,18 +164,18 @@ pub enum TaskDone {
 #[derive(Debug)]
 pub struct TaskDoneWriteBlock {
     pub block_id: block::Id,
-    pub reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
+    pub context: WriteBlockContext,
 }
 
 #[derive(Debug)]
 pub struct TaskDoneReadBlock {
     pub block_id: block::Id,
     pub block_bytes: block::BytesMut,
-    pub reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
+    pub context: ReadBlockContext,
 }
 
 #[derive(Debug)]
 pub struct TaskDoneMarkTombstone {
     pub block_id: block::Id,
-    pub reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
+    pub context: MarkTombstoneContext,
 }

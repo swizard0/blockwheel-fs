@@ -208,8 +208,11 @@ async fn busyloop(
 
             Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), })) => {
                 bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-                if let Err(_send_error) = write_block.reply_tx.send(Ok(write_block.block_id)) {
-                    log::warn!("client channel was closed before a block is actually written");
+                match write_block.context {
+                    task::WriteBlockContext::External(context) =>
+                        if let Err(_send_error) = context.reply_tx.send(Ok(write_block.block_id)) {
+                            log::warn!("client channel was closed before a block is actually written");
+                        },
                 }
             },
 
@@ -217,16 +220,22 @@ async fn busyloop(
                 let block_bytes = read_block.block_bytes.freeze();
                 lru_cache.insert(read_block.block_id.clone(), block_bytes.clone());
                 bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-                if let Err(_send_error) = read_block.reply_tx.send(Ok(block_bytes)) {
-                    log::warn!("client channel was closed before a block is actually read");
+                match read_block.context {
+                    task::ReadBlockContext::External(context) =>
+                        if let Err(_send_error) = context.reply_tx.send(Ok(block_bytes)) {
+                            log::warn!("client channel was closed before a block is actually read");
+                        },
                 }
             },
 
             Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::MarkTombstone(mark_tombstone), })) => {
                 schema.process_tombstone_written(mark_tombstone.block_id);
                 bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-                if let Err(_send_error) = mark_tombstone.reply_tx.send(Ok(proto::Deleted)) {
-                    log::warn!("client channel was closed before a block is actually deleted");
+                match mark_tombstone.context {
+                    task::MarkTombstoneContext::External(context) =>
+                        if let Err(_send_error) = context.reply_tx.send(Ok(proto::Deleted)) {
+                            log::warn!("client channel was closed before a block is actually deleted");
+                        },
                 }
             },
 

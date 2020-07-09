@@ -125,7 +125,7 @@ pub async fn busyloop(
                     current_offset: cursor,
                     task: task::TaskDone::WriteBlock(task::TaskDoneWriteBlock {
                         block_id: write_block.block_id,
-                        reply_tx: write_block.reply_tx,
+                        context: write_block.context,
                     }),
                 };
                 if let Err(_send_error) = reply_tx.send(task_done) {
@@ -181,7 +181,7 @@ pub async fn busyloop(
                     task: task::TaskDone::ReadBlock(task::TaskDoneReadBlock {
                         block_id: read_block.block_header.block_id,
                         block_bytes: read_block.block_bytes,
-                        reply_tx: read_block.reply_tx,
+                        context: read_block.context,
                     }),
                 };
                 if let Err(_send_error) = reply_tx.send(task_done) {
@@ -206,7 +206,7 @@ pub async fn busyloop(
                     current_offset: cursor,
                     task: task::TaskDone::MarkTombstone(task::TaskDoneMarkTombstone {
                         block_id: mark_tombstone.block_id,
-                        reply_tx: mark_tombstone.reply_tx,
+                        context: mark_tombstone.context,
                     }),
                 };
                 if let Err(_send_error) = reply_tx.send(task_done) {
