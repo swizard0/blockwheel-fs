@@ -43,6 +43,7 @@ mod pool;
 mod index;
 mod defrag;
 mod schema;
+mod performer;
 mod interpret;
 
 #[derive(Debug)]
