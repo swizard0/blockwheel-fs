@@ -1,10 +1,7 @@
 use super::{
     gaps,
-    task,
-    proto,
     block,
     index,
-    defrag,
     storage,
 };
 
@@ -14,8 +11,71 @@ pub struct Schema {
     storage_layout: storage::Layout,
     blocks_index: index::Blocks,
     gaps: gaps::Index,
-    defrag_pending_queue: defrag::PendingQueue,
-    defrag_task_queue: defrag::TaskQueue,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum WriteBlockOp {
+    Perform(WriteBlockPerform),
+    QueuePendingDefrag,
+    ReplyNoSpaceLeft,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct WriteBlockPerform {
+    pub defrag_op: DefragOp,
+    pub task_op: WriteBlockTaskOp,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum DefragOp {
+    None,
+    Queue { free_space_offset: u64, space_key: gaps::SpaceKey, },
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct WriteBlockTaskOp {
+    pub block_id: block::Id,
+    pub block_offset: u64,
+    pub commit_type: WriteBlockTaskCommitType,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum WriteBlockTaskCommitType {
+    CommitOnly,
+    CommitAndEof,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum ReadBlockOp {
+    Perform(ReadBlockPerform),
+    NotFound,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct ReadBlockPerform {
+    pub block_offset: u64,
+    pub block_header: storage::BlockHeader,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum DeleteBlockOp {
+    Perform(DeleteBlockPerform),
+    NotFound,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct DeleteBlockPerform {
+    pub block_offset: u64,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum TombstoneWrittenOp {
+    Perform(TombstoneWrittenPerform),
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct TombstoneWrittenPerform {
+    pub defrag_op: DefragOp,
 }
 
 impl Schema {
@@ -25,8 +85,6 @@ impl Schema {
             storage_layout,
             blocks_index: index::Blocks::new(),
             gaps: gaps::Index::new(),
-            defrag_pending_queue: defrag::PendingQueue::new(),
-            defrag_task_queue: defrag::TaskQueue::new(),
         }
     }
 
@@ -45,18 +103,12 @@ impl Schema {
         &self.storage_layout
     }
 
-    pub fn process_write_block_request(
-        &mut self,
-        proto::RequestWriteBlock { block_bytes, reply_tx, }: proto::RequestWriteBlock,
-        current_offset: u64,
-        tasks_queue: &mut task::Queue,
-    )
-    {
+    pub fn process_write_block_request(&mut self, block_bytes: &block::Bytes) -> WriteBlockOp {
         let block_id = self.next_block_id.clone();
         self.next_block_id = self.next_block_id.next();
 
-        let external_context = task::WriteBlockContextExternal { reply_tx, };
-        let mut commit_type = task::CommitType::CommitOnly;
+        let mut defrag_op = DefragOp::None;
+        let mut commit_type = WriteBlockTaskCommitType::CommitOnly;
 
         let space_required = block_bytes.len()
             + self.storage_layout.data_size_block_min();
@@ -77,7 +129,7 @@ impl Schema {
                         },
                     );
                     let free_space_offset = block_offset + space_required as u64;
-                    self.defrag_task_queue.push(free_space_offset, space_key);
+                    defrag_op = DefragOp::Queue { free_space_offset, space_key, };
                     (
                         index::RightEnvirons::Space { space_key, },
                         index::LeftEnvirons::Space { space_key, },
@@ -126,7 +178,7 @@ impl Schema {
                         },
                     );
                     let free_space_offset = block_offset + space_required as u64;
-                    self.defrag_task_queue.push(free_space_offset, space_key);
+                    defrag_op = DefragOp::Queue { free_space_offset, space_key, };
                     (
                         index::RightEnvirons::Space { space_key, },
                         index::RightEnvirons::Block { block_id: block_id.clone(), },
@@ -203,7 +255,7 @@ impl Schema {
                 );
                 self.blocks_index.update_env_right(&left_block_id, left_env);
 
-                commit_type = task::CommitType::CommitAndEof;
+                commit_type = WriteBlockTaskCommitType::CommitAndEof;
                 block_offset
             },
 
@@ -242,100 +294,59 @@ impl Schema {
                     },
                 );
 
-                commit_type = task::CommitType::CommitAndEof;
+                commit_type = WriteBlockTaskCommitType::CommitAndEof;
                 block_offset
             },
 
-            Ok(gaps::Allocated::PendingDefragmentation) => {
-                log::debug!(
-                    "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
-                    block_bytes.len(),
-                );
-                self.defrag_pending_queue.push(proto::RequestWriteBlock {
-                    block_bytes,
-                    reply_tx: external_context.reply_tx,
-                });
-                return;
-            },
+            Ok(gaps::Allocated::PendingDefragmentation) =>
+                return WriteBlockOp::QueuePendingDefrag,
 
-            Err(gaps::Error::NoSpaceLeft) => {
-                if let Err(_send_error) = external_context.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
-                    log::warn!("process_write_block_request: reply channel has been closed");
-                }
-                return
-            },
+            Err(gaps::Error::NoSpaceLeft) =>
+                return WriteBlockOp::ReplyNoSpaceLeft,
+
         };
 
-        let task_write_block = task::WriteBlock {
-            block_id, block_bytes, commit_type,
-            context: task::WriteBlockContext::External(external_context),
-        };
-
-        tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
+        WriteBlockOp::Perform(
+            WriteBlockPerform {
+                defrag_op,
+                task_op: WriteBlockTaskOp {
+                    block_id,
+                    block_offset,
+                    commit_type,
+                },
+            },
+        )
     }
 
-    pub fn process_read_block_request(
-        &mut self,
-        proto::RequestReadBlock { block_id, reply_tx, }: proto::RequestReadBlock,
-        block_bytes: block::BytesMut,
-        current_offset: u64,
-        tasks_queue: &mut task::Queue,
-    )
-    {
-        match self.blocks_index.get(&block_id) {
-            Some(block_entry) if !block_entry.tombstone => {
-                tasks_queue.push(
-                    current_offset,
-                    block_entry.offset,
-                    task::TaskKind::ReadBlock(task::ReadBlock {
-                        block_header: block_entry.header.clone(),
-                        block_bytes,
-                        context: task::ReadBlockContext::External(
-                            task::ReadBlockContextExternal { reply_tx, },
-                        ),
-                    }),
-                );
-            },
-            Some(..) | None => {
-                if let Err(_send_error) = reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
-                    log::warn!("process_read_block_request: reply channel has been closed");
-                }
-            }
+    pub fn process_read_block_request(&mut self, block_id: &block::Id) -> ReadBlockOp {
+        match self.blocks_index.get(block_id) {
+            Some(block_entry) if !block_entry.tombstone =>
+                ReadBlockOp::Perform(ReadBlockPerform {
+                    block_offset: block_entry.offset,
+                    block_header: block_entry.header.clone(),
+                }),
+            Some(..) | None =>
+                ReadBlockOp::NotFound,
         }
     }
 
-    pub fn process_delete_block_request(
-        &mut self,
-        proto::RequestDeleteBlock { block_id, reply_tx, }: proto::RequestDeleteBlock,
-        current_offset: u64,
-        tasks_queue: &mut task::Queue,
-    )
-    {
+    pub fn process_delete_block_request(&mut self, block_id: &block::Id) -> DeleteBlockOp {
         match self.blocks_index.get_mut(&block_id) {
             Some(block_entry) if !block_entry.tombstone => {
                 block_entry.tombstone = true;
-                tasks_queue.push(
-                    current_offset,
-                    block_entry.offset,
-                    task::TaskKind::MarkTombstone(task::MarkTombstone {
-                        block_id,
-                        context: task::MarkTombstoneContext::External(
-                            task::MarkTombstoneContextExternal { reply_tx, },
-                        ),
-                    }),
-                );
+                DeleteBlockOp::Perform(DeleteBlockPerform {
+                    block_offset: block_entry.offset,
+                })
             },
-            Some(..) | None => {
-                if let Err(_send_error) = reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
-                    log::warn!("process_delete_block_request: reply channel has been closed");
-                }
-            }
+            Some(..) | None =>
+                DeleteBlockOp::NotFound,
         }
     }
 
-    pub fn process_tombstone_written(&mut self, removed_block_id: block::Id) {
+    pub fn process_tombstone_written(&mut self, removed_block_id: block::Id) -> TombstoneWrittenOp {
         let block_entry = self.blocks_index.remove(&removed_block_id).unwrap();
         assert!(block_entry.tombstone);
+        let mut defrag_op = DefragOp::None;
 
         match block_entry.environs {
 
@@ -367,7 +378,7 @@ impl Schema {
                         );
                         self.blocks_index.update_env_left(&right_block, index::LeftEnvirons::Start);
                         assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
-                        self.defrag_task_queue.push(block_entry.offset, space_key);
+                        defrag_op = DefragOp::Queue { free_space_offset: block_entry.offset, space_key, };
                     },
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
@@ -387,7 +398,7 @@ impl Schema {
                 let space_key = self.gaps.insert(space_available, gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), });
                 self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Space { space_key, });
                 assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
-                self.defrag_task_queue.push(block_entry.offset, space_key);
+                defrag_op = DefragOp::Queue { free_space_offset: block_entry.offset, space_key, };
             },
 
             index::Environs {
@@ -453,8 +464,8 @@ impl Schema {
                             gaps::GapBetween::StartAndBlock { right_block: right_block_right.clone(), },
                         );
                         self.blocks_index.update_env_left(&right_block_right, index::LeftEnvirons::Space { space_key, });
-                        let defrag_offset = self.storage_layout.wheel_header_size as u64;
-                        self.defrag_task_queue.push(defrag_offset, space_key);
+                        let free_space_offset = self.storage_layout.wheel_header_size as u64;
+                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
                     },
                     (
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_left, right_block: right_block_left, }),
@@ -492,10 +503,10 @@ impl Schema {
                         self.blocks_index.update_env_right(&left_block_left, index::RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&right_block_right, index::LeftEnvirons::Space { space_key, });
                         let block_entry_left = self.blocks_index.get(&left_block_left).unwrap();
-                        let defrag_offset = block_entry_left.offset
+                        let free_space_offset = block_entry_left.offset
                             + self.storage_layout.data_size_block_min() as u64
                             + block_entry_left.header.block_size as u64;
-                        self.defrag_task_queue.push(defrag_offset, space_key);
+                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
                     },
                 },
 
@@ -521,10 +532,10 @@ impl Schema {
                         self.blocks_index.update_env_right(&left_block, index::RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Space { space_key, });
                         let block_entry_left = self.blocks_index.get(&left_block).unwrap();
-                        let defrag_offset = block_entry_left.offset
+                        let free_space_offset = block_entry_left.offset
                             + self.storage_layout.data_size_block_min() as u64
                             + block_entry_left.header.block_size as u64;
-                        self.defrag_task_queue.push(defrag_offset, space_key);
+                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
                     },
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
@@ -536,8 +547,8 @@ impl Schema {
                             gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), },
                         );
                         self.blocks_index.update_env_left(&block_id, index::LeftEnvirons::Space { space_key, });
-                        let defrag_offset = self.storage_layout.wheel_header_size as u64;
-                        self.defrag_task_queue.push(defrag_offset, space_key);
+                        let free_space_offset = self.storage_layout.wheel_header_size as u64;
+                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
                     },
                 },
 
@@ -576,10 +587,10 @@ impl Schema {
                         self.blocks_index.update_env_right(&block_id, index::RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&right_block, index::LeftEnvirons::Space { space_key, });
                         let block_entry_left = self.blocks_index.get(&block_id).unwrap();
-                        let defrag_offset = block_entry_left.offset
+                        let free_space_offset = block_entry_left.offset
                             + self.storage_layout.data_size_block_min() as u64
                             + block_entry_left.header.block_size as u64;
-                        self.defrag_task_queue.push(defrag_offset, space_key);
+                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
                     },
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
@@ -609,27 +620,36 @@ impl Schema {
                 );
                 self.blocks_index.update_env_right(&block_id_left, index::RightEnvirons::Space { space_key, });
                 self.blocks_index.update_env_left(&block_id_right, index::LeftEnvirons::Space { space_key, });
-                self.defrag_task_queue.push(block_entry.offset, space_key);
+                defrag_op = DefragOp::Queue { free_space_offset: block_entry.offset, space_key, };
             },
         }
+
+        TombstoneWrittenOp::Perform(TombstoneWrittenPerform { defrag_op, })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use futures::channel::oneshot;
-
     use super::{
         gaps,
-        task,
-        proto,
         block,
         index,
         storage,
         Schema,
+        WriteBlockOp,
+        WriteBlockPerform,
+        DefragOp,
+        WriteBlockTaskOp,
+        WriteBlockTaskCommitType,
+        ReadBlockOp,
+        ReadBlockPerform,
+        DeleteBlockOp,
+        DeleteBlockPerform,
+        TombstoneWrittenOp,
+        TombstoneWrittenPerform,
     };
 
-    fn init() -> (Schema, task::Queue) {
+    fn init() -> Schema {
         let storage_layout = storage::Layout {
             wheel_header_size: 24,
             block_header_size: 24,
@@ -638,8 +658,7 @@ mod tests {
         };
         let mut schema = Schema::new(storage_layout);
         schema.initialize_empty(144);
-
-        (schema, task::Queue::new())
+        schema
     }
 
     fn sample_hello_world() -> block::Bytes {
@@ -650,18 +669,20 @@ mod tests {
 
     #[test]
     fn process_write_block_request() {
-        let (mut schema, mut tasks_queue) = init();
+        let mut schema = init();
         assert_eq!(schema.gaps.space_total(), 112);
 
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-        schema.process_write_block_request(
-            proto::RequestWriteBlock {
-                block_bytes: sample_hello_world(),
-                reply_tx,
+        let op = schema.process_write_block_request(&sample_hello_world());
+        assert_eq!(op, WriteBlockOp::Perform(
+            WriteBlockPerform {
+                defrag_op: DefragOp::None,
+                task_op: WriteBlockTaskOp {
+                    block_id: block::Id::init(),
+                    block_offset: 24,
+                    commit_type: WriteBlockTaskCommitType::CommitAndEof,
+                },
             },
-            0,
-            &mut tasks_queue,
-        );
+        ));
 
         assert_eq!(schema.next_block_id, block::Id::init().next());
         assert_eq!(
@@ -682,17 +703,18 @@ mod tests {
         );
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
         assert_eq!(schema.gaps.space_total(), 59);
-        assert_eq!(reply_rx.try_recv(), Ok(None));
 
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-        schema.process_write_block_request(
-            proto::RequestWriteBlock {
-                block_bytes: sample_hello_world(),
-                reply_tx,
+        let op = schema.process_write_block_request(&sample_hello_world());
+        assert_eq!(op, WriteBlockOp::Perform(
+            WriteBlockPerform {
+                defrag_op: DefragOp::None,
+                task_op: WriteBlockTaskOp {
+                    block_id: block::Id::init().next(),
+                    block_offset: 77,
+                    commit_type: WriteBlockTaskCommitType::CommitAndEof,
+                },
             },
-            0,
-            &mut tasks_queue,
-        );
+        ));
 
         assert_eq!(schema.next_block_id, block::Id::init().next().next());
         assert_eq!(
@@ -729,46 +751,30 @@ mod tests {
         );
         assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
         assert_eq!(schema.gaps.space_total(), 6);
-        assert_eq!(reply_rx.try_recv(), Ok(None));
 
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-        schema.process_write_block_request(
-            proto::RequestWriteBlock {
-                block_bytes: sample_hello_world(),
-                reply_tx,
-            },
-            0,
-            &mut tasks_queue,
-        );
-        assert_eq!(reply_rx.try_recv(), Ok(Some(Err(proto::RequestWriteBlockError::NoSpaceLeft))));
+        let op = schema.process_write_block_request(&sample_hello_world());
+        assert_eq!(op, WriteBlockOp::ReplyNoSpaceLeft);
     }
 
     #[test]
     fn process_write_read_block_requests() {
-        let (mut schema, mut tasks_queue) = init();
+        let mut schema = init();
         assert_eq!(schema.gaps.space_total(), 112);
 
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-        schema.process_read_block_request(
-            proto::RequestReadBlock {
-                block_id: block::Id::init(),
-                reply_tx,
-            },
-            block::BytesMut::new(),
-            0,
-            &mut tasks_queue,
-        );
-        assert_eq!(reply_rx.try_recv(), Ok(Some(Err(proto::RequestReadBlockError::NotFound))));
+        let op = schema.process_read_block_request(&block::Id::init());
+        assert_eq!(op, ReadBlockOp::NotFound);
 
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-        schema.process_write_block_request(
-            proto::RequestWriteBlock {
-                block_bytes: sample_hello_world(),
-                reply_tx,
+        let op = schema.process_write_block_request(&sample_hello_world());
+        assert_eq!(op, WriteBlockOp::Perform(
+            WriteBlockPerform {
+                defrag_op: DefragOp::None,
+                task_op: WriteBlockTaskOp {
+                    block_id: block::Id::init(),
+                    block_offset: 24,
+                    commit_type: WriteBlockTaskCommitType::CommitAndEof,
+                },
             },
-            0,
-            &mut tasks_queue,
-        );
+        ));
 
         assert_eq!(schema.next_block_id, block::Id::init().next());
         assert_eq!(
@@ -789,51 +795,30 @@ mod tests {
         );
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
         assert_eq!(schema.gaps.space_total(), 59);
-        assert_eq!(reply_rx.try_recv(), Ok(None));
 
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-        schema.process_read_block_request(
-            proto::RequestReadBlock {
-                block_id: block::Id::init(),
-                reply_tx,
+        let op = schema.process_read_block_request(&block::Id::init());
+        assert_eq!(op, ReadBlockOp::Perform(
+            ReadBlockPerform {
+                block_offset: 24,
+                block_header: storage::BlockHeader {
+                    magic: 1941340961166119119,
+                    block_id: block::Id::init(),
+                    block_size: 13,
+                },
             },
-            block::BytesMut::new(),
-            0,
-            &mut tasks_queue,
-        );
-        assert_eq!(reply_rx.try_recv(), Ok(None));
+        ));
     }
 
     #[test]
     fn process_delete_block_request() {
-        let (mut schema, mut tasks_queue) = init();
+        let mut schema = init();
         assert_eq!(schema.gaps.space_total(), 112);
 
-        let (reply_tx, _reply_rx) = oneshot::channel();
-        schema.process_write_block_request(
-            proto::RequestWriteBlock {
-                block_bytes: sample_hello_world(),
-                reply_tx,
-            },
-            0,
-            &mut tasks_queue,
-        );
-        let (reply_tx, _reply_rx) = oneshot::channel();
-        schema.process_write_block_request(
-            proto::RequestWriteBlock {
-                block_bytes: sample_hello_world(),
-                reply_tx,
-            },
-            0,
-            &mut tasks_queue,
-        );
+        schema.process_write_block_request(&sample_hello_world());
+        schema.process_write_block_request(&sample_hello_world());
 
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-        schema.process_delete_block_request(
-            proto::RequestDeleteBlock { block_id: block::Id::init(), reply_tx, },
-            0,
-            &mut tasks_queue,
-        );
+        let op = schema.process_delete_block_request(&block::Id::init());
+        assert_eq!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24 }));
 
         assert_eq!(
             schema.blocks_index.get(&block::Id::init()),
@@ -851,9 +836,14 @@ mod tests {
                 },
             }),
         );
-        assert_eq!(reply_rx.try_recv(), Ok(None));
 
-        schema.process_tombstone_written(block::Id::init());
+        let op = schema.process_tombstone_written(block::Id::init());
+        assert_eq!(op, TombstoneWrittenOp::Perform(TombstoneWrittenPerform {
+            defrag_op: DefragOp::Queue {
+                free_space_offset: 24,
+                space_key: gaps::SpaceKey { space_available: 53, serial: 4, },
+            },
+        }));
 
         assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
         assert_eq!(
@@ -873,27 +863,11 @@ mod tests {
             }),
         );
         assert_eq!(schema.gaps.space_total(), 59);
-        assert_eq!(
-            schema.defrag_task_queue.pop(),
-            Some((24, gaps::SpaceKey { space_available: 53, serial: 4, })),
-        );
 
-        let (reply_tx, _reply_rx) = oneshot::channel();
-        schema.process_write_block_request(
-            proto::RequestWriteBlock {
-                block_bytes: sample_hello_world(),
-                reply_tx,
-            },
-            0,
-            &mut tasks_queue,
-        );
+        schema.process_write_block_request(&sample_hello_world());
 
-        let (reply_tx, mut reply_rx) = oneshot::channel();
-        schema.process_delete_block_request(
-            proto::RequestDeleteBlock { block_id: block::Id::init().next(), reply_tx, },
-            0,
-            &mut tasks_queue,
-        );
+        let op = schema.process_delete_block_request(&block::Id::init().next());
+        assert_eq!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 77, }));
 
         assert_eq!(
             schema.blocks_index.get(&block::Id::init().next()),
@@ -911,9 +885,9 @@ mod tests {
                 },
             }),
         );
-        assert_eq!(reply_rx.try_recv(), Ok(None));
 
-        schema.process_tombstone_written(block::Id::init().next());
+        let op = schema.process_tombstone_written(block::Id::init().next());
+        assert_eq!(op, TombstoneWrittenOp::Perform(TombstoneWrittenPerform { defrag_op: DefragOp::None, }));
 
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
         assert_eq!(
@@ -933,7 +907,6 @@ mod tests {
             }),
         );
         assert_eq!(schema.gaps.space_total(), 59);
-        assert_eq!(schema.defrag_task_queue.pop(), None);
     }
 
 }

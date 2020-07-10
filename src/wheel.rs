@@ -123,6 +123,8 @@ async fn busyloop(
     let mut lru_cache = lru::Cache::new(state.params.lru_cache_size_bytes);
     let mut blocks_pool = pool::Blocks::new();
     let mut tasks_queue = task::Queue::new();
+    let mut defrag_pending_queue = defrag::PendingQueue::new();
+    let mut defrag_task_queue = defrag::TaskQueue::new();
 
     struct BackgroundTask {
         current_offset: u64,
@@ -189,21 +191,113 @@ async fn busyloop(
             },
 
             Source::Pid(Some(proto::Request::WriteBlock(request_write_block))) =>
-                schema.process_write_block_request(request_write_block, bg_task.current_offset, &mut tasks_queue),
+                match schema.process_write_block_request(&request_write_block.block_bytes) {
+
+                    schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, }) => {
+                        match defrag_op {
+                            schema::DefragOp::None =>
+                                (),
+                            schema::DefragOp::Queue { free_space_offset, space_key, } =>
+                                defrag_task_queue.push(free_space_offset, space_key),
+                        }
+
+                        tasks_queue.push(
+                            bg_task.current_offset,
+                            task_op.block_offset,
+                            task::TaskKind::WriteBlock(
+                                task::WriteBlock {
+                                    block_id: task_op.block_id,
+                                    block_bytes: request_write_block.block_bytes,
+                                    commit_type: match task_op.commit_type {
+                                        schema::WriteBlockTaskCommitType::CommitOnly =>
+                                            task::CommitType::CommitOnly,
+                                        schema::WriteBlockTaskCommitType::CommitAndEof =>
+                                            task::CommitType::CommitAndEof,
+                                    },
+                                    context: task::WriteBlockContext::External(
+                                        task::WriteBlockContextExternal {
+                                            reply_tx: request_write_block.reply_tx,
+                                        },
+                                    ),
+                                },
+                            ),
+                        );
+                    },
+
+                    schema::WriteBlockOp::QueuePendingDefrag => {
+                        log::debug!(
+                            "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
+                            request_write_block.block_bytes.len(),
+                        );
+                        defrag_pending_queue.push(request_write_block);
+                    },
+
+                    schema::WriteBlockOp::ReplyNoSpaceLeft => {
+                        if let Err(_send_error) = request_write_block.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
+                            log::warn!("reply channel has been closed during WriteBlock result send");
+                        }
+                    },
+                }
 
             Source::Pid(Some(proto::Request::ReadBlock(request_read_block))) =>
                 if let Some(block_bytes) = lru_cache.get(&request_read_block.block_id) {
                     if let Err(_send_error) = request_read_block.reply_tx.send(Ok(block_bytes.clone())) {
-                        log::warn!("Pid is gone during ReadBlock query result send");
+                        log::warn!("pid is gone during ReadBlock query result send");
                     }
                 } else {
-                    let block = blocks_pool.lend();
-                    schema.process_read_block_request(request_read_block, block, bg_task.current_offset, &mut tasks_queue);
+                    match schema.process_read_block_request(&request_read_block.block_id) {
+
+                        schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, }) => {
+                            let block_bytes = blocks_pool.lend();
+                            tasks_queue.push(
+                                bg_task.current_offset,
+                                block_offset,
+                                task::TaskKind::ReadBlock(task::ReadBlock {
+                                    block_header: block_header,
+                                    block_bytes,
+                                    context: task::ReadBlockContext::External(
+                                        task::ReadBlockContextExternal {
+                                            reply_tx: request_read_block.reply_tx,
+                                        },
+                                    ),
+                                }),
+                            );
+                        },
+
+                        schema::ReadBlockOp::NotFound =>
+                            if let Err(_send_error) = request_read_block.reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
+                                log::warn!("reply channel has been closed during ReadBlock result send");
+                            },
+
+                    }
                 },
 
             Source::Pid(Some(proto::Request::DeleteBlock(request_delete_block))) => {
                 lru_cache.invalidate(&request_delete_block.block_id);
-                schema.process_delete_block_request(request_delete_block, bg_task.current_offset, &mut tasks_queue);
+                match schema.process_delete_block_request(&request_delete_block.block_id) {
+
+                    schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, }) => {
+                        tasks_queue.push(
+                            bg_task.current_offset,
+                            block_offset,
+                            task::TaskKind::MarkTombstone(task::MarkTombstone {
+                                block_id: request_delete_block.block_id,
+                                context: task::MarkTombstoneContext::External(
+                                    task::MarkTombstoneContextExternal {
+                                        reply_tx: request_delete_block.reply_tx,
+                                    },
+                                ),
+                            }),
+                        );
+                    },
+
+                    schema::DeleteBlockOp::NotFound => {
+                        if let Err(_send_error) = request_delete_block.reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
+                            log::warn!("reply channel has been closed during DeleteBlock result send");
+                        }
+                    },
+
+                }
             },
 
             Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), })) => {
@@ -229,7 +323,16 @@ async fn busyloop(
             },
 
             Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::MarkTombstone(mark_tombstone), })) => {
-                schema.process_tombstone_written(mark_tombstone.block_id);
+                match schema.process_tombstone_written(mark_tombstone.block_id) {
+                    schema::TombstoneWrittenOp::Perform(schema::TombstoneWrittenPerform { defrag_op, }) => {
+                        match defrag_op {
+                            schema::DefragOp::None =>
+                                (),
+                            schema::DefragOp::Queue { free_space_offset, space_key, } =>
+                                defrag_task_queue.push(free_space_offset, space_key),
+                        }
+                    },
+                }
                 bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 match mark_tombstone.context {
                     task::MarkTombstoneContext::External(context) =>
