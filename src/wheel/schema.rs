@@ -54,19 +54,15 @@ impl Schema {
     {
         let block_id = self.next_block_id.clone();
         self.next_block_id = self.next_block_id.next();
-        let mut task_write_block = task::WriteBlock {
-            block_id,
-            block_bytes,
-            commit_type: task::CommitType::CommitOnly,
-            context: task::WriteBlockContext::External(
-                task::WriteBlockContextExternal { reply_tx, },
-            ),
-        };
 
-        let space_required = task_write_block.block_bytes.len()
+        let external_context = task::WriteBlockContextExternal { reply_tx, };
+        let mut commit_type = task::CommitType::CommitOnly;
+
+        let space_required = block_bytes.len()
             + self.storage_layout.data_size_block_min();
 
-        match self.gaps.allocate(space_required, &self.blocks_index) {
+        let block_offset = match self.gaps.allocate(space_required, &self.blocks_index) {
+
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndBlock { right_block, }, }) => {
                 let block_offset = self.storage_layout.wheel_header_size as u64;
                 let right_block_id = right_block.block_id.clone();
@@ -76,7 +72,7 @@ impl Schema {
                     let space_key = self.gaps.insert(
                         space_left,
                         gaps::GapBetween::TwoBlocks {
-                            left_block: task_write_block.block_id.clone(),
+                            left_block: block_id.clone(),
                             right_block: right_block_id.clone(),
                         },
                     );
@@ -89,16 +85,16 @@ impl Schema {
                 } else {
                     (
                         index::RightEnvirons::Block { block_id: right_block_id.clone(), },
-                        index::LeftEnvirons::Block { block_id: task_write_block.block_id.clone(), },
+                        index::LeftEnvirons::Block { block_id: block_id.clone(), },
                     )
                 };
                 self.blocks_index.insert(
-                    task_write_block.block_id.clone(),
+                    block_id.clone(),
                     index::BlockEntry {
                         offset: block_offset,
                         header: storage::BlockHeader {
-                            block_id: task_write_block.block_id.clone(),
-                            block_size: task_write_block.block_bytes.len(),
+                            block_id: block_id.clone(),
+                            block_size: block_bytes.len(),
                             ..Default::default()
                         },
                         tombstone: false,
@@ -110,8 +106,9 @@ impl Schema {
                 );
                 self.blocks_index.update_env_left(&right_block_id, right_env);
 
-                tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
+                block_offset
             },
+
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::TwoBlocks { left_block, right_block, }, }) => {
                 let block_offset = left_block.block_entry.offset
                     + self.storage_layout.data_size_block_min() as u64
@@ -124,7 +121,7 @@ impl Schema {
                     let space_key = self.gaps.insert(
                         space_left,
                         gaps::GapBetween::TwoBlocks {
-                            left_block: task_write_block.block_id.clone(),
+                            left_block: block_id.clone(),
                             right_block: right_block_id.clone(),
                         },
                     );
@@ -132,23 +129,23 @@ impl Schema {
                     self.defrag_task_queue.push(free_space_offset, space_key);
                     (
                         index::RightEnvirons::Space { space_key, },
-                        index::RightEnvirons::Block { block_id: task_write_block.block_id.clone(), },
+                        index::RightEnvirons::Block { block_id: block_id.clone(), },
                         index::LeftEnvirons::Space { space_key, },
                     )
                 } else {
                     (
                         index::RightEnvirons::Block { block_id: right_block_id.clone(), },
-                        index::RightEnvirons::Block { block_id: task_write_block.block_id.clone(), },
-                        index::LeftEnvirons::Block { block_id: task_write_block.block_id.clone(), },
+                        index::RightEnvirons::Block { block_id: block_id.clone(), },
+                        index::LeftEnvirons::Block { block_id: block_id.clone(), },
                     )
                 };
                 self.blocks_index.insert(
-                    task_write_block.block_id.clone(),
+                    block_id.clone(),
                     index::BlockEntry {
                         offset: block_offset,
                         header: storage::BlockHeader {
-                            block_id: task_write_block.block_id.clone(),
-                            block_size: task_write_block.block_bytes.len(),
+                            block_id: block_id.clone(),
+                            block_size: block_bytes.len(),
                             ..Default::default()
                         },
                         tombstone: false,
@@ -161,8 +158,9 @@ impl Schema {
                 self.blocks_index.update_env_right(&left_block_id, left_env);
                 self.blocks_index.update_env_left(&right_block_id, right_env);
 
-                tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
+                block_offset
             },
+
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::BlockAndEnd { left_block, }, }) => {
                 let block_offset = left_block.block_entry.offset
                     + self.storage_layout.data_size_block_min() as u64
@@ -174,26 +172,26 @@ impl Schema {
                     let space_key = self.gaps.insert(
                         space_left,
                         gaps::GapBetween::BlockAndEnd {
-                            left_block: task_write_block.block_id.clone(),
+                            left_block: block_id.clone(),
                         },
                     );
                     (
                         index::RightEnvirons::Space { space_key, },
-                        index::RightEnvirons::Block { block_id: task_write_block.block_id.clone(), },
+                        index::RightEnvirons::Block { block_id: block_id.clone(), },
                     )
                 } else {
                     (
                         index::RightEnvirons::End,
-                        index::RightEnvirons::Block { block_id: task_write_block.block_id.clone(), },
+                        index::RightEnvirons::Block { block_id: block_id.clone(), },
                     )
                 };
                 self.blocks_index.insert(
-                    task_write_block.block_id.clone(),
+                    block_id.clone(),
                     index::BlockEntry {
                         offset: block_offset,
                         header: storage::BlockHeader {
-                            block_id: task_write_block.block_id.clone(),
-                            block_size: task_write_block.block_bytes.len(),
+                            block_id: block_id.clone(),
+                            block_size: block_bytes.len(),
                             ..Default::default()
                         },
                         tombstone: false,
@@ -205,9 +203,10 @@ impl Schema {
                 );
                 self.blocks_index.update_env_right(&left_block_id, left_env);
 
-                task_write_block.commit_type = task::CommitType::CommitAndEof;
-                tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
+                commit_type = task::CommitType::CommitAndEof;
+                block_offset
             },
+
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndEnd, }) => {
                 let block_offset = self.storage_layout.wheel_header_size as u64;
 
@@ -216,7 +215,7 @@ impl Schema {
                     let space_key = self.gaps.insert(
                         space_left,
                         gaps::GapBetween::BlockAndEnd {
-                            left_block: task_write_block.block_id.clone(),
+                            left_block: block_id.clone(),
                         },
                     );
                     index::Environs {
@@ -230,12 +229,12 @@ impl Schema {
                     }
                 };
                 self.blocks_index.insert(
-                    task_write_block.block_id.clone(),
+                    block_id.clone(),
                     index::BlockEntry {
                         offset: block_offset,
                         header: storage::BlockHeader {
-                            block_id: task_write_block.block_id.clone(),
-                            block_size: task_write_block.block_bytes.len(),
+                            block_id: block_id.clone(),
+                            block_size: block_bytes.len(),
                             ..Default::default()
                         },
                         tombstone: false,
@@ -243,23 +242,36 @@ impl Schema {
                     },
                 );
 
-                task_write_block.commit_type = task::CommitType::CommitAndEof;
-                tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
+                commit_type = task::CommitType::CommitAndEof;
+                block_offset
             },
+
             Ok(gaps::Allocated::PendingDefragmentation) => {
                 log::debug!(
                     "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
-                    task_write_block.block_bytes.len(),
+                    block_bytes.len(),
                 );
-                self.defrag_pending_queue.push(task_write_block);
+                self.defrag_pending_queue.push(proto::RequestWriteBlock {
+                    block_bytes,
+                    reply_tx: external_context.reply_tx,
+                });
+                return;
             },
-            Err(gaps::Error::NoSpaceLeft) =>
-                if let task::WriteBlockContext::External(context) = task_write_block.context {
-                    if let Err(_send_error) = context.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
-                        log::warn!("process_write_block_request: reply channel has been closed");
-                    }
-                },
-        }
+
+            Err(gaps::Error::NoSpaceLeft) => {
+                if let Err(_send_error) = external_context.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
+                    log::warn!("process_write_block_request: reply channel has been closed");
+                }
+                return
+            },
+        };
+
+        let task_write_block = task::WriteBlock {
+            block_id, block_bytes, commit_type,
+            context: task::WriteBlockContext::External(external_context),
+        };
+
+        tasks_queue.push(current_offset, block_offset, task::TaskKind::WriteBlock(task_write_block));
     }
 
     pub fn process_read_block_request(

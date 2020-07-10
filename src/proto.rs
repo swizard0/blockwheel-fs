@@ -8,6 +8,7 @@ use super::{
     block,
 };
 
+#[derive(Debug)]
 pub enum Request {
     LendBlock(RequestLendBlock),
     RepayBlock(RequestRepayBlock),
@@ -16,10 +17,12 @@ pub enum Request {
     DeleteBlock(RequestDeleteBlock),
 }
 
+#[derive(Debug)]
 pub struct RequestLendBlock {
     pub reply_tx: oneshot::Sender<block::BytesMut>,
 }
 
+#[derive(Debug)]
 pub struct RequestRepayBlock {
     pub block_bytes: block::Bytes,
 }
@@ -29,6 +32,7 @@ pub enum RequestWriteBlockError {
     NoSpaceLeft,
 }
 
+#[derive(Debug)]
 pub struct RequestWriteBlock {
     pub block_bytes: block::Bytes,
     pub reply_tx: oneshot::Sender<Result<block::Id, RequestWriteBlockError>>,
@@ -39,6 +43,7 @@ pub enum RequestReadBlockError {
     NotFound,
 }
 
+#[derive(Debug)]
 pub struct RequestReadBlock {
     pub block_id: block::Id,
     pub reply_tx: oneshot::Sender<Result<block::Bytes, RequestReadBlockError>>,
@@ -49,6 +54,7 @@ pub enum RequestDeleteBlockError {
     NotFound,
 }
 
+#[derive(Debug)]
 pub struct RequestDeleteBlock {
     pub block_id: block::Id,
     pub reply_tx: oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>,

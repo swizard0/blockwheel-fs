@@ -7,13 +7,13 @@ use std::{
 };
 
 use super::{
-    task,
     gaps,
+    proto,
 };
 
 #[derive(Debug)]
 pub struct PendingQueue {
-    queue: VecDeque<task::WriteBlock>,
+    queue: VecDeque<proto::RequestWriteBlock>,
 }
 
 impl PendingQueue {
@@ -23,8 +23,8 @@ impl PendingQueue {
         }
     }
 
-    pub fn push(&mut self, task_write_block: task::WriteBlock) {
-        self.queue.push_back(task_write_block);
+    pub fn push(&mut self, request_write_block: proto::RequestWriteBlock) {
+        self.queue.push_back(request_write_block);
     }
 }
 
