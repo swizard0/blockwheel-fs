@@ -125,6 +125,10 @@ pub enum PerformOp<IC> {
     LendBlock(LendBlockOp<IC>),
     WriteBlock(WriteBlockOp<IC>),
     ReadBlock(ReadBlockOp<IC>),
+    DeleteBlock(DeleteBlockOp<IC>),
+    WriteBlockDone(WriteBlockDoneOp<IC>),
+    ReadBlockDone(ReadBlockDoneOp<IC>),
+    DeleteBlockDone(DeleteBlockDoneOp<IC>),
 }
 
 pub enum LendBlockOp<IC> {
@@ -150,6 +154,36 @@ pub enum ReadBlockOp<IC> {
     },
     NotFound {
         reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
+        performer: Performer<IC>,
+    },
+}
+
+pub enum DeleteBlockOp<IC> {
+    NotFound {
+        reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
+        performer: Performer<IC>,
+    },
+}
+
+pub enum WriteBlockDoneOp<IC> {
+    Done {
+        block_id: block::Id,
+        reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
+        performer: Performer<IC>,
+    },
+}
+
+pub enum ReadBlockDoneOp<IC> {
+    Done {
+        block_bytes: block::Bytes,
+        reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
+        performer: Performer<IC>,
+    },
+}
+
+pub enum DeleteBlockDoneOp<IC> {
+    Done {
+        reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
         performer: Performer<IC>,
     },
 }
@@ -273,96 +307,88 @@ impl<IC> Inner<IC> {
                     }
                 },
 
-            // Source::Pid(Some(proto::Request::DeleteBlock(request_delete_block))) => {
-            //     lru_cache.invalidate(&request_delete_block.block_id);
-            //     match schema.process_delete_block_request(&request_delete_block.block_id) {
+            RequestOrInterpreterIncoming::Request(proto::Request::DeleteBlock(request_delete_block)) => {
+                self.lru_cache.invalidate(&request_delete_block.block_id);
+                match self.schema.process_delete_block_request(&request_delete_block.block_id) {
 
-            //         schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, }) => {
-            //             tasks_queue.push(
-            //                 bg_task.current_offset,
-            //                 block_offset,
-            //                 task::TaskKind::MarkTombstone(task::MarkTombstone {
-            //                     block_id: request_delete_block.block_id,
-            //                     context: task::MarkTombstoneContext::External(
-            //                         task::MarkTombstoneContextExternal {
-            //                             reply_tx: request_delete_block.reply_tx,
-            //                         },
-            //                     ),
-            //                 }),
-            //             );
-            //         },
+                    schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, }) => {
+                        self.tasks_queue.push(
+                            self.bg_task.current_offset,
+                            block_offset,
+                            task::TaskKind::MarkTombstone(task::MarkTombstone {
+                                block_id: request_delete_block.block_id,
+                                context: task::MarkTombstoneContext::External(
+                                    task::MarkTombstoneContextExternal {
+                                        reply_tx: request_delete_block.reply_tx,
+                                    },
+                                ),
+                            }),
+                        );
+                        PerformOp::Idle(Performer { inner: self, })
+                    },
 
-            //         schema::DeleteBlockOp::NotFound => {
-            //             if let Err(_send_error) = request_delete_block.reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
-            //                 log::warn!("reply channel has been closed during DeleteBlock result send");
-            //             }
-            //         },
+                    schema::DeleteBlockOp::NotFound =>
+                        PerformOp::DeleteBlock(DeleteBlockOp::NotFound {
+                            reply_tx: request_delete_block.reply_tx,
+                            performer: Performer { inner: self, },
+                        }),
 
-            //     }
-            // },
+                }
+            },
 
-            // Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), })) => {
-            //     bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-            //     match write_block.context {
-            //         task::WriteBlockContext::External(context) =>
-            //             if let Err(_send_error) = context.reply_tx.send(Ok(write_block.block_id)) {
-            //                 log::warn!("client channel was closed before a block is actually written");
-            //             },
-            //     }
-            // },
+            RequestOrInterpreterIncoming::Interpreter(
+                task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), },
+            ) => {
+                self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+                match write_block.context {
+                    task::WriteBlockContext::External(context) =>
+                        PerformOp::WriteBlockDone(WriteBlockDoneOp::Done {
+                            block_id: write_block.block_id,
+                            reply_tx: context.reply_tx,
+                            performer: Performer { inner: self, },
+                        }),
+                }
+            },
 
-            // Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::ReadBlock(read_block), })) => {
-            //     let block_bytes = read_block.block_bytes.freeze();
-            //     lru_cache.insert(read_block.block_id.clone(), block_bytes.clone());
-            //     bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-            //     match read_block.context {
-            //         task::ReadBlockContext::External(context) =>
-            //             if let Err(_send_error) = context.reply_tx.send(Ok(block_bytes)) {
-            //                 log::warn!("client channel was closed before a block is actually read");
-            //             },
-            //     }
-            // },
+            RequestOrInterpreterIncoming::Interpreter(
+                task::Done { current_offset, task: task::TaskDone::ReadBlock(read_block), },
+            ) => {
+                let block_bytes = read_block.block_bytes.freeze();
+                self.lru_cache.insert(read_block.block_id.clone(), block_bytes.clone());
+                self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+                match read_block.context {
+                    task::ReadBlockContext::External(context) =>
+                        PerformOp::ReadBlockDone(ReadBlockDoneOp::Done {
+                            block_bytes,
+                            reply_tx: context.reply_tx,
+                            performer: Performer { inner: self, },
+                        }),
+                }
+            },
 
-            // Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::MarkTombstone(mark_tombstone), })) => {
-            //     match schema.process_tombstone_written(mark_tombstone.block_id) {
-            //         schema::TombstoneWrittenOp::Perform(schema::TombstoneWrittenPerform { defrag_op, }) => {
-            //             match defrag_op {
-            //                 schema::DefragOp::None =>
-            //                     (),
-            //                 schema::DefragOp::Queue { free_space_offset, space_key, } =>
-            //                     defrag_task_queue.push(free_space_offset, space_key),
-            //             }
-            //         },
-            //     }
-            //     bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-            //     match mark_tombstone.context {
-            //         task::MarkTombstoneContext::External(context) =>
-            //             if let Err(_send_error) = context.reply_tx.send(Ok(proto::Deleted)) {
-            //                 log::warn!("client channel was closed before a block is actually deleted");
-            //             },
-            //     }
-            // },
+            RequestOrInterpreterIncoming::Interpreter(
+                task::Done { current_offset, task: task::TaskDone::MarkTombstone(mark_tombstone), },
+            ) => {
+                match self.schema.process_tombstone_written(mark_tombstone.block_id) {
+                    schema::TombstoneWrittenOp::Perform(schema::TombstoneWrittenPerform { defrag_op, }) => {
+                        match defrag_op {
+                            schema::DefragOp::None =>
+                                (),
+                            schema::DefragOp::Queue { free_space_offset, space_key, } =>
+                                self.defrag_task_queue.push(free_space_offset, space_key),
+                        }
+                    },
+                }
+                self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+                match mark_tombstone.context {
+                    task::MarkTombstoneContext::External(context) =>
+                        PerformOp::DeleteBlockDone(DeleteBlockDoneOp::Done {
+                            reply_tx: context.reply_tx,
+                            performer: Performer { inner: self, },
+                        }),
+                }
+            },
 
-            // Source::InterpreterDone(Err(oneshot::Canceled)) => {
-            //     log::debug!("interpreter reply channel closed: shutting down");
-            //     return Ok(());
-            // },
-
-            // Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-            //     return Err(ErrorSeverity::Recoverable { state, }),
-
-            // Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-            //     return Err(ErrorSeverity::Fatal(error)),
-
-            // Source::InterpreterError(Err(oneshot::Canceled)) => {
-            //     log::debug!("interpreter error channel closed: shutting down");
-            //     return Ok(());
-            // },
-
-            RequestOrInterpreterIncoming::Request(..) =>
-                unimplemented!(),
-            RequestOrInterpreterIncoming::Interpreter(..) =>
-                unimplemented!(),
         }
     }
 }
