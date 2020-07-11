@@ -65,13 +65,17 @@ impl<IC> Performer<IC> {
                     })
                 } else {
                     Op::PollRequest(PollRequest {
-                        inner: self.inner,
+                        next: PollRequestNext {
+                            inner: self.inner,
+                        },
                     })
                 },
             BackgroundTaskState::InProgress { interpreter_context, } =>
                 Op::PollRequestAndInterpreter(PollRequestAndInterpreter {
                     interpreter_context,
-                    inner: self.inner,
+                    next: PollRequestAndInterpreterNext {
+                        inner: self.inner,
+                    },
                 }),
         }
     }
@@ -79,6 +83,10 @@ impl<IC> Performer<IC> {
 
 pub struct PollRequestAndInterpreter<IC> {
     pub interpreter_context: IC,
+    pub next: PollRequestAndInterpreterNext<IC>,
+}
+
+pub struct PollRequestAndInterpreterNext<IC> {
     inner: Inner<IC>,
 }
 
@@ -87,17 +95,21 @@ pub enum RequestOrInterpreterIncoming {
     Interpreter(task::Done),
 }
 
-impl<IC> PollRequestAndInterpreter<IC> {
+impl<IC> PollRequestAndInterpreterNext<IC> {
     pub fn next(self, incoming: RequestOrInterpreterIncoming) -> PerformOp<IC> {
         self.inner.next(incoming)
     }
 }
 
 pub struct PollRequest<IC> {
+    pub next: PollRequestNext<IC>,
+}
+
+pub struct PollRequestNext<IC> {
     inner: Inner<IC>,
 }
 
-impl<IC> PollRequest<IC> {
+impl<IC> PollRequestNext<IC> {
     pub fn next(self, incoming: proto::Request) -> PerformOp<IC> {
         self.inner.next(RequestOrInterpreterIncoming::Request(incoming))
     }
