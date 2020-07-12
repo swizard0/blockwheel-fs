@@ -16,6 +16,9 @@ use super::{
     defrag,
 };
 
+#[cfg(test)]
+mod tests;
+
 struct Inner<IC> {
     schema: schema::Schema,
     lru_cache: lru::Cache,
