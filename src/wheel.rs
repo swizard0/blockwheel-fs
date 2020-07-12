@@ -207,200 +207,67 @@ async fn busyloop(
 
         };
 
-        unimplemented!()
+        performer = match perform_op {
 
-        // let perform_op = match source {
-        //     Source::Pid(None) => {
-        //         log::debug!("all Pid frontends have been terminated");
-        //         return Ok(());
-        //     },
+            performer::PerformOp::Idle(performer) =>
+                performer,
 
-        //     Source::Pid(Some(request)) =>
-        //         match target {
-        //             target::PollRequestAndInterpreter(poll) =>
-        //                 poll.next(perform::PollRequestAndInterpreter::Request(request)),
-        //             target::PollRequest(poll) =>
-        //                 poll.next(request),
-        //         },
+            performer::PerformOp::LendBlock(performer::LendBlockOp::Success { block_bytes, reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(block_bytes) {
+                    log::warn!("Pid is gone during LendBlock query result send");
+                }
+                performer
+            },
 
-        //     //     let block = blocks_pool.lend();
-        //     //     if let Err(_send_error) = reply_tx.send(block) {
-        //     //         log::warn!("Pid is gone during LendBlock query result send");
-        //     //     }
-        //     // },
+            performer::PerformOp::WriteBlock(performer::WriteBlockOp::NoSpaceLeft { reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
+                    log::warn!("reply channel has been closed during WriteBlock result send");
+                }
+                performer
+            },
 
-        //     // Source::Pid(Some(proto::Request::RepayBlock(proto::RequestRepayBlock { block_bytes, }))) => {
-        //     //     blocks_pool.repay(block_bytes);
-        //     // },
+            performer::PerformOp::ReadBlock(performer::ReadBlockOp::CacheHit { reply_tx, block_bytes, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+                    log::warn!("pid is gone during ReadBlock query result send");
+                }
+                performer
+            },
 
-        //     // Source::Pid(Some(proto::Request::WriteBlock(request_write_block))) =>
-        //     //     match schema.process_write_block_request(&request_write_block.block_bytes) {
+            performer::PerformOp::ReadBlock(performer::ReadBlockOp::NotFound { reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
+                    log::warn!("reply channel has been closed during ReadBlock result send");
+                }
+                performer
+            },
 
-        //     //         schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, }) => {
-        //     //             match defrag_op {
-        //     //                 schema::DefragOp::None =>
-        //     //                     (),
-        //     //                 schema::DefragOp::Queue { free_space_offset, space_key, } =>
-        //     //                     defrag_task_queue.push(free_space_offset, space_key),
-        //     //             }
+            performer::PerformOp::DeleteBlock(performer::DeleteBlockOp::NotFound { reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
+                    log::warn!("reply channel has been closed during DeleteBlock result send");
+                }
+                performer
+            },
 
-        //     //             tasks_queue.push(
-        //     //                 bg_task.current_offset,
-        //     //                 task_op.block_offset,
-        //     //                 task::TaskKind::WriteBlock(
-        //     //                     task::WriteBlock {
-        //     //                         block_id: task_op.block_id,
-        //     //                         block_bytes: request_write_block.block_bytes,
-        //     //                         commit_type: match task_op.commit_type {
-        //     //                             schema::WriteBlockTaskCommitType::CommitOnly =>
-        //     //                                 task::CommitType::CommitOnly,
-        //     //                             schema::WriteBlockTaskCommitType::CommitAndEof =>
-        //     //                                 task::CommitType::CommitAndEof,
-        //     //                         },
-        //     //                         context: task::WriteBlockContext::External(
-        //     //                             task::WriteBlockContextExternal {
-        //     //                                 reply_tx: request_write_block.reply_tx,
-        //     //                             },
-        //     //                         ),
-        //     //                     },
-        //     //                 ),
-        //     //             );
-        //     //         },
+            performer::PerformOp::WriteBlockDone(performer::WriteBlockDoneOp::Done { block_id, reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
+                    log::warn!("client channel was closed before a block is actually written");
+                }
+                performer
+            },
 
-        //     //         schema::WriteBlockOp::QueuePendingDefrag => {
-        //     //             log::debug!(
-        //     //                 "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
-        //     //                 request_write_block.block_bytes.len(),
-        //     //             );
-        //     //             defrag_pending_queue.push(request_write_block);
-        //     //         },
+            performer::PerformOp::ReadBlockDone(performer::ReadBlockDoneOp::Done { block_bytes, reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+                    log::warn!("client channel was closed before a block is actually read");
+                }
+                performer
+            },
 
-        //     //         schema::WriteBlockOp::ReplyNoSpaceLeft => {
-        //     //             if let Err(_send_error) = request_write_block.reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
-        //     //                 log::warn!("reply channel has been closed during WriteBlock result send");
-        //     //             }
-        //     //         },
-        //     //     }
-
-        //     // Source::Pid(Some(proto::Request::ReadBlock(request_read_block))) =>
-        //     //     if let Some(block_bytes) = lru_cache.get(&request_read_block.block_id) {
-        //     //         if let Err(_send_error) = request_read_block.reply_tx.send(Ok(block_bytes.clone())) {
-        //     //             log::warn!("pid is gone during ReadBlock query result send");
-        //     //         }
-        //     //     } else {
-        //     //         match schema.process_read_block_request(&request_read_block.block_id) {
-
-        //     //             schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, }) => {
-        //     //                 let block_bytes = blocks_pool.lend();
-        //     //                 tasks_queue.push(
-        //     //                     bg_task.current_offset,
-        //     //                     block_offset,
-        //     //                     task::TaskKind::ReadBlock(task::ReadBlock {
-        //     //                         block_header: block_header,
-        //     //                         block_bytes,
-        //     //                         context: task::ReadBlockContext::External(
-        //     //                             task::ReadBlockContextExternal {
-        //     //                                 reply_tx: request_read_block.reply_tx,
-        //     //                             },
-        //     //                         ),
-        //     //                     }),
-        //     //                 );
-        //     //             },
-
-        //     //             schema::ReadBlockOp::NotFound =>
-        //     //                 if let Err(_send_error) = request_read_block.reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
-        //     //                     log::warn!("reply channel has been closed during ReadBlock result send");
-        //     //                 },
-
-        //     //         }
-        //     //     },
-
-        //     // Source::Pid(Some(proto::Request::DeleteBlock(request_delete_block))) => {
-        //     //     lru_cache.invalidate(&request_delete_block.block_id);
-        //     //     match schema.process_delete_block_request(&request_delete_block.block_id) {
-
-        //     //         schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, }) => {
-        //     //             tasks_queue.push(
-        //     //                 bg_task.current_offset,
-        //     //                 block_offset,
-        //     //                 task::TaskKind::MarkTombstone(task::MarkTombstone {
-        //     //                     block_id: request_delete_block.block_id,
-        //     //                     context: task::MarkTombstoneContext::External(
-        //     //                         task::MarkTombstoneContextExternal {
-        //     //                             reply_tx: request_delete_block.reply_tx,
-        //     //                         },
-        //     //                     ),
-        //     //                 }),
-        //     //             );
-        //     //         },
-
-        //     //         schema::DeleteBlockOp::NotFound => {
-        //     //             if let Err(_send_error) = request_delete_block.reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
-        //     //                 log::warn!("reply channel has been closed during DeleteBlock result send");
-        //     //             }
-        //     //         },
-
-        //     //     }
-        //     // },
-
-        //     Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), })) => {
-        //         bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-        //         match write_block.context {
-        //             task::WriteBlockContext::External(context) =>
-        //                 if let Err(_send_error) = context.reply_tx.send(Ok(write_block.block_id)) {
-        //                     log::warn!("client channel was closed before a block is actually written");
-        //                 },
-        //         }
-        //     },
-
-        //     Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::ReadBlock(read_block), })) => {
-        //         let block_bytes = read_block.block_bytes.freeze();
-        //         lru_cache.insert(read_block.block_id.clone(), block_bytes.clone());
-        //         bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-        //         match read_block.context {
-        //             task::ReadBlockContext::External(context) =>
-        //                 if let Err(_send_error) = context.reply_tx.send(Ok(block_bytes)) {
-        //                     log::warn!("client channel was closed before a block is actually read");
-        //                 },
-        //         }
-        //     },
-
-        //     Source::InterpreterDone(Ok(task::Done { current_offset, task: task::TaskDone::MarkTombstone(mark_tombstone), })) => {
-        //         match schema.process_tombstone_written(mark_tombstone.block_id) {
-        //             schema::TombstoneWrittenOp::Perform(schema::TombstoneWrittenPerform { defrag_op, }) => {
-        //                 match defrag_op {
-        //                     schema::DefragOp::None =>
-        //                         (),
-        //                     schema::DefragOp::Queue { free_space_offset, space_key, } =>
-        //                         defrag_task_queue.push(free_space_offset, space_key),
-        //                 }
-        //             },
-        //         }
-        //         bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-        //         match mark_tombstone.context {
-        //             task::MarkTombstoneContext::External(context) =>
-        //                 if let Err(_send_error) = context.reply_tx.send(Ok(proto::Deleted)) {
-        //                     log::warn!("client channel was closed before a block is actually deleted");
-        //                 },
-        //         }
-        //     },
-
-        //     Source::InterpreterDone(Err(oneshot::Canceled)) => {
-        //         log::debug!("interpreter reply channel closed: shutting down");
-        //         return Ok(());
-        //     },
-
-        //     Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-        //         return Err(ErrorSeverity::Recoverable { state, }),
-
-        //     Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-        //         return Err(ErrorSeverity::Fatal(error)),
-
-        //     Source::InterpreterError(Err(oneshot::Canceled)) => {
-        //         log::debug!("interpreter error channel closed: shutting down");
-        //         return Ok(());
-        //     },
-        // }
+            performer::PerformOp::DeleteBlockDone(performer::DeleteBlockDoneOp::Done { reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Ok(proto::Deleted)) {
+                    log::warn!("client channel was closed before a block is actually deleted");
+                }
+                performer
+            },
+        };
     }
 }
 
