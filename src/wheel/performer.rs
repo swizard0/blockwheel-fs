@@ -109,15 +109,19 @@ pub struct PollRequestAndInterpreterNext<C> where C: Context {
     inner: Inner<C>,
 }
 
-#[derive(Debug)]
-pub enum RequestOrInterpreterIncoming<C> where C: Context {
+enum RequestOrInterpreterIncoming<C> where C: Context {
     Request(proto::Request<C>),
     Interpreter(task::Done<C>),
 }
 
 impl<C> PollRequestAndInterpreterNext<C> where C: Context {
-    pub fn next(self, incoming: RequestOrInterpreterIncoming<C>) -> PerformOp<C> {
-        self.inner.next(incoming)
+    pub fn incoming_request(mut self, request: proto::Request<C>, interpreter_context: C::Interpreter) -> PerformOp<C> {
+        self.inner.bg_task.state = BackgroundTaskState::InProgress { interpreter_context, };
+        self.inner.next(RequestOrInterpreterIncoming::Request(request))
+    }
+
+    pub fn incoming_task_done(self, task_done: task::Done<C>) -> PerformOp<C> {
+        self.inner.next(RequestOrInterpreterIncoming::Interpreter(task_done))
     }
 }
 
@@ -132,8 +136,8 @@ pub struct PollRequestNext<C> where C: Context {
 }
 
 impl<C> PollRequestNext<C> where C: Context {
-    pub fn next(self, incoming: proto::Request<C>) -> PerformOp<C> {
-        self.inner.next(RequestOrInterpreterIncoming::Request(incoming))
+    pub fn incoming_request(self, request: proto::Request<C>) -> PerformOp<C> {
+        self.inner.next(RequestOrInterpreterIncoming::Request(request))
     }
 }
 

@@ -16,7 +16,6 @@ use super::{
     DeleteBlockDoneOp,
     InterpretTask,
     PollRequestAndInterpreter,
-    RequestOrInterpreterIncoming,
     super::{
         storage,
         context,
@@ -48,7 +47,7 @@ fn init() -> Performer<Context> {
     Performer::new(schema, 16)
 }
 
-fn sample_hello_world() -> block::Bytes {
+fn hello_world_bytes() -> block::Bytes {
     let mut block_bytes_mut = block::BytesMut::new();
     block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
     block_bytes_mut.freeze()
@@ -60,8 +59,9 @@ enum ScriptOp {
     ExpectPollRequest,
     ExpectPollRequestAndInterpreter { expect_context: C, },
     ExpectInterpretTask { expect_offset: u64, expect_task_kind: task::TaskKind<Context>, },
-    PollRequestAndInterpreterNext { incoming: RequestOrInterpreterIncoming<Context>, },
-    PollRequestNext { incoming: proto::Request<Context>, },
+    RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, interpreter_context: C, },
+    RequestAndInterpreterIncomingTaskDone { task_done: task::Done<Context>, },
+    RequestIncomingRequest { request: proto::Request<Context>, },
     TaskAccepted { interpreter_context: C, },
     ExpectLendBlockSuccess { expect_context: C, },
     ExpectWriteBlockNoSpaceLeft { expect_context: C, },
@@ -121,20 +121,22 @@ fn interpret(mut performer: Performer<Context>, mut script: Vec<ScriptOp>) {
             Op::PollRequestAndInterpreter(var @ PollRequestAndInterpreter { .. }) =>
                 match script.pop() {
                     None =>
-                        panic!("unexpected script end on {:?}, expecting PollRequestAndInterpreterNext", var),
-                    Some(ScriptOp::PollRequestAndInterpreterNext { incoming, }) =>
-                        var.next.next(incoming),
+                        panic!("unexpected script end on {:?}, expecting one of RequestAndInterpreterIncoming*", var),
+                    Some(ScriptOp::RequestAndInterpreterIncomingRequest { request, interpreter_context, }) =>
+                        var.next.incoming_request(request, interpreter_context),
+                    Some(ScriptOp::RequestAndInterpreterIncomingTaskDone { task_done, }) =>
+                        var.next.incoming_task_done(task_done),
                     Some(other_op) =>
-                        panic!("expecting exact PollRequestAndInterpreterNext for {:?} but got {:?}", var, other_op),
+                        panic!("expecting exact RequestAndInterpreterIncoming* for {:?} but got {:?}", var, other_op),
                 },
             Op::PollRequest(var @ PollRequest { .. }) =>
                 match script.pop() {
                     None =>
-                        panic!("unexpected script end on {:?}, expecting PollRequestNext", var),
-                    Some(ScriptOp::PollRequestNext { incoming, }) =>
-                        var.next.next(incoming),
+                        panic!("unexpected script end on {:?}, expecting RequestIncomingRequest", var),
+                    Some(ScriptOp::RequestIncomingRequest { request, }) =>
+                        var.next.incoming_request(request),
                     Some(other_op) =>
-                        panic!("expecting exact PollRequestNext for {:?} but got {:?}", var, other_op),
+                        panic!("expecting exact RequestIncomingRequest for {:?} but got {:?}", var, other_op),
                 },
             Op::InterpretTask(var @ InterpretTask { .. }) =>
                 match script.pop() {
@@ -261,13 +263,80 @@ fn interpret(mut performer: Performer<Context>, mut script: Vec<ScriptOp>) {
 }
 
 #[test]
-fn script_00() {
+fn script_all_ops() {
     let performer = init();
     let script = vec![
         ScriptOp::PerformerNext,
         ScriptOp::ExpectPollRequest,
-        ScriptOp::PollRequestNext { incoming: proto::Request::LendBlock(proto::RequestLendBlock { context: "ctx00", }), },
-        ScriptOp::ExpectLendBlockSuccess { expect_context: "ctx00", },
+        ScriptOp::RequestIncomingRequest {
+            request: proto::Request::LendBlock(proto::RequestLendBlock { context: "ctx00", }),
+        },
+        ScriptOp::ExpectLendBlockSuccess {
+            expect_context: "ctx00",
+        },
+        ScriptOp::PerformerNext,
+        ScriptOp::ExpectPollRequest,
+        ScriptOp::RequestIncomingRequest {
+            request: proto::Request::RepayBlock(proto::RequestRepayBlock { block_bytes: hello_world_bytes(), }),
+        },
+        ScriptOp::PerformerNext,
+        ScriptOp::ExpectPollRequest,
+        ScriptOp::RequestIncomingRequest {
+            request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ctx01", }),
+        },
+        ScriptOp::ExpectReadBlockNotFound {
+            expect_context: "ctx01",
+        },
+        ScriptOp::PerformerNext,
+        ScriptOp::ExpectPollRequest,
+        ScriptOp::RequestIncomingRequest {
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ctx02", }),
+        },
+        ScriptOp::PerformerNext,
+        ScriptOp::ExpectInterpretTask {
+            expect_offset: 24,
+            expect_task_kind: task::TaskKind::WriteBlock(task::WriteBlock {
+                block_id: block::Id::init(),
+                block_bytes: hello_world_bytes(),
+                commit_type: task::CommitType::CommitAndEof,
+                context: task::WriteBlockContext::External("ctx02"),
+            }),
+        },
+        ScriptOp::TaskAccepted { interpreter_context: "ctx03", },
+        ScriptOp::PerformerNext,
+        ScriptOp::ExpectPollRequestAndInterpreter {
+            expect_context: "ctx03",
+        },
+        ScriptOp::RequestAndInterpreterIncomingRequest {
+            request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ctx04", }),
+            interpreter_context: "ctx05",
+        },
+        ScriptOp::PerformerNext,
+        ScriptOp::ExpectPollRequestAndInterpreter {
+            expect_context: "ctx05",
+        },
+        ScriptOp::RequestAndInterpreterIncomingRequest {
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ctx06", }),
+            interpreter_context: "ctx07",
+        },
+        ScriptOp::PerformerNext,
+        ScriptOp::ExpectPollRequestAndInterpreter {
+            expect_context: "ctx07",
+        },
+        ScriptOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 77,
+                task: task::TaskDone::WriteBlock(task::TaskDoneWriteBlock {
+                    block_id: block::Id::init(),
+                    context: task::WriteBlockContext::External("ctx02"),
+                }),
+            },
+        },
+        ScriptOp::ExpectWriteBlockDoneDone {
+            expect_block_id: block::Id::init(),
+            expect_context: "ctx02",
+        },
+        ScriptOp::PerformerNext,
     ];
 
     interpret(performer, script)

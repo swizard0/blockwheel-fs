@@ -149,9 +149,9 @@ async fn busyloop(
                 };
                 match source {
                     Source::Pid(Some(request)) =>
-                        poll.next.next(performer::RequestOrInterpreterIncoming::Request(request)),
+                        poll.next.incoming_request(request, fused_interpret_result_rx),
                     Source::InterpreterDone(Ok(task_done)) =>
-                        poll.next.next(performer::RequestOrInterpreterIncoming::Interpreter(task_done)),
+                        poll.next.incoming_task_done(task_done),
                     Source::Pid(None) => {
                         log::debug!("all Pid frontends have been terminated");
                         return Ok(());
@@ -185,7 +185,7 @@ async fn busyloop(
                 };
                 match source {
                     Source::Pid(Some(request)) =>
-                        poll.next.next(request),
+                        poll.next.incoming_request(request),
                     Source::Pid(None) => {
                         log::debug!("all Pid frontends have been terminated");
                         return Ok(());
