@@ -68,7 +68,7 @@ impl Deref for Bytes {
     }
 }
 
-#[derive(Hash, Debug)]
+#[derive(PartialEq, Eq, Hash, Debug)]
 pub struct BytesMut {
     bytes: Vec<u8>,
 }

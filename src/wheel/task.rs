@@ -78,14 +78,14 @@ impl<C> Ord for Task<C> where C: Context {
     }
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum TaskKind<C> where C: Context {
     WriteBlock(WriteBlock<C::WriteBlock>),
     ReadBlock(ReadBlock<C::ReadBlock>),
     MarkTombstone(MarkTombstone<C::DeleteBlock>),
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct WriteBlock<C> {
     pub block_id: block::Id,
     pub block_bytes: block::Bytes,
@@ -93,36 +93,36 @@ pub struct WriteBlock<C> {
     pub context: WriteBlockContext<C>,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum CommitType {
     CommitOnly,
     CommitAndEof,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum WriteBlockContext<C> {
     External(C),
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct ReadBlock<C> {
     pub block_header: storage::BlockHeader,
     pub block_bytes: block::BytesMut,
     pub context: ReadBlockContext<C>,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum ReadBlockContext<C> {
     External(C),
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct MarkTombstone<C> {
     pub block_id: block::Id,
     pub context: MarkTombstoneContext<C>,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum MarkTombstoneContext<C> {
     External(C),
 }

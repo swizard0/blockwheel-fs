@@ -29,7 +29,7 @@ impl Default for WheelHeader {
 
 pub const BLOCK_MAGIC: u64 = 0x1af107518a38d0cf;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct BlockHeader {
     pub magic: u64,
     pub block_id: block::Id,

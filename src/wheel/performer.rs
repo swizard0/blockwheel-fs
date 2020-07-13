@@ -1,4 +1,7 @@
-use std::mem;
+use std::{
+    mem,
+    fmt,
+};
 
 use super::{
     lru,
@@ -24,6 +27,12 @@ struct Inner<C> where C: Context {
     bg_task: BackgroundTask<C::Interpreter>,
 }
 
+impl<C> fmt::Debug for Inner<C> where C: Context {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.write_str("<inner>")
+    }
+}
+
 struct BackgroundTask<C> {
     current_offset: u64,
     state: BackgroundTaskState<C>,
@@ -34,10 +43,12 @@ enum BackgroundTaskState<C> {
     InProgress { interpreter_context: C, },
 }
 
+#[derive(Debug)]
 pub struct Performer<C> where C: Context {
     inner: Inner<C>,
 }
 
+#[derive(Debug)]
 pub enum Op<C> where C: Context {
     PollRequestAndInterpreter(PollRequestAndInterpreter<C>),
     PollRequest(PollRequest<C>),
@@ -84,10 +95,21 @@ pub struct PollRequestAndInterpreter<C> where C: Context {
     pub next: PollRequestAndInterpreterNext<C>,
 }
 
+impl<C> fmt::Debug for PollRequestAndInterpreter<C> where C: Context {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("PollRequestAndInterpreter")
+            .field("interpreter_context", &"<..>")
+            .field("next", &"PollRequestAndInterpreterNext { inner: <inner>, }")
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 pub struct PollRequestAndInterpreterNext<C> where C: Context {
     inner: Inner<C>,
 }
 
+#[derive(Debug)]
 pub enum RequestOrInterpreterIncoming<C> where C: Context {
     Request(proto::Request<C>),
     Interpreter(task::Done<C>),
@@ -99,10 +121,12 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
     }
 }
 
+#[derive(Debug)]
 pub struct PollRequest<C> where C: Context {
     pub next: PollRequestNext<C>,
 }
 
+#[derive(Debug)]
 pub struct PollRequestNext<C> where C: Context {
     inner: Inner<C>,
 }
@@ -113,12 +137,14 @@ impl<C> PollRequestNext<C> where C: Context {
     }
 }
 
+#[derive(Debug)]
 pub struct InterpretTask<C> where C: Context {
     pub offset: u64,
     pub task_kind: task::TaskKind<C>,
     pub next: InterpretTaskNext<C>,
 }
 
+#[derive(Debug)]
 pub struct InterpretTaskNext<C> where C: Context {
     inner: Inner<C>,
 }
@@ -130,6 +156,7 @@ impl<C> InterpretTaskNext<C> where C: Context {
     }
 }
 
+#[derive(Debug)]
 pub enum PerformOp<C> where C: Context {
     Idle(Performer<C>),
     LendBlock(LendBlockOp<C>),
@@ -141,6 +168,7 @@ pub enum PerformOp<C> where C: Context {
     DeleteBlockDone(DeleteBlockDoneOp<C>),
 }
 
+#[derive(Debug)]
 pub enum LendBlockOp<C> where C: Context {
     Success {
         block_bytes: block::BytesMut,
@@ -149,6 +177,7 @@ pub enum LendBlockOp<C> where C: Context {
     },
 }
 
+#[derive(Debug)]
 pub enum WriteBlockOp<C> where C: Context {
     NoSpaceLeft {
         context: C::WriteBlock,
@@ -156,6 +185,7 @@ pub enum WriteBlockOp<C> where C: Context {
     },
 }
 
+#[derive(Debug)]
 pub enum ReadBlockOp<C> where C: Context {
     CacheHit {
         context: C::ReadBlock,
@@ -168,6 +198,7 @@ pub enum ReadBlockOp<C> where C: Context {
     },
 }
 
+#[derive(Debug)]
 pub enum DeleteBlockOp<C> where C: Context {
     NotFound {
         context: C::DeleteBlock,
@@ -175,6 +206,7 @@ pub enum DeleteBlockOp<C> where C: Context {
     },
 }
 
+#[derive(Debug)]
 pub enum WriteBlockDoneOp<C> where C: Context {
     Done {
         block_id: block::Id,
@@ -183,6 +215,7 @@ pub enum WriteBlockDoneOp<C> where C: Context {
     },
 }
 
+#[derive(Debug)]
 pub enum ReadBlockDoneOp<C> where C: Context {
     Done {
         block_bytes: block::Bytes,
@@ -191,6 +224,7 @@ pub enum ReadBlockDoneOp<C> where C: Context {
     },
 }
 
+#[derive(Debug)]
 pub enum DeleteBlockDoneOp<C> where C: Context {
     Done {
         context: C::DeleteBlock,
