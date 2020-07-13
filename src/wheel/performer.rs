@@ -278,6 +278,10 @@ impl<C> Inner<C> where C: Context {
                             schema::DefragOp::Queue { free_space_offset, space_key, } =>
                                 self.defrag_task_queue.push(free_space_offset, space_key),
                         }
+                        self.lru_cache.insert(
+                            task_op.block_id.clone(),
+                            request_write_block.block_bytes.clone(),
+                        );
                         self.tasks_queue.push(
                             self.bg_task.current_offset,
                             task_op.block_offset,
