@@ -1,25 +1,20 @@
-use futures::{
-    channel::{
-        oneshot,
-    },
-};
-
 use super::{
     block,
+    wheel::context::Context,
 };
 
 #[derive(Debug)]
-pub enum Request {
-    LendBlock(RequestLendBlock),
+pub enum Request<C> where C: Context {
+    LendBlock(RequestLendBlock<C::LendBlock>),
     RepayBlock(RequestRepayBlock),
-    WriteBlock(RequestWriteBlock),
-    ReadBlock(RequestReadBlock),
-    DeleteBlock(RequestDeleteBlock),
+    WriteBlock(RequestWriteBlock<C::WriteBlock>),
+    ReadBlock(RequestReadBlock<C::ReadBlock>),
+    DeleteBlock(RequestDeleteBlock<C::DeleteBlock>),
 }
 
 #[derive(Debug)]
-pub struct RequestLendBlock {
-    pub reply_tx: oneshot::Sender<block::BytesMut>,
+pub struct RequestLendBlock<C> {
+    pub context: C,
 }
 
 #[derive(Debug)]
@@ -27,38 +22,20 @@ pub struct RequestRepayBlock {
     pub block_bytes: block::Bytes,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum RequestWriteBlockError {
-    NoSpaceLeft,
-}
-
 #[derive(Debug)]
-pub struct RequestWriteBlock {
+pub struct RequestWriteBlock<C> {
     pub block_bytes: block::Bytes,
-    pub reply_tx: oneshot::Sender<Result<block::Id, RequestWriteBlockError>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum RequestReadBlockError {
-    NotFound,
+    pub context: C,
 }
 
 #[derive(Debug)]
-pub struct RequestReadBlock {
+pub struct RequestReadBlock<C> {
     pub block_id: block::Id,
-    pub reply_tx: oneshot::Sender<Result<block::Bytes, RequestReadBlockError>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum RequestDeleteBlockError {
-    NotFound,
+    pub context: C,
 }
 
 #[derive(Debug)]
-pub struct RequestDeleteBlock {
+pub struct RequestDeleteBlock<C> {
     pub block_id: block::Id,
-    pub reply_tx: oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>,
+    pub context: C,
 }
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Deleted;

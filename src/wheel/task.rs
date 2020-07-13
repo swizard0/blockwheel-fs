@@ -5,26 +5,20 @@ use std::{
     },
 };
 
-use futures::{
-    channel::{
-        oneshot,
-    },
-};
-
 use super::{
     block,
-    proto,
     storage,
+    context::Context,
 };
 
-pub struct Queue {
+pub struct Queue<C> where C: Context {
     serial: usize,
-    queue_left: BinaryHeap<Task>,
-    queue_right: BinaryHeap<Task>,
+    queue_left: BinaryHeap<Task<C>>,
+    queue_right: BinaryHeap<Task<C>>,
 }
 
-impl Queue {
-    pub fn new() -> Queue {
+impl<C> Queue<C> where C: Context {
+    pub fn new() -> Queue<C> {
         Queue {
             serial: 0,
             queue_left: BinaryHeap::new(),
@@ -32,7 +26,7 @@ impl Queue {
         }
     }
 
-    pub fn push(&mut self, current_offset: u64, offset: u64, task: TaskKind) {
+    pub fn push(&mut self, current_offset: u64, offset: u64, task: TaskKind<C>) {
         let queue = if offset >= current_offset {
             &mut self.queue_right
         } else {
@@ -43,7 +37,7 @@ impl Queue {
         queue.push(Task { offset, serial, task, });
     }
 
-    pub fn pop(&mut self) -> Option<(u64, TaskKind)> {
+    pub fn pop(&mut self) -> Option<(u64, TaskKind<C>)> {
         if let Some(Task { offset, task, .. }) = self.queue_right.pop() {
             Some((offset, task))
         } else if let Some(Task { offset, task, .. }) = self.queue_left.pop() {
@@ -57,46 +51,46 @@ impl Queue {
 }
 
 #[derive(Debug)]
-struct Task {
+struct Task<C> where C: Context {
     offset: u64,
     serial: usize,
-    task: TaskKind,
+    task: TaskKind<C>,
 }
 
-impl PartialEq for Task {
-    fn eq(&self, other: &Task) -> bool {
+impl<C> PartialEq for Task<C> where C: Context {
+    fn eq(&self, other: &Task<C>) -> bool {
         self.offset == other.offset && self.serial == other.serial
     }
 }
 
-impl Eq for Task { }
+impl<C> Eq for Task<C> where C: Context { }
 
-impl PartialOrd for Task {
-    fn partial_cmp(&self, other: &Task) -> Option<cmp::Ordering> {
+impl<C> PartialOrd for Task<C> where C: Context {
+    fn partial_cmp(&self, other: &Task<C>) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Task {
-    fn cmp(&self, other: &Task) -> cmp::Ordering {
+impl<C> Ord for Task<C> where C: Context {
+    fn cmp(&self, other: &Task<C>) -> cmp::Ordering {
         other.offset.cmp(&self.offset)
             .then_with(|| self.serial.cmp(&other.serial))
     }
 }
 
 #[derive(Debug)]
-pub enum TaskKind {
-    WriteBlock(WriteBlock),
-    ReadBlock(ReadBlock),
-    MarkTombstone(MarkTombstone),
+pub enum TaskKind<C> where C: Context {
+    WriteBlock(WriteBlock<C::WriteBlock>),
+    ReadBlock(ReadBlock<C::ReadBlock>),
+    MarkTombstone(MarkTombstone<C::DeleteBlock>),
 }
 
 #[derive(Debug)]
-pub struct WriteBlock {
+pub struct WriteBlock<C> {
     pub block_id: block::Id,
     pub block_bytes: block::Bytes,
     pub commit_type: CommitType,
-    pub context: WriteBlockContext,
+    pub context: WriteBlockContext<C>,
 }
 
 #[derive(Debug)]
@@ -106,76 +100,61 @@ pub enum CommitType {
 }
 
 #[derive(Debug)]
-pub enum WriteBlockContext {
-    External(WriteBlockContextExternal),
+pub enum WriteBlockContext<C> {
+    External(C),
 }
 
 #[derive(Debug)]
-pub struct WriteBlockContextExternal {
-    pub reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
-}
-
-#[derive(Debug)]
-pub struct ReadBlock {
+pub struct ReadBlock<C> {
     pub block_header: storage::BlockHeader,
     pub block_bytes: block::BytesMut,
-    pub context: ReadBlockContext,
+    pub context: ReadBlockContext<C>,
 }
 
 #[derive(Debug)]
-pub enum ReadBlockContext {
-    External(ReadBlockContextExternal),
+pub enum ReadBlockContext<C> {
+    External(C),
 }
 
 #[derive(Debug)]
-pub struct ReadBlockContextExternal {
-    pub reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
-}
-
-#[derive(Debug)]
-pub struct MarkTombstone {
+pub struct MarkTombstone<C> {
     pub block_id: block::Id,
-    pub context: MarkTombstoneContext,
+    pub context: MarkTombstoneContext<C>,
 }
 
 #[derive(Debug)]
-pub enum MarkTombstoneContext {
-    External(MarkTombstoneContextExternal),
+pub enum MarkTombstoneContext<C> {
+    External(C),
 }
 
 #[derive(Debug)]
-pub struct MarkTombstoneContextExternal {
-    pub reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
-}
-
-#[derive(Debug)]
-pub struct Done {
+pub struct Done<C> where C: Context {
     pub current_offset: u64,
-    pub task: TaskDone,
+    pub task: TaskDone<C>,
 }
 
 #[derive(Debug)]
-pub enum TaskDone {
-    WriteBlock(TaskDoneWriteBlock),
-    ReadBlock(TaskDoneReadBlock),
-    MarkTombstone(TaskDoneMarkTombstone),
+pub enum TaskDone<C> where C: Context {
+    WriteBlock(TaskDoneWriteBlock<C::WriteBlock>),
+    ReadBlock(TaskDoneReadBlock<C::ReadBlock>),
+    MarkTombstone(TaskDoneMarkTombstone<C::DeleteBlock>),
 }
 
 #[derive(Debug)]
-pub struct TaskDoneWriteBlock {
+pub struct TaskDoneWriteBlock<C> {
     pub block_id: block::Id,
-    pub context: WriteBlockContext,
+    pub context: WriteBlockContext<C>,
 }
 
 #[derive(Debug)]
-pub struct TaskDoneReadBlock {
+pub struct TaskDoneReadBlock<C> {
     pub block_id: block::Id,
     pub block_bytes: block::BytesMut,
-    pub context: ReadBlockContext,
+    pub context: ReadBlockContext<C>,
 }
 
 #[derive(Debug)]
-pub struct TaskDoneMarkTombstone {
+pub struct TaskDoneMarkTombstone<C> {
     pub block_id: block::Id,
-    pub context: MarkTombstoneContext,
+    pub context: MarkTombstoneContext<C>,
 }

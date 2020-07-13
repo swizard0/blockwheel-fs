@@ -34,7 +34,10 @@ use super::{
     proto,
     storage,
     Params,
+    Deleted,
 };
+
+pub mod context;
 
 mod lru;
 mod gaps;
@@ -69,9 +72,11 @@ pub enum Error {
     WheelCreateFlush(io::Error),
 }
 
+type Request = proto::Request<context::blockwheel::Context>;
+
 pub struct State {
     pub parent_supervisor: SupervisorPid,
-    pub fused_request_rx: stream::Fuse<mpsc::Receiver<proto::Request>>,
+    pub fused_request_rx: stream::Fuse<mpsc::Receiver<Request>>,
     pub params: Params,
 }
 
@@ -212,57 +217,57 @@ async fn busyloop(
             performer::PerformOp::Idle(performer) =>
                 performer,
 
-            performer::PerformOp::LendBlock(performer::LendBlockOp::Success { block_bytes, reply_tx, performer, }) => {
+            performer::PerformOp::LendBlock(performer::LendBlockOp::Success { block_bytes, context: reply_tx, performer, }) => {
                 if let Err(_send_error) = reply_tx.send(block_bytes) {
                     log::warn!("Pid is gone during LendBlock query result send");
                 }
                 performer
             },
 
-            performer::PerformOp::WriteBlock(performer::WriteBlockOp::NoSpaceLeft { reply_tx, performer, }) => {
-                if let Err(_send_error) = reply_tx.send(Err(proto::RequestWriteBlockError::NoSpaceLeft)) {
+            performer::PerformOp::WriteBlock(performer::WriteBlockOp::NoSpaceLeft { context: reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestWriteBlockError::NoSpaceLeft)) {
                     log::warn!("reply channel has been closed during WriteBlock result send");
                 }
                 performer
             },
 
-            performer::PerformOp::ReadBlock(performer::ReadBlockOp::CacheHit { reply_tx, block_bytes, performer, }) => {
+            performer::PerformOp::ReadBlock(performer::ReadBlockOp::CacheHit { context: reply_tx, block_bytes, performer, }) => {
                 if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
                     log::warn!("pid is gone during ReadBlock query result send");
                 }
                 performer
             },
 
-            performer::PerformOp::ReadBlock(performer::ReadBlockOp::NotFound { reply_tx, performer, }) => {
-                if let Err(_send_error) = reply_tx.send(Err(proto::RequestReadBlockError::NotFound)) {
+            performer::PerformOp::ReadBlock(performer::ReadBlockOp::NotFound { context: reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestReadBlockError::NotFound)) {
                     log::warn!("reply channel has been closed during ReadBlock result send");
                 }
                 performer
             },
 
-            performer::PerformOp::DeleteBlock(performer::DeleteBlockOp::NotFound { reply_tx, performer, }) => {
-                if let Err(_send_error) = reply_tx.send(Err(proto::RequestDeleteBlockError::NotFound)) {
+            performer::PerformOp::DeleteBlock(performer::DeleteBlockOp::NotFound { context: reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestDeleteBlockError::NotFound)) {
                     log::warn!("reply channel has been closed during DeleteBlock result send");
                 }
                 performer
             },
 
-            performer::PerformOp::WriteBlockDone(performer::WriteBlockDoneOp::Done { block_id, reply_tx, performer, }) => {
+            performer::PerformOp::WriteBlockDone(performer::WriteBlockDoneOp::Done { block_id, context: reply_tx, performer, }) => {
                 if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
                     log::warn!("client channel was closed before a block is actually written");
                 }
                 performer
             },
 
-            performer::PerformOp::ReadBlockDone(performer::ReadBlockDoneOp::Done { block_bytes, reply_tx, performer, }) => {
+            performer::PerformOp::ReadBlockDone(performer::ReadBlockDoneOp::Done { block_bytes, context: reply_tx, performer, }) => {
                 if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
                     log::warn!("client channel was closed before a block is actually read");
                 }
                 performer
             },
 
-            performer::PerformOp::DeleteBlockDone(performer::DeleteBlockDoneOp::Done { reply_tx, performer, }) => {
-                if let Err(_send_error) = reply_tx.send(Ok(proto::Deleted)) {
+            performer::PerformOp::DeleteBlockDone(performer::DeleteBlockDoneOp::Done { context: reply_tx, performer, }) => {
+                if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
                     log::warn!("client channel was closed before a block is actually deleted");
                 }
                 performer

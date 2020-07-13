@@ -12,18 +12,18 @@ use super::{
 };
 
 #[derive(Debug)]
-pub struct PendingQueue {
-    queue: VecDeque<proto::RequestWriteBlock>,
+pub struct PendingQueue<C> {
+    queue: VecDeque<proto::RequestWriteBlock<C>>,
 }
 
-impl PendingQueue {
-    pub fn new() -> PendingQueue {
+impl<C> PendingQueue<C> {
+    pub fn new() -> PendingQueue<C> {
         PendingQueue {
             queue: VecDeque::new(),
         }
     }
 
-    pub fn push(&mut self, request_write_block: proto::RequestWriteBlock) {
+    pub fn push(&mut self, request_write_block: proto::RequestWriteBlock<C>) {
         self.queue.push_back(request_write_block);
     }
 }

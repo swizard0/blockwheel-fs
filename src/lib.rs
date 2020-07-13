@@ -48,14 +48,16 @@ impl Default for Params {
     }
 }
 
+type Request = proto::Request<wheel::context::blockwheel::Context>;
+
 pub struct GenServer {
-    request_tx: mpsc::Sender<proto::Request>,
-    fused_request_rx: stream::Fuse<mpsc::Receiver<proto::Request>>,
+    request_tx: mpsc::Sender<Request>,
+    fused_request_rx: stream::Fuse<mpsc::Receiver<Request>>,
 }
 
 #[derive(Clone)]
 pub struct Pid {
-    request_tx: mpsc::Sender<proto::Request>,
+    request_tx: mpsc::Sender<Request>,
 }
 
 impl GenServer {
@@ -119,11 +121,14 @@ pub enum DeleteBlockError {
     NotFound,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Deleted;
+
 impl Pid {
     pub async fn lend_block(&mut self) -> Result<block::BytesMut, ero::NoProcError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
-            self.request_tx.send(proto::Request::LendBlock(proto::RequestLendBlock { reply_tx, })).await
+            self.request_tx.send(proto::Request::LendBlock(proto::RequestLendBlock { context: reply_tx, })).await
                 .map_err(|_send_error| ero::NoProcError)?;
             match reply_rx.await {
                 Ok(block) =>
@@ -146,7 +151,7 @@ impl Pid {
             self.request_tx
                 .send(proto::Request::WriteBlock(proto::RequestWriteBlock {
                     block_bytes: block_bytes.clone(),
-                    reply_tx,
+                    context: reply_tx,
                 }))
                 .await
                 .map_err(|_send_error| WriteBlockError::GenServer(ero::NoProcError))?;
@@ -154,7 +159,7 @@ impl Pid {
             match reply_rx.await {
                 Ok(Ok(block_id)) =>
                     return Ok(block_id),
-                Ok(Err(proto::RequestWriteBlockError::NoSpaceLeft)) =>
+                Ok(Err(wheel::context::blockwheel::RequestWriteBlockError::NoSpaceLeft)) =>
                     return Err(WriteBlockError::NoSpaceLeft),
                 Err(oneshot::Canceled) =>
                     (),
@@ -168,7 +173,7 @@ impl Pid {
             self.request_tx
                 .send(proto::Request::ReadBlock(proto::RequestReadBlock {
                     block_id: block_id.clone(),
-                    reply_tx,
+                    context: reply_tx,
                 }))
                 .await
                 .map_err(|_send_error| ReadBlockError::GenServer(ero::NoProcError))?;
@@ -176,7 +181,7 @@ impl Pid {
             match reply_rx.await {
                 Ok(Ok(block_bytes)) =>
                     return Ok(block_bytes),
-                Ok(Err(proto::RequestReadBlockError::NotFound)) =>
+                Ok(Err(wheel::context::blockwheel::RequestReadBlockError::NotFound)) =>
                     return Err(ReadBlockError::NotFound),
                 Err(oneshot::Canceled) =>
                     (),
@@ -184,21 +189,21 @@ impl Pid {
         }
     }
 
-    pub async fn delete_block(&mut self, block_id: block::Id) -> Result<proto::Deleted, DeleteBlockError> {
+    pub async fn delete_block(&mut self, block_id: block::Id) -> Result<Deleted, DeleteBlockError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
                 .send(proto::Request::DeleteBlock(proto::RequestDeleteBlock {
                     block_id: block_id.clone(),
-                    reply_tx,
+                    context: reply_tx,
                 }))
                 .await
                 .map_err(|_send_error| DeleteBlockError::GenServer(ero::NoProcError))?;
 
             match reply_rx.await {
-                Ok(Ok(proto::Deleted)) =>
-                    return Ok(proto::Deleted),
-                Ok(Err(proto::RequestDeleteBlockError::NotFound)) =>
+                Ok(Ok(Deleted)) =>
+                    return Ok(Deleted),
+                Ok(Err(wheel::context::blockwheel::RequestDeleteBlockError::NotFound)) =>
                     return Err(DeleteBlockError::NotFound),
                 Err(oneshot::Canceled) =>
                     (),

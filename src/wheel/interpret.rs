@@ -20,6 +20,7 @@ use super::{
     task,
     block,
     storage,
+    context::blockwheel::Context,
 };
 
 #[derive(Debug)]
@@ -64,8 +65,8 @@ pub enum CorruptedDataError {
 
 pub struct Request {
     pub offset: u64,
-    pub task_kind: task::TaskKind,
-    pub reply_tx: oneshot::Sender<task::Done>,
+    pub task_kind: task::TaskKind<Context>,
+    pub reply_tx: oneshot::Sender<task::Done<Context>>,
 }
 
 pub async fn busyloop(

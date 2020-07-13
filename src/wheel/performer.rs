@@ -1,11 +1,5 @@
 use std::mem;
 
-use futures::{
-    channel::{
-        oneshot,
-    },
-};
-
 use super::{
     lru,
     task,
@@ -14,49 +8,50 @@ use super::{
     block,
     schema,
     defrag,
+    context::Context,
 };
 
 #[cfg(test)]
 mod tests;
 
-struct Inner<IC> {
+struct Inner<C> where C: Context {
     schema: schema::Schema,
     lru_cache: lru::Cache,
     blocks_pool: pool::Blocks,
-    tasks_queue: task::Queue,
-    defrag_pending_queue: defrag::PendingQueue,
+    tasks_queue: task::Queue<C>,
+    defrag_pending_queue: defrag::PendingQueue<C::WriteBlock>,
     defrag_task_queue: defrag::TaskQueue,
-    bg_task: BackgroundTask<IC>,
+    bg_task: BackgroundTask<C::Interpreter>,
 }
 
-struct BackgroundTask<IC> {
+struct BackgroundTask<C> {
     current_offset: u64,
-    state: BackgroundTaskState<IC>,
+    state: BackgroundTaskState<C>,
 }
 
-enum BackgroundTaskState<IC> {
+enum BackgroundTaskState<C> {
     Idle,
-    InProgress { interpreter_context: IC, },
+    InProgress { interpreter_context: C, },
 }
 
-pub struct Performer<IC> {
-    inner: Inner<IC>,
+pub struct Performer<C> where C: Context {
+    inner: Inner<C>,
 }
 
-pub enum Op<IC> {
-    PollRequestAndInterpreter(PollRequestAndInterpreter<IC>),
-    PollRequest(PollRequest<IC>),
-    InterpretTask(InterpretTask<IC>),
+pub enum Op<C> where C: Context {
+    PollRequestAndInterpreter(PollRequestAndInterpreter<C>),
+    PollRequest(PollRequest<C>),
+    InterpretTask(InterpretTask<C>),
 }
 
-impl<IC> Performer<IC> {
-    pub fn new(schema: schema::Schema, lru_bytes_limit: usize) -> Performer<IC> {
+impl<C> Performer<C> where C: Context {
+    pub fn new(schema: schema::Schema, lru_bytes_limit: usize) -> Performer<C> {
         Performer {
             inner: Inner::new(schema, lru_bytes_limit),
         }
     }
 
-    pub fn next(mut self) -> Op<IC> {
+    pub fn next(mut self) -> Op<C> {
         match mem::replace(&mut self.inner.bg_task.state, BackgroundTaskState::Idle) {
             BackgroundTaskState::Idle =>
                 if let Some((offset, task_kind)) = self.inner.tasks_queue.pop() {
@@ -84,127 +79,127 @@ impl<IC> Performer<IC> {
     }
 }
 
-pub struct PollRequestAndInterpreter<IC> {
-    pub interpreter_context: IC,
-    pub next: PollRequestAndInterpreterNext<IC>,
+pub struct PollRequestAndInterpreter<C> where C: Context {
+    pub interpreter_context: C::Interpreter,
+    pub next: PollRequestAndInterpreterNext<C>,
 }
 
-pub struct PollRequestAndInterpreterNext<IC> {
-    inner: Inner<IC>,
+pub struct PollRequestAndInterpreterNext<C> where C: Context {
+    inner: Inner<C>,
 }
 
-pub enum RequestOrInterpreterIncoming {
-    Request(proto::Request),
-    Interpreter(task::Done),
+pub enum RequestOrInterpreterIncoming<C> where C: Context {
+    Request(proto::Request<C>),
+    Interpreter(task::Done<C>),
 }
 
-impl<IC> PollRequestAndInterpreterNext<IC> {
-    pub fn next(self, incoming: RequestOrInterpreterIncoming) -> PerformOp<IC> {
+impl<C> PollRequestAndInterpreterNext<C> where C: Context {
+    pub fn next(self, incoming: RequestOrInterpreterIncoming<C>) -> PerformOp<C> {
         self.inner.next(incoming)
     }
 }
 
-pub struct PollRequest<IC> {
-    pub next: PollRequestNext<IC>,
+pub struct PollRequest<C> where C: Context {
+    pub next: PollRequestNext<C>,
 }
 
-pub struct PollRequestNext<IC> {
-    inner: Inner<IC>,
+pub struct PollRequestNext<C> where C: Context {
+    inner: Inner<C>,
 }
 
-impl<IC> PollRequestNext<IC> {
-    pub fn next(self, incoming: proto::Request) -> PerformOp<IC> {
+impl<C> PollRequestNext<C> where C: Context {
+    pub fn next(self, incoming: proto::Request<C>) -> PerformOp<C> {
         self.inner.next(RequestOrInterpreterIncoming::Request(incoming))
     }
 }
 
-pub struct InterpretTask<IC> {
+pub struct InterpretTask<C> where C: Context {
     pub offset: u64,
-    pub task_kind: task::TaskKind,
-    pub next: InterpretTaskNext<IC>,
+    pub task_kind: task::TaskKind<C>,
+    pub next: InterpretTaskNext<C>,
 }
 
-pub struct InterpretTaskNext<IC> {
-    inner: Inner<IC>,
+pub struct InterpretTaskNext<C> where C: Context {
+    inner: Inner<C>,
 }
 
-impl<IC> InterpretTaskNext<IC> {
-    pub fn task_accepted(mut self, interpreter_context: IC) -> Performer<IC> {
+impl<C> InterpretTaskNext<C> where C: Context {
+    pub fn task_accepted(mut self, interpreter_context: C::Interpreter) -> Performer<C> {
         self.inner.bg_task.state = BackgroundTaskState::InProgress { interpreter_context, };
         Performer { inner: self.inner, }
     }
 }
 
-pub enum PerformOp<IC> {
-    Idle(Performer<IC>),
-    LendBlock(LendBlockOp<IC>),
-    WriteBlock(WriteBlockOp<IC>),
-    ReadBlock(ReadBlockOp<IC>),
-    DeleteBlock(DeleteBlockOp<IC>),
-    WriteBlockDone(WriteBlockDoneOp<IC>),
-    ReadBlockDone(ReadBlockDoneOp<IC>),
-    DeleteBlockDone(DeleteBlockDoneOp<IC>),
+pub enum PerformOp<C> where C: Context {
+    Idle(Performer<C>),
+    LendBlock(LendBlockOp<C>),
+    WriteBlock(WriteBlockOp<C>),
+    ReadBlock(ReadBlockOp<C>),
+    DeleteBlock(DeleteBlockOp<C>),
+    WriteBlockDone(WriteBlockDoneOp<C>),
+    ReadBlockDone(ReadBlockDoneOp<C>),
+    DeleteBlockDone(DeleteBlockDoneOp<C>),
 }
 
-pub enum LendBlockOp<IC> {
+pub enum LendBlockOp<C> where C: Context {
     Success {
         block_bytes: block::BytesMut,
-        reply_tx: oneshot::Sender<block::BytesMut>,
-        performer: Performer<IC>,
+        context: C::LendBlock,
+        performer: Performer<C>,
     },
 }
 
-pub enum WriteBlockOp<IC> {
+pub enum WriteBlockOp<C> where C: Context {
     NoSpaceLeft {
-        reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
-        performer: Performer<IC>,
+        context: C::WriteBlock,
+        performer: Performer<C>,
     },
 }
 
-pub enum ReadBlockOp<IC> {
+pub enum ReadBlockOp<C> where C: Context {
     CacheHit {
-        reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
+        context: C::ReadBlock,
         block_bytes: block::Bytes,
-        performer: Performer<IC>,
+        performer: Performer<C>,
     },
     NotFound {
-        reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
-        performer: Performer<IC>,
+        context: C::ReadBlock,
+        performer: Performer<C>,
     },
 }
 
-pub enum DeleteBlockOp<IC> {
+pub enum DeleteBlockOp<C> where C: Context {
     NotFound {
-        reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
-        performer: Performer<IC>,
+        context: C::DeleteBlock,
+        performer: Performer<C>,
     },
 }
 
-pub enum WriteBlockDoneOp<IC> {
+pub enum WriteBlockDoneOp<C> where C: Context {
     Done {
         block_id: block::Id,
-        reply_tx: oneshot::Sender<Result<block::Id, proto::RequestWriteBlockError>>,
-        performer: Performer<IC>,
+        context: C::WriteBlock,
+        performer: Performer<C>,
     },
 }
 
-pub enum ReadBlockDoneOp<IC> {
+pub enum ReadBlockDoneOp<C> where C: Context {
     Done {
         block_bytes: block::Bytes,
-        reply_tx: oneshot::Sender<Result<block::Bytes, proto::RequestReadBlockError>>,
-        performer: Performer<IC>,
+        context: C::ReadBlock,
+        performer: Performer<C>,
     },
 }
 
-pub enum DeleteBlockDoneOp<IC> {
+pub enum DeleteBlockDoneOp<C> where C: Context {
     Done {
-        reply_tx: oneshot::Sender<Result<proto::Deleted, proto::RequestDeleteBlockError>>,
-        performer: Performer<IC>,
+        context: C::DeleteBlock,
+        performer: Performer<C>,
     },
 }
 
-impl<IC> Inner<IC> {
-    fn new(schema: schema::Schema, lru_bytes_limit: usize) -> Inner<IC> {
+impl<C> Inner<C> where C: Context {
+    fn new(schema: schema::Schema, lru_bytes_limit: usize) -> Inner<C> {
         Inner {
             schema,
             lru_cache: lru::Cache::new(lru_bytes_limit),
@@ -219,13 +214,13 @@ impl<IC> Inner<IC> {
         }
     }
 
-    fn next(mut self, incoming: RequestOrInterpreterIncoming) -> PerformOp<IC> {
+    fn next(mut self, incoming: RequestOrInterpreterIncoming<C>) -> PerformOp<C> {
         match incoming {
 
-            RequestOrInterpreterIncoming::Request(proto::Request::LendBlock(proto::RequestLendBlock { reply_tx, })) => {
+            RequestOrInterpreterIncoming::Request(proto::Request::LendBlock(proto::RequestLendBlock { context, })) => {
                 let block_bytes = self.blocks_pool.lend();
                 PerformOp::LendBlock(LendBlockOp::Success {
-                    block_bytes, reply_tx,
+                    block_bytes, context,
                     performer: Performer { inner: self, },
                 })
             },
@@ -259,9 +254,7 @@ impl<IC> Inner<IC> {
                                             task::CommitType::CommitAndEof,
                                     },
                                     context: task::WriteBlockContext::External(
-                                        task::WriteBlockContextExternal {
-                                            reply_tx: request_write_block.reply_tx,
-                                        },
+                                        request_write_block.context,
                                     ),
                                 },
                             ),
@@ -280,7 +273,7 @@ impl<IC> Inner<IC> {
 
                     schema::WriteBlockOp::ReplyNoSpaceLeft =>
                         PerformOp::WriteBlock(WriteBlockOp::NoSpaceLeft {
-                            reply_tx: request_write_block.reply_tx,
+                            context: request_write_block.context,
                             performer: Performer { inner: self, },
                         }),
                 },
@@ -289,7 +282,7 @@ impl<IC> Inner<IC> {
                 if let Some(block_bytes) = self.lru_cache.get(&request_read_block.block_id) {
                     PerformOp::ReadBlock(ReadBlockOp::CacheHit {
                         block_bytes: block_bytes.clone(),
-                        reply_tx: request_read_block.reply_tx,
+                        context: request_read_block.context,
                         performer: Performer { inner: self, },
                     })
                 } else {
@@ -304,9 +297,7 @@ impl<IC> Inner<IC> {
                                     block_header: block_header,
                                     block_bytes,
                                     context: task::ReadBlockContext::External(
-                                        task::ReadBlockContextExternal {
-                                            reply_tx: request_read_block.reply_tx,
-                                        },
+                                        request_read_block.context,
                                     ),
                                 }),
                             );
@@ -315,7 +306,7 @@ impl<IC> Inner<IC> {
 
                         schema::ReadBlockOp::NotFound =>
                             PerformOp::ReadBlock(ReadBlockOp::NotFound {
-                                reply_tx: request_read_block.reply_tx,
+                                context: request_read_block.context,
                                 performer: Performer { inner: self, },
                             }),
 
@@ -333,9 +324,7 @@ impl<IC> Inner<IC> {
                             task::TaskKind::MarkTombstone(task::MarkTombstone {
                                 block_id: request_delete_block.block_id,
                                 context: task::MarkTombstoneContext::External(
-                                    task::MarkTombstoneContextExternal {
-                                        reply_tx: request_delete_block.reply_tx,
-                                    },
+                                    request_delete_block.context,
                                 ),
                             }),
                         );
@@ -344,7 +333,7 @@ impl<IC> Inner<IC> {
 
                     schema::DeleteBlockOp::NotFound =>
                         PerformOp::DeleteBlock(DeleteBlockOp::NotFound {
-                            reply_tx: request_delete_block.reply_tx,
+                            context: request_delete_block.context,
                             performer: Performer { inner: self, },
                         }),
 
@@ -359,7 +348,7 @@ impl<IC> Inner<IC> {
                     task::WriteBlockContext::External(context) =>
                         PerformOp::WriteBlockDone(WriteBlockDoneOp::Done {
                             block_id: write_block.block_id,
-                            reply_tx: context.reply_tx,
+                            context,
                             performer: Performer { inner: self, },
                         }),
                 }
@@ -375,7 +364,7 @@ impl<IC> Inner<IC> {
                     task::ReadBlockContext::External(context) =>
                         PerformOp::ReadBlockDone(ReadBlockDoneOp::Done {
                             block_bytes,
-                            reply_tx: context.reply_tx,
+                            context,
                             performer: Performer { inner: self, },
                         }),
                 }
@@ -398,7 +387,7 @@ impl<IC> Inner<IC> {
                 match mark_tombstone.context {
                     task::MarkTombstoneContext::External(context) =>
                         PerformOp::DeleteBlockDone(DeleteBlockDoneOp::Done {
-                            reply_tx: context.reply_tx,
+                            context,
                             performer: Performer { inner: self, },
                         }),
                 }
