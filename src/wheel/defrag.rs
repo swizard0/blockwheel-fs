@@ -12,6 +12,12 @@ use super::{
 };
 
 #[derive(Debug)]
+pub struct Queues<C> {
+    pub pending: PendingQueue<C>,
+    pub tasks: TaskQueue,
+}
+
+#[derive(Debug)]
 pub struct PendingQueue<C> {
     queue: VecDeque<proto::RequestWriteBlock<C>>,
 }

@@ -126,7 +126,18 @@ async fn busyloop(
 )
     -> Result<(), ErrorSeverity<State, Error>>
 {
-    let mut performer = performer::Performer::new(schema, state.params.lru_cache_size_bytes);
+    let mut performer = performer::Performer::new(
+        schema,
+        lru::Cache::new(state.params.lru_cache_size_bytes),
+        if state.params.disable_defragmentation {
+            None
+        } else {
+            Some(defrag::Queues {
+                pending: defrag::PendingQueue::new(),
+                tasks: defrag::TaskQueue::new(),
+            })
+        },
+    );
 
     loop {
         let perform_op = match performer.next() {

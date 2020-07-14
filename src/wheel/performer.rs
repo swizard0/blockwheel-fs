@@ -22,8 +22,7 @@ struct Inner<C> where C: Context {
     lru_cache: lru::Cache,
     blocks_pool: pool::Blocks,
     tasks_queue: task::Queue<C>,
-    defrag_pending_queue: defrag::PendingQueue<C::WriteBlock>,
-    defrag_task_queue: defrag::TaskQueue,
+    defrag_queues: Option<defrag::Queues<C::WriteBlock>>,
     bg_task: BackgroundTask<C::Interpreter>,
 }
 
@@ -56,9 +55,15 @@ pub enum Op<C> where C: Context {
 }
 
 impl<C> Performer<C> where C: Context {
-    pub fn new(schema: schema::Schema, lru_bytes_limit: usize) -> Performer<C> {
+    pub fn new(
+        schema: schema::Schema,
+        lru_cache: lru::Cache,
+        defrag_queues: Option<defrag::Queues<C::WriteBlock>>,
+    )
+        -> Performer<C>
+    {
         Performer {
-            inner: Inner::new(schema, lru_bytes_limit),
+            inner: Inner::new(schema, lru_cache, defrag_queues),
         }
     }
 
@@ -237,14 +242,19 @@ pub enum DeleteBlockDoneOp<C> where C: Context {
 }
 
 impl<C> Inner<C> where C: Context {
-    fn new(schema: schema::Schema, lru_bytes_limit: usize) -> Inner<C> {
+    fn new(
+        schema: schema::Schema,
+        lru_cache: lru::Cache,
+        defrag_queues: Option<defrag::Queues<C::WriteBlock>>,
+    )
+        -> Inner<C>
+    {
         Inner {
             schema,
-            lru_cache: lru::Cache::new(lru_bytes_limit),
+            lru_cache,
             blocks_pool: pool::Blocks::new(),
             tasks_queue: task::Queue::new(),
-            defrag_pending_queue: defrag::PendingQueue::new(),
-            defrag_task_queue: defrag::TaskQueue::new(),
+            defrag_queues,
             bg_task: BackgroundTask {
                 current_offset: 0,
                 state: BackgroundTaskState::Idle,
@@ -272,11 +282,11 @@ impl<C> Inner<C> where C: Context {
                 match self.schema.process_write_block_request(&request_write_block.block_bytes) {
 
                     schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, }) => {
-                        match defrag_op {
-                            schema::DefragOp::None =>
+                        match (defrag_op, self.defrag_queues.as_mut()) {
+                            (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
+                                tasks.push(free_space_offset, space_key),
+                            (schema::DefragOp::None, _) | (_, None) =>
                                 (),
-                            schema::DefragOp::Queue { free_space_offset, space_key, } =>
-                                self.defrag_task_queue.push(free_space_offset, space_key),
                         }
                         self.lru_cache.insert(
                             task_op.block_id.clone(),
@@ -309,7 +319,9 @@ impl<C> Inner<C> where C: Context {
                             "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
                             request_write_block.block_bytes.len(),
                         );
-                        self.defrag_pending_queue.push(request_write_block);
+                        if let Some(defrag::Queues { pending, .. }) = self.defrag_queues.as_mut() {
+                            pending.push(request_write_block);
+                        }
                         PerformOp::Idle(Performer { inner: self, })
                     },
 
@@ -417,11 +429,11 @@ impl<C> Inner<C> where C: Context {
             ) => {
                 match self.schema.process_tombstone_written(mark_tombstone.block_id) {
                     schema::TombstoneWrittenOp::Perform(schema::TombstoneWrittenPerform { defrag_op, }) => {
-                        match defrag_op {
-                            schema::DefragOp::None =>
+                        match (defrag_op, self.defrag_queues.as_mut()) {
+                            (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
+                                tasks.push(free_space_offset, space_key),
+                            (schema::DefragOp::None, _) | (_, None) =>
                                 (),
-                            schema::DefragOp::Queue { free_space_offset, space_key, } =>
-                                self.defrag_task_queue.push(free_space_offset, space_key),
                         }
                     },
                 }

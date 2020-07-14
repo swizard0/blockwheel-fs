@@ -1,4 +1,5 @@
 use super::{
+    lru,
     task,
     block,
     proto,
@@ -44,7 +45,11 @@ fn init() -> Performer<Context> {
     };
     let mut schema = schema::Schema::new(storage_layout);
     schema.initialize_empty(144);
-    Performer::new(schema, 16)
+    Performer::new(
+        schema,
+        lru::Cache::new(16),
+        None,
+    )
 }
 
 fn hello_world_bytes() -> block::Bytes {
