@@ -65,7 +65,7 @@ impl<C> Performer<C> where C: Context {
     pub fn next(mut self) -> Op<C> {
         match mem::replace(&mut self.inner.bg_task.state, BackgroundTaskState::Idle) {
             BackgroundTaskState::Idle =>
-                if let Some((offset, task_kind)) = self.inner.tasks_queue.pop() {
+                if let Some((offset, task_kind)) = self.inner.tasks_queue.pop(self.inner.bg_task.current_offset) {
                     Op::InterpretTask(InterpretTask {
                         offset, task_kind,
                         next: InterpretTaskNext {

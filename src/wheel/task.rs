@@ -37,15 +37,21 @@ impl<C> Queue<C> where C: Context {
         queue.push(Task { offset, serial, task, });
     }
 
-    pub fn pop(&mut self) -> Option<(u64, TaskKind<C>)> {
-        if let Some(Task { offset, task, .. }) = self.queue_right.pop() {
-            Some((offset, task))
-        } else if let Some(Task { offset, task, .. }) = self.queue_left.pop() {
-            // rotate
-            mem::swap(&mut self.queue_left, &mut self.queue_right);
-            Some((offset, task))
-        } else {
-            None
+    pub fn pop(&mut self, current_offset: u64) -> Option<(u64, TaskKind<C>)> {
+        loop {
+            if let Some(task) = self.queue_right.pop() {
+                if task.offset >= current_offset {
+                    return Some((task.offset, task.task));
+                } else {
+                    self.queue_left.push(task);
+                }
+            } else if let Some(Task { offset, task, .. }) = self.queue_left.pop() {
+                // rotate
+                mem::swap(&mut self.queue_left, &mut self.queue_right);
+                return Some((offset, task));
+            } else {
+                return None;
+            }
         }
     }
 }
