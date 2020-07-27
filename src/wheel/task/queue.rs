@@ -18,8 +18,8 @@ pub struct Queue<C> where C: Context {
     serial: usize,
     queue_left: BinaryHeap<Task<C>>,
     queue_right: BinaryHeap<Task<C>>,
-    pending_read: pending::Tasks<ReadBlock<C::ReadBlock>>,
-    pending_delete: pending::Tasks<MarkTombstone<C::DeleteBlock>>,
+    pub pending_read: pending::Tasks<ReadBlock<C::ReadBlock>>,
+    pub pending_delete: pending::Tasks<MarkTombstone<C::DeleteBlock>>,
 }
 
 impl<C> Queue<C> where C: Context {
