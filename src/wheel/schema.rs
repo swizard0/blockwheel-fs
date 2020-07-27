@@ -69,12 +69,19 @@ pub struct DeleteBlockPerform {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum TombstoneWrittenOp {
-    Perform(TombstoneWrittenPerform),
+pub enum ReadBlockTaskRunOp {
+    Proceed,
+    Defer,
+    BlockGone,
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct TombstoneWrittenPerform {
+pub enum MarkTombstoneTaskDoneOp {
+    Perform(MarkTombstoneTaskDonePerform),
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct MarkTombstoneTaskDonePerform {
     pub defrag_op: DefragOp,
 }
 
@@ -149,7 +156,7 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        tombstone: false,
+                        state: index::BlockState::Writing,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Start,
                             right: self_env,
@@ -200,7 +207,7 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        tombstone: false,
+                        state: index::BlockState::Writing,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
@@ -246,7 +253,7 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        tombstone: false,
+                        state: index::BlockState::Writing,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
@@ -289,7 +296,7 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        tombstone: false,
+                        state: index::BlockState::Writing,
                         environs,
                     },
                 );
@@ -320,32 +327,78 @@ impl Schema {
 
     pub fn process_read_block_request(&mut self, block_id: &block::Id) -> ReadBlockOp {
         match self.blocks_index.get(block_id) {
-            Some(block_entry) if !block_entry.tombstone =>
-                ReadBlockOp::Perform(ReadBlockPerform {
-                    block_offset: block_entry.offset,
-                    block_header: block_entry.header.clone(),
-                }),
-            Some(..) | None =>
+            Some(block_entry) =>
+                match block_entry.state {
+                    index::BlockState::Regular |
+                    index::BlockState::Writing |
+                    index::BlockState::Defrag =>
+                        ReadBlockOp::Perform(ReadBlockPerform {
+                            block_offset: block_entry.offset,
+                            block_header: block_entry.header.clone(),
+                        }),
+                    index::BlockState::Tombstone =>
+                        ReadBlockOp::NotFound,
+                },
+            None =>
                 ReadBlockOp::NotFound,
         }
     }
 
     pub fn process_delete_block_request(&mut self, block_id: &block::Id) -> DeleteBlockOp {
         match self.blocks_index.get_mut(&block_id) {
-            Some(block_entry) if !block_entry.tombstone => {
-                block_entry.tombstone = true;
-                DeleteBlockOp::Perform(DeleteBlockPerform {
-                    block_offset: block_entry.offset,
-                })
-            },
-            Some(..) | None =>
+            Some(block_entry) =>
+                match block_entry.state {
+                    index::BlockState::Regular |
+                    index::BlockState::Writing |
+                    index::BlockState::Defrag =>
+                        DeleteBlockOp::Perform(DeleteBlockPerform {
+                            block_offset: block_entry.offset,
+                        }),
+                    index::BlockState::Tombstone =>
+                        DeleteBlockOp::NotFound,
+                },
+            None =>
                 DeleteBlockOp::NotFound,
         }
     }
 
-    pub fn process_tombstone_written(&mut self, removed_block_id: block::Id) -> TombstoneWrittenOp {
+    pub fn process_write_block_task_run(&mut self, block_id: &block::Id) {
+        let block_entry = self.blocks_index.get_mut(block_id).unwrap();
+        assert!(matches!(block_entry.state, index::BlockState::Writing));
+    }
+
+    pub fn process_read_block_task_run(&mut self, block_header: &storage::BlockHeader) -> ReadBlockTaskRunOp {
+        let block_entry = self.blocks_index.get_mut(&block_header.block_id).unwrap();
+        match block_entry.state {
+            index::BlockState::Regular =>
+                ReadBlockTaskRunOp::Proceed,
+            index::BlockState::Writing |
+            index::BlockState::Defrag =>
+                ReadBlockTaskRunOp::Defer,
+            index::BlockState::Tombstone =>
+                ReadBlockTaskRunOp::BlockGone,
+        }
+    }
+
+    pub fn process_mark_tombstone_task_run(&mut self, block_id: &block::Id) {
+        let block_entry = self.blocks_index.get_mut(block_id).unwrap();
+                // TODO: move inside on_task
+                // block_entry.tombstone = true;
+                // DeleteBlockOp::Perform(DeleteBlockPerform {
+                //     block_offset: block_entry.offset,
+                // })
+        unimplemented!()
+    }
+
+    pub fn process_write_block_task_done(&mut self, block_id: &block::Id) {
+        let block_entry = self.blocks_index.get_mut(block_id).unwrap();
+        let old_state = std::mem::replace(&mut block_entry.state, index::BlockState::Regular);
+        assert!(matches!(old_state, index::BlockState::Writing));
+    }
+
+    pub fn process_mark_tombstone_task_done(&mut self, removed_block_id: block::Id) -> MarkTombstoneTaskDoneOp {
         let block_entry = self.blocks_index.remove(&removed_block_id).unwrap();
-        assert!(block_entry.tombstone);
+        assert!(matches!(block_entry.state, index::BlockState::Tombstone));
         let mut defrag_op = DefragOp::None;
 
         match block_entry.environs {
@@ -624,7 +677,7 @@ impl Schema {
             },
         }
 
-        TombstoneWrittenOp::Perform(TombstoneWrittenPerform { defrag_op, })
+        MarkTombstoneTaskDoneOp::Perform(MarkTombstoneTaskDonePerform { defrag_op, })
     }
 }
 

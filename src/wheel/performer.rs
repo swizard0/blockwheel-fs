@@ -21,25 +21,10 @@ struct Inner<C> where C: Context {
     schema: schema::Schema,
     lru_cache: lru::Cache,
     blocks_pool: pool::Blocks,
-    tasks_queue: task::Queue<C>,
+    tasks_queue: task::queue::Queue<C>,
     defrag_queues: Option<defrag::Queues<C::WriteBlock>>,
+    defrag_state: DefragState,
     bg_task: BackgroundTask<C::Interpreter>,
-}
-
-impl<C> fmt::Debug for Inner<C> where C: Context {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.write_str("<inner>")
-    }
-}
-
-struct BackgroundTask<C> {
-    current_offset: u64,
-    state: BackgroundTaskState<C>,
-}
-
-enum BackgroundTaskState<C> {
-    Idle,
-    InProgress { interpreter_context: C, },
 }
 
 #[derive(Debug)]
@@ -68,30 +53,8 @@ impl<C> Performer<C> where C: Context {
     }
 
     pub fn next(mut self) -> Op<C> {
-        match mem::replace(&mut self.inner.bg_task.state, BackgroundTaskState::Idle) {
-            BackgroundTaskState::Idle =>
-                if let Some((offset, task_kind)) = self.inner.tasks_queue.pop(self.inner.bg_task.current_offset) {
-                    Op::InterpretTask(InterpretTask {
-                        offset, task_kind,
-                        next: InterpretTaskNext {
-                            inner: self.inner,
-                        },
-                    })
-                } else {
-                    Op::PollRequest(PollRequest {
-                        next: PollRequestNext {
-                            inner: self.inner,
-                        },
-                    })
-                },
-            BackgroundTaskState::InProgress { interpreter_context, } =>
-                Op::PollRequestAndInterpreter(PollRequestAndInterpreter {
-                    interpreter_context,
-                    next: PollRequestAndInterpreterNext {
-                        inner: self.inner,
-                    },
-                }),
-        }
+        self.inner.next_defrag();
+        self.inner.next_bg_task()
     }
 }
 
@@ -241,6 +204,31 @@ pub enum DeleteBlockDoneOp<C> where C: Context {
     },
 }
 
+impl<C> fmt::Debug for Inner<C> where C: Context {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.write_str("<inner>")
+    }
+}
+
+struct BackgroundTask<C> {
+    current_offset: u64,
+    state: BackgroundTaskState<C>,
+}
+
+enum BackgroundTaskState<C> {
+    Idle,
+    InProgress { interpreter_context: C, },
+}
+
+enum DefragState {
+    Idle,
+    InProgress { task: DefragTask, },
+}
+
+struct DefragTask {
+    block_id: block::Id,
+}
+
 impl<C> Inner<C> where C: Context {
     fn new(
         schema: schema::Schema,
@@ -253,8 +241,9 @@ impl<C> Inner<C> where C: Context {
             schema,
             lru_cache,
             blocks_pool: pool::Blocks::new(),
-            tasks_queue: task::Queue::new(),
+            tasks_queue: task::queue::Queue::new(),
             defrag_queues,
+            defrag_state: DefragState::Idle,
             bg_task: BackgroundTask {
                 current_offset: 0,
                 state: BackgroundTaskState::Idle,
@@ -397,6 +386,7 @@ impl<C> Inner<C> where C: Context {
             RequestOrInterpreterIncoming::Interpreter(
                 task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), },
             ) => {
+                self.schema.process_write_block_task_done(&write_block.block_id);
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 match write_block.context {
                     task::WriteBlockContext::External(context) =>
@@ -427,8 +417,8 @@ impl<C> Inner<C> where C: Context {
             RequestOrInterpreterIncoming::Interpreter(
                 task::Done { current_offset, task: task::TaskDone::MarkTombstone(mark_tombstone), },
             ) => {
-                match self.schema.process_tombstone_written(mark_tombstone.block_id) {
-                    schema::TombstoneWrittenOp::Perform(schema::TombstoneWrittenPerform { defrag_op, }) => {
+                match self.schema.process_mark_tombstone_task_done(mark_tombstone.block_id) {
+                    schema::MarkTombstoneTaskDoneOp::Perform(schema::MarkTombstoneTaskDonePerform { defrag_op, }) => {
                         match (defrag_op, self.defrag_queues.as_mut()) {
                             (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
                                 tasks.push(free_space_offset, space_key),
@@ -447,6 +437,63 @@ impl<C> Inner<C> where C: Context {
                 }
             },
 
+        }
+    }
+
+    fn next_defrag(&mut self) {
+        if let Some(defrag::Queues { tasks, .. }) = self.defrag_queues.as_mut() {
+            match mem::replace(&mut self.defrag_state, DefragState::Idle) {
+                DefragState::Idle =>
+                    while let Some((offset, space_key)) = tasks.pop() {
+
+                        unimplemented!()
+                    },
+                DefragState::InProgress { task, } =>
+                    unimplemented!(),
+            }
+        }
+    }
+
+    fn next_bg_task(mut self) -> Op<C> {
+        match mem::replace(&mut self.bg_task.state, BackgroundTaskState::Idle) {
+            BackgroundTaskState::Idle =>
+                if let Some((offset, task_kind)) = self.tasks_queue.pop(self.bg_task.current_offset) {
+                    match &task_kind {
+                        task::TaskKind::WriteBlock(task::WriteBlock { block_id, .. }) =>
+                            self.schema.process_write_block_task_run(block_id),
+                        task::TaskKind::ReadBlock(task::ReadBlock { block_header, .. }) =>
+                            match self.schema.process_read_block_task_run(block_header) {
+                                schema::ReadBlockTaskRunOp::Proceed =>
+                                    (),
+                                schema::ReadBlockTaskRunOp::Defer =>
+                                    unimplemented!(),
+                                schema::ReadBlockTaskRunOp::BlockGone =>
+                                    unimplemented!(),
+                            },
+                        task::TaskKind::MarkTombstone(task::MarkTombstone { block_id, .. }) =>
+                            self.schema.process_mark_tombstone_task_run(block_id),
+                    }
+
+                    Op::InterpretTask(InterpretTask {
+                        offset, task_kind,
+                        next: InterpretTaskNext {
+                            inner: self,
+                        },
+                    })
+                } else {
+                    Op::PollRequest(PollRequest {
+                        next: PollRequestNext {
+                            inner: self,
+                        },
+                    })
+                },
+            BackgroundTaskState::InProgress { interpreter_context, } =>
+                Op::PollRequestAndInterpreter(PollRequestAndInterpreter {
+                    interpreter_context,
+                    next: PollRequestAndInterpreterNext {
+                        inner: self,
+                    },
+                }),
         }
     }
 }

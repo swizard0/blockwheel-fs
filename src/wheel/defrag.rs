@@ -50,10 +50,10 @@ impl TaskQueue {
         self.queue.push(DefragTask { offset, space_key, });
     }
 
-    // pub fn pop(&mut self) -> Option<(u64, gaps::SpaceKey)> {
-    //     self.queue.pop()
-    //         .map(|defrag_task| (defrag_task.offset, defrag_task.space_key))
-    // }
+    pub fn pop(&mut self) -> Option<(u64, gaps::SpaceKey)> {
+        self.queue.pop()
+            .map(|defrag_task| (defrag_task.offset, defrag_task.space_key))
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -19,8 +19,16 @@ pub struct Blocks {
 pub struct BlockEntry {
     pub offset: u64,
     pub header: storage::BlockHeader,
-    pub tombstone: bool,
+    pub state: BlockState,
     pub environs: Environs,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum BlockState {
+    Regular,
+    Writing,
+    Tombstone,
+    Defrag,
 }
 
 #[derive(Clone, PartialEq, Debug)]
