@@ -1,5 +1,3 @@
-use std::cmp;
-
 use super::{
     block,
     storage,
@@ -7,41 +5,13 @@ use super::{
 };
 
 pub mod queue;
-mod pending;
-
-#[derive(Debug)]
-struct Task<C> where C: Context {
-    offset: u64,
-    serial: usize,
-    task: TaskKind<C>,
-}
-
-impl<C> PartialEq for Task<C> where C: Context {
-    fn eq(&self, other: &Task<C>) -> bool {
-        self.offset == other.offset && self.serial == other.serial
-    }
-}
-
-impl<C> Eq for Task<C> where C: Context { }
-
-impl<C> PartialOrd for Task<C> where C: Context {
-    fn partial_cmp(&self, other: &Task<C>) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<C> Ord for Task<C> where C: Context {
-    fn cmp(&self, other: &Task<C>) -> cmp::Ordering {
-        other.offset.cmp(&self.offset)
-            .then_with(|| self.serial.cmp(&other.serial))
-    }
-}
+pub mod store;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum TaskKind<C> where C: Context {
     WriteBlock(WriteBlock<C::WriteBlock>),
     ReadBlock(ReadBlock<C::ReadBlock>),
-    MarkTombstone(MarkTombstone<C::DeleteBlock>),
+    DeleteBlock(DeleteBlock<C::DeleteBlock>),
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -76,13 +46,13 @@ pub enum ReadBlockContext<C> {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub struct MarkTombstone<C> {
+pub struct DeleteBlock<C> {
     pub block_id: block::Id,
-    pub context: MarkTombstoneContext<C>,
+    pub context: DeleteBlockContext<C>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum MarkTombstoneContext<C> {
+pub enum DeleteBlockContext<C> {
     External(C),
 }
 
@@ -96,7 +66,7 @@ pub struct Done<C> where C: Context {
 pub enum TaskDone<C> where C: Context {
     WriteBlock(TaskDoneWriteBlock<C::WriteBlock>),
     ReadBlock(TaskDoneReadBlock<C::ReadBlock>),
-    MarkTombstone(TaskDoneMarkTombstone<C::DeleteBlock>),
+    DeleteBlock(TaskDoneDeleteBlock<C::DeleteBlock>),
 }
 
 #[derive(Debug)]
@@ -113,7 +83,7 @@ pub struct TaskDoneReadBlock<C> {
 }
 
 #[derive(Debug)]
-pub struct TaskDoneMarkTombstone<C> {
+pub struct TaskDoneDeleteBlock<C> {
     pub block_id: block::Id,
-    pub context: MarkTombstoneContext<C>,
+    pub context: DeleteBlockContext<C>,
 }

@@ -322,16 +322,16 @@ impl<C> Inner<C> where C: Context {
                 },
 
             RequestOrInterpreterIncoming::Request(proto::Request::ReadBlock(request_read_block)) =>
-                if let Some(block_bytes) = self.lru_cache.get(&request_read_block.block_id) {
-                    PerformOp::ReadBlock(ReadBlockOp::CacheHit {
-                        block_bytes: block_bytes.clone(),
-                        context: request_read_block.context,
-                        performer: Performer { inner: self, },
-                    })
-                } else {
-                    match self.schema.process_read_block_request(&request_read_block.block_id) {
+                match self.schema.process_read_block_request(&request_read_block.block_id) {
 
-                        schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, }) => {
+                    schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, }) =>
+                        if let Some(block_bytes) = self.lru_cache.get(&request_read_block.block_id) {
+                            PerformOp::ReadBlock(ReadBlockOp::CacheHit {
+                                block_bytes: block_bytes.clone(),
+                                context: request_read_block.context,
+                                performer: Performer { inner: self, },
+                            })
+                        } else {
                             let block_bytes = self.blocks_pool.lend();
                             self.tasks_queue.push(
                                 self.bg_task.current_offset,
@@ -347,26 +347,25 @@ impl<C> Inner<C> where C: Context {
                             PerformOp::Idle(Performer { inner: self, })
                         },
 
-                        schema::ReadBlockOp::NotFound =>
-                            PerformOp::ReadBlock(ReadBlockOp::NotFound {
-                                context: request_read_block.context,
-                                performer: Performer { inner: self, },
-                            }),
+                    schema::ReadBlockOp::NotFound =>
+                        PerformOp::ReadBlock(ReadBlockOp::NotFound {
+                            context: request_read_block.context,
+                            performer: Performer { inner: self, },
+                        }),
 
-                    }
                 },
 
-            RequestOrInterpreterIncoming::Request(proto::Request::DeleteBlock(request_delete_block)) => {
-                self.lru_cache.invalidate(&request_delete_block.block_id);
+            RequestOrInterpreterIncoming::Request(proto::Request::DeleteBlock(request_delete_block)) =>
                 match self.schema.process_delete_block_request(&request_delete_block.block_id) {
 
                     schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, }) => {
+                        self.lru_cache.invalidate(&request_delete_block.block_id);
                         self.tasks_queue.push(
                             self.bg_task.current_offset,
                             block_offset,
-                            task::TaskKind::MarkTombstone(task::MarkTombstone {
+                            task::TaskKind::DeleteBlock(task::DeleteBlock {
                                 block_id: request_delete_block.block_id,
-                                context: task::MarkTombstoneContext::External(
+                                context: task::DeleteBlockContext::External(
                                     request_delete_block.context,
                                 ),
                             }),
@@ -380,8 +379,7 @@ impl<C> Inner<C> where C: Context {
                             performer: Performer { inner: self, },
                         }),
 
-                }
-            },
+                },
 
             RequestOrInterpreterIncoming::Interpreter(
                 task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), },
@@ -415,10 +413,10 @@ impl<C> Inner<C> where C: Context {
             },
 
             RequestOrInterpreterIncoming::Interpreter(
-                task::Done { current_offset, task: task::TaskDone::MarkTombstone(mark_tombstone), },
+                task::Done { current_offset, task: task::TaskDone::DeleteBlock(delete_block), },
             ) => {
-                match self.schema.process_mark_tombstone_task_done(mark_tombstone.block_id) {
-                    schema::MarkTombstoneTaskDoneOp::Perform(schema::MarkTombstoneTaskDonePerform { defrag_op, }) => {
+                match self.schema.process_delete_block_task_done(delete_block.block_id) {
+                    schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, }) => {
                         match (defrag_op, self.defrag_queues.as_mut()) {
                             (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
                                 tasks.push(free_space_offset, space_key),
@@ -428,8 +426,8 @@ impl<C> Inner<C> where C: Context {
                     },
                 }
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-                match mark_tombstone.context {
-                    task::MarkTombstoneContext::External(context) =>
+                match delete_block.context {
+                    task::DeleteBlockContext::External(context) =>
                         PerformOp::DeleteBlockDone(DeleteBlockDoneOp::Done {
                             context,
                             performer: Performer { inner: self, },
@@ -470,8 +468,8 @@ impl<C> Inner<C> where C: Context {
                                 schema::ReadBlockTaskRunOp::BlockGone =>
                                     unimplemented!(),
                             },
-                        task::TaskKind::MarkTombstone(task::MarkTombstone { block_id, .. }) =>
-                            self.schema.process_mark_tombstone_task_run(block_id),
+                        task::TaskKind::DeleteBlock(task::DeleteBlock { block_id, .. }) =>
+                            self.schema.process_delete_block_task_run(block_id),
                     }
 
                     Op::InterpretTask(InterpretTask {

@@ -76,12 +76,12 @@ pub enum ReadBlockTaskRunOp {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum MarkTombstoneTaskDoneOp {
-    Perform(MarkTombstoneTaskDonePerform),
+pub enum DeleteBlockTaskDoneOp {
+    Perform(DeleteBlockTaskDonePerform),
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct MarkTombstoneTaskDonePerform {
+pub struct DeleteBlockTaskDonePerform {
     pub defrag_op: DefragOp,
 }
 
@@ -380,7 +380,7 @@ impl Schema {
         }
     }
 
-    pub fn process_mark_tombstone_task_run(&mut self, block_id: &block::Id) {
+    pub fn process_delete_block_task_run(&mut self, block_id: &block::Id) {
         let block_entry = self.blocks_index.get_mut(block_id).unwrap();
                 // TODO: move inside on_task
                 // block_entry.tombstone = true;
@@ -396,7 +396,7 @@ impl Schema {
         assert!(matches!(old_state, index::BlockState::Writing));
     }
 
-    pub fn process_mark_tombstone_task_done(&mut self, removed_block_id: block::Id) -> MarkTombstoneTaskDoneOp {
+    pub fn process_delete_block_task_done(&mut self, removed_block_id: block::Id) -> DeleteBlockTaskDoneOp {
         let block_entry = self.blocks_index.remove(&removed_block_id).unwrap();
         assert!(matches!(block_entry.state, index::BlockState::Tombstone));
         let mut defrag_op = DefragOp::None;
@@ -677,7 +677,7 @@ impl Schema {
             },
         }
 
-        MarkTombstoneTaskDoneOp::Perform(MarkTombstoneTaskDonePerform { defrag_op, })
+        DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform { defrag_op, })
     }
 }
 

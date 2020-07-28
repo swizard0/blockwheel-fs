@@ -190,7 +190,7 @@ pub async fn busyloop(
                 }
             },
 
-            task::TaskKind::MarkTombstone(mark_tombstone) => {
+            task::TaskKind::DeleteBlock(mark_tombstone) => {
                 let tombstone_tag = storage::TombstoneTag::default();
                 bincode::serialize_into(&mut work_block, &tombstone_tag)
                     .map_err(Error::TombstoneTagSerialize)?;
@@ -205,7 +205,7 @@ pub async fn busyloop(
 
                 let task_done = task::Done {
                     current_offset: cursor,
-                    task: task::TaskDone::MarkTombstone(task::TaskDoneMarkTombstone {
+                    task: task::TaskDone::DeleteBlock(task::TaskDoneDeleteBlock {
                         block_id: mark_tombstone.block_id,
                         context: mark_tombstone.context,
                     }),
