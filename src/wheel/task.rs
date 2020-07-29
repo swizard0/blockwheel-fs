@@ -7,6 +7,12 @@ use super::{
 pub mod queue;
 pub mod store;
 
+#[derive(Debug)]
+pub struct Task<C> where C: Context {
+    pub block_id: block::Id,
+    pub kind: TaskKind<C>,
+}
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum TaskKind<C> where C: Context {
     WriteBlock(WriteBlock<C::WriteBlock>),
@@ -16,7 +22,6 @@ pub enum TaskKind<C> where C: Context {
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct WriteBlock<C> {
-    pub block_id: block::Id,
     pub block_bytes: block::Bytes,
     pub commit_type: CommitType,
     pub context: WriteBlockContext<C>,
@@ -47,7 +52,6 @@ pub enum ReadBlockContext<C> {
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct DeleteBlock<C> {
-    pub block_id: block::Id,
     pub context: DeleteBlockContext<C>,
 }
 
@@ -63,7 +67,13 @@ pub struct Done<C> where C: Context {
 }
 
 #[derive(Debug)]
-pub enum TaskDone<C> where C: Context {
+pub struct TaskDone<C> where C: Context {
+    pub block_id: block::Id,
+    pub kind: TaskDoneKind<C>,
+}
+
+#[derive(Debug)]
+pub enum TaskDoneKind<C> where C: Context {
     WriteBlock(TaskDoneWriteBlock<C::WriteBlock>),
     ReadBlock(TaskDoneReadBlock<C::ReadBlock>),
     DeleteBlock(TaskDoneDeleteBlock<C::DeleteBlock>),
@@ -71,19 +81,16 @@ pub enum TaskDone<C> where C: Context {
 
 #[derive(Debug)]
 pub struct TaskDoneWriteBlock<C> {
-    pub block_id: block::Id,
     pub context: WriteBlockContext<C>,
 }
 
 #[derive(Debug)]
 pub struct TaskDoneReadBlock<C> {
-    pub block_id: block::Id,
     pub block_bytes: block::BytesMut,
     pub context: ReadBlockContext<C>,
 }
 
 #[derive(Debug)]
 pub struct TaskDoneDeleteBlock<C> {
-    pub block_id: block::Id,
     pub context: DeleteBlockContext<C>,
 }

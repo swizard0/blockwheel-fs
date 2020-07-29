@@ -8,13 +8,14 @@ use std::{
 use super::{
     block,
     store,
+    Task,
     TaskKind,
     Context,
 };
 
 pub struct Queue<C> where C: Context {
-    queue_left: BinaryHeap<Task>,
-    queue_right: BinaryHeap<Task>,
+    queue_left: BinaryHeap<QueuedTask>,
+    queue_right: BinaryHeap<QueuedTask>,
     tasks: store::Tasks<C>,
 }
 
@@ -31,62 +32,70 @@ impl<C> Queue<C> where C: Context {
         &mut self,
         current_offset: u64,
         offset: u64,
-        task: TaskKind<C>,
-        block_id: block::Id,
+        task: Task<C>,
         tasks_head: &mut store::TasksHead,
     )
     {
-        let queue = if offset >= current_offset {
-            &mut self.queue_right
-        } else {
-            &mut self.queue_left
-        };
-
-        self.tasks.push(tasks_head, task);
-        queue.push(Task { offset, block_id, });
+        let block_id = task.block_id.clone();
+        match self.tasks.push(tasks_head, task) {
+            store::PushStatus::New => {
+                let queue = if offset >= current_offset {
+                    &mut self.queue_right
+                } else {
+                    &mut self.queue_left
+                };
+                queue.push(QueuedTask { offset, block_id, });
+            },
+            store::PushStatus::Queued =>
+                (),
+        }
     }
 
-    pub fn pop(&mut self, current_offset: u64) -> Option<(u64, TaskKind<C>)> {
+    pub fn pop_block_id(&mut self, current_offset: u64) -> Option<(u64, block::Id)> {
         loop {
-            if let Some(task) = self.queue_right.pop() {
-                if task.offset >= current_offset {
-                    return todo!(); // Some((task.offset, task.task));
+            if let Some(queued_task) = self.queue_right.pop() {
+                if queued_task.offset >= current_offset {
+                    return Some((queued_task.offset, queued_task.block_id));
                 } else {
-                    self.queue_left.push(task);
+                    self.queue_left.push(queued_task);
                 }
-            } else if let Some(Task { offset, block_id, }) = self.queue_left.pop() {
+            } else if let Some(QueuedTask { offset, block_id, }) = self.queue_left.pop() {
                 // rotate
                 mem::swap(&mut self.queue_left, &mut self.queue_right);
-                return todo!(); // Some((offset, task));
+                return Some((offset, block_id));
             } else {
                 return None;
             }
         }
     }
+
+    pub fn pop_task(&mut self, tasks_head: &mut store::TasksHead) -> Option<TaskKind<C>> {
+        self.tasks.pop(tasks_head)
+    }
 }
 
 #[derive(Debug)]
-struct Task {
+struct QueuedTask {
     offset: u64,
     block_id: block::Id,
 }
 
-impl PartialEq for Task {
-    fn eq(&self, other: &Task) -> bool {
+impl PartialEq for QueuedTask {
+    fn eq(&self, other: &QueuedTask) -> bool {
         self.offset == other.offset
     }
 }
 
-impl Eq for Task { }
+impl Eq for QueuedTask { }
 
-impl PartialOrd for Task {
-    fn partial_cmp(&self, other: &Task) -> Option<cmp::Ordering> {
+impl PartialOrd for QueuedTask {
+    fn partial_cmp(&self, other: &QueuedTask) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Task {
-    fn cmp(&self, other: &Task) -> cmp::Ordering {
+impl Ord for QueuedTask {
+    fn cmp(&self, other: &QueuedTask) -> cmp::Ordering {
         other.offset.cmp(&self.offset)
     }
 }

@@ -65,7 +65,7 @@ pub enum CorruptedDataError {
 
 pub struct Request {
     pub offset: u64,
-    pub task_kind: task::TaskKind<Context>,
+    pub task: task::Task<Context>,
     pub reply_tx: oneshot::Sender<task::Done<Context>>,
 }
 
@@ -81,17 +81,17 @@ pub async fn busyloop(
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
 
-    while let Some(Request { offset, task_kind, reply_tx, }) = interpret_rx.next().await {
+    while let Some(Request { offset, task, reply_tx, }) = interpret_rx.next().await {
         if cursor != offset {
             wheel_file.seek(io::SeekFrom::Start(offset)).await
                 .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
             cursor = offset;
         }
 
-        match task_kind {
+        match task.kind {
             task::TaskKind::WriteBlock(write_block) => {
                 let block_header = storage::BlockHeader {
-                    block_id: write_block.block_id.clone(),
+                    block_id: task.block_id.clone(),
                     block_size: write_block.block_bytes.len(),
                     ..Default::default()
                 };
@@ -99,7 +99,7 @@ pub async fn busyloop(
                     .map_err(Error::BlockHeaderSerialize)?;
                 work_block.extend(write_block.block_bytes.iter());
                 let commit_tag = storage::CommitTag {
-                    block_id: write_block.block_id.clone(),
+                    block_id: task.block_id.clone(),
                     ..Default::default()
                 };
                 bincode::serialize_into(&mut work_block, &commit_tag)
@@ -124,10 +124,12 @@ pub async fn busyloop(
 
                 let task_done = task::Done {
                     current_offset: cursor,
-                    task: task::TaskDone::WriteBlock(task::TaskDoneWriteBlock {
-                        block_id: write_block.block_id,
-                        context: write_block.context,
-                    }),
+                    task: task::TaskDone {
+                        block_id: task.block_id,
+                        kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                            context: write_block.context,
+                        }),
+                    },
                 };
                 if let Err(_send_error) = reply_tx.send(task_done) {
                     break;
@@ -179,18 +181,20 @@ pub async fn busyloop(
 
                 let task_done = task::Done {
                     current_offset: cursor,
-                    task: task::TaskDone::ReadBlock(task::TaskDoneReadBlock {
+                    task: task::TaskDone {
                         block_id: read_block.block_header.block_id,
-                        block_bytes: read_block.block_bytes,
-                        context: read_block.context,
-                    }),
+                        kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                            block_bytes: read_block.block_bytes,
+                            context: read_block.context,
+                        }),
+                    },
                 };
                 if let Err(_send_error) = reply_tx.send(task_done) {
                     break;
                 }
             },
 
-            task::TaskKind::DeleteBlock(mark_tombstone) => {
+            task::TaskKind::DeleteBlock(delete_block) => {
                 let tombstone_tag = storage::TombstoneTag::default();
                 bincode::serialize_into(&mut work_block, &tombstone_tag)
                     .map_err(Error::TombstoneTagSerialize)?;
@@ -205,10 +209,12 @@ pub async fn busyloop(
 
                 let task_done = task::Done {
                     current_offset: cursor,
-                    task: task::TaskDone::DeleteBlock(task::TaskDoneDeleteBlock {
-                        block_id: mark_tombstone.block_id,
-                        context: mark_tombstone.context,
-                    }),
+                    task: task::TaskDone {
+                        block_id: task.block_id,
+                        kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
+                            context: delete_block.context,
+                        }),
+                    },
                 };
                 if let Err(_send_error) = reply_tx.send(task_done) {
                     break;

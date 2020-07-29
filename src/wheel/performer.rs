@@ -112,7 +112,7 @@ impl<C> PollRequestNext<C> where C: Context {
 #[derive(Debug)]
 pub struct InterpretTask<C> where C: Context {
     pub offset: u64,
-    pub task_kind: task::TaskKind<C>,
+    pub task: task::Task<C>,
     pub next: InterpretTaskNext<C>,
 }
 
@@ -270,7 +270,7 @@ impl<C> Inner<C> where C: Context {
             RequestOrInterpreterIncoming::Request(proto::Request::WriteBlock(request_write_block)) =>
                 match self.schema.process_write_block_request(&request_write_block.block_bytes) {
 
-                    schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, }) => {
+                    schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, tasks_head, }) => {
                         match (defrag_op, self.defrag_queues.as_mut()) {
                             (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
                                 tasks.push(free_space_offset, space_key),
@@ -284,21 +284,24 @@ impl<C> Inner<C> where C: Context {
                         self.tasks_queue.push(
                             self.bg_task.current_offset,
                             task_op.block_offset,
-                            task::TaskKind::WriteBlock(
-                                task::WriteBlock {
-                                    block_id: task_op.block_id,
-                                    block_bytes: request_write_block.block_bytes,
-                                    commit_type: match task_op.commit_type {
-                                        schema::WriteBlockTaskCommitType::CommitOnly =>
-                                            task::CommitType::CommitOnly,
-                                        schema::WriteBlockTaskCommitType::CommitAndEof =>
-                                            task::CommitType::CommitAndEof,
+                            task::Task {
+                                block_id: task_op.block_id,
+                                kind: task::TaskKind::WriteBlock(
+                                    task::WriteBlock {
+                                        block_bytes: request_write_block.block_bytes,
+                                        commit_type: match task_op.commit_type {
+                                            schema::WriteBlockTaskCommitType::CommitOnly =>
+                                                task::CommitType::CommitOnly,
+                                            schema::WriteBlockTaskCommitType::CommitAndEof =>
+                                                task::CommitType::CommitAndEof,
+                                        },
+                                        context: task::WriteBlockContext::External(
+                                            request_write_block.context,
+                                        ),
                                     },
-                                    context: task::WriteBlockContext::External(
-                                        request_write_block.context,
-                                    ),
-                                },
-                            ),
+                                ),
+                            },
+                            tasks_head,
                         );
                         PerformOp::Idle(Performer { inner: self, })
                     },
@@ -324,7 +327,7 @@ impl<C> Inner<C> where C: Context {
             RequestOrInterpreterIncoming::Request(proto::Request::ReadBlock(request_read_block)) =>
                 match self.schema.process_read_block_request(&request_read_block.block_id) {
 
-                    schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, }) =>
+                    schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, tasks_head, }) =>
                         if let Some(block_bytes) = self.lru_cache.get(&request_read_block.block_id) {
                             PerformOp::ReadBlock(ReadBlockOp::CacheHit {
                                 block_bytes: block_bytes.clone(),
@@ -336,13 +339,17 @@ impl<C> Inner<C> where C: Context {
                             self.tasks_queue.push(
                                 self.bg_task.current_offset,
                                 block_offset,
-                                task::TaskKind::ReadBlock(task::ReadBlock {
-                                    block_header: block_header,
-                                    block_bytes,
-                                    context: task::ReadBlockContext::External(
-                                        request_read_block.context,
-                                    ),
-                                }),
+                                task::Task {
+                                    block_id: request_read_block.block_id.clone(),
+                                    kind: task::TaskKind::ReadBlock(task::ReadBlock {
+                                        block_header: block_header.clone(),
+                                        block_bytes,
+                                        context: task::ReadBlockContext::External(
+                                            request_read_block.context,
+                                        ),
+                                    }),
+                                },
+                                tasks_head,
                             );
                             PerformOp::Idle(Performer { inner: self, })
                         },
@@ -358,17 +365,20 @@ impl<C> Inner<C> where C: Context {
             RequestOrInterpreterIncoming::Request(proto::Request::DeleteBlock(request_delete_block)) =>
                 match self.schema.process_delete_block_request(&request_delete_block.block_id) {
 
-                    schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, }) => {
+                    schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, tasks_head, }) => {
                         self.lru_cache.invalidate(&request_delete_block.block_id);
                         self.tasks_queue.push(
                             self.bg_task.current_offset,
                             block_offset,
-                            task::TaskKind::DeleteBlock(task::DeleteBlock {
+                            task::Task {
                                 block_id: request_delete_block.block_id,
-                                context: task::DeleteBlockContext::External(
-                                    request_delete_block.context,
-                                ),
-                            }),
+                                kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                                    context: task::DeleteBlockContext::External(
+                                        request_delete_block.context,
+                                    ),
+                                }),
+                            },
+                            tasks_head,
                         );
                         PerformOp::Idle(Performer { inner: self, })
                     },
@@ -382,14 +392,17 @@ impl<C> Inner<C> where C: Context {
                 },
 
             RequestOrInterpreterIncoming::Interpreter(
-                task::Done { current_offset, task: task::TaskDone::WriteBlock(write_block), },
+                task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::WriteBlock(write_block), }, },
             ) => {
-                self.schema.process_write_block_task_done(&write_block.block_id);
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+
+
+
+
                 match write_block.context {
                     task::WriteBlockContext::External(context) =>
                         PerformOp::WriteBlockDone(WriteBlockDoneOp::Done {
-                            block_id: write_block.block_id,
+                            block_id,
                             context,
                             performer: Performer { inner: self, },
                         }),
@@ -397,10 +410,10 @@ impl<C> Inner<C> where C: Context {
             },
 
             RequestOrInterpreterIncoming::Interpreter(
-                task::Done { current_offset, task: task::TaskDone::ReadBlock(read_block), },
+                task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::ReadBlock(read_block), }, },
             ) => {
                 let block_bytes = read_block.block_bytes.freeze();
-                self.lru_cache.insert(read_block.block_id.clone(), block_bytes.clone());
+                self.lru_cache.insert(block_id.clone(), block_bytes.clone());
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 match read_block.context {
                     task::ReadBlockContext::External(context) =>
@@ -413,9 +426,9 @@ impl<C> Inner<C> where C: Context {
             },
 
             RequestOrInterpreterIncoming::Interpreter(
-                task::Done { current_offset, task: task::TaskDone::DeleteBlock(delete_block), },
+                task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::DeleteBlock(delete_block), }, },
             ) => {
-                match self.schema.process_delete_block_task_done(delete_block.block_id) {
+                match self.schema.process_delete_block_task_done(block_id) {
                     schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, }) => {
                         match (defrag_op, self.defrag_queues.as_mut()) {
                             (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
@@ -455,25 +468,12 @@ impl<C> Inner<C> where C: Context {
     fn next_bg_task(mut self) -> Op<C> {
         match mem::replace(&mut self.bg_task.state, BackgroundTaskState::Idle) {
             BackgroundTaskState::Idle =>
-                if let Some((offset, task_kind)) = self.tasks_queue.pop(self.bg_task.current_offset) {
-                    match &task_kind {
-                        task::TaskKind::WriteBlock(task::WriteBlock { block_id, .. }) =>
-                            self.schema.process_write_block_task_run(block_id),
-                        task::TaskKind::ReadBlock(task::ReadBlock { block_header, .. }) =>
-                            match self.schema.process_read_block_task_run(block_header) {
-                                schema::ReadBlockTaskRunOp::Proceed =>
-                                    (),
-                                schema::ReadBlockTaskRunOp::Defer =>
-                                    unimplemented!(),
-                                schema::ReadBlockTaskRunOp::BlockGone =>
-                                    unimplemented!(),
-                            },
-                        task::TaskKind::DeleteBlock(task::DeleteBlock { block_id, .. }) =>
-                            self.schema.process_delete_block_task_run(block_id),
-                    }
-
+                if let Some((offset, block_id)) = self.tasks_queue.pop_block_id(self.bg_task.current_offset) {
+                    let tasks_head = self.schema.block_tasks_head(&block_id).unwrap();
+                    let task_kind = self.tasks_queue.pop_task(tasks_head).unwrap();
                     Op::InterpretTask(InterpretTask {
-                        offset, task_kind,
+                        offset,
+                        task: task::Task { block_id, kind: task_kind, },
                         next: InterpretTaskNext {
                             inner: self,
                         },

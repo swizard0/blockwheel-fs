@@ -212,9 +212,9 @@ async fn busyloop(
                 }
             },
 
-            performer::Op::InterpretTask(performer::InterpretTask { offset, task_kind, next, }) => {
+            performer::Op::InterpretTask(performer::InterpretTask { offset, task, next, }) => {
                 let (reply_tx, reply_rx) = oneshot::channel();
-                if let Err(_send_error) = interpret_tx.send(interpret::Request { offset, task_kind, reply_tx, }).await {
+                if let Err(_send_error) = interpret_tx.send(interpret::Request { offset, task, reply_tx, }).await {
                     log::warn!("interpreter request channel closed");
                 }
                 performer = next.task_accepted(reply_rx.fuse());

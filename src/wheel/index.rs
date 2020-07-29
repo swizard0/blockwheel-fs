@@ -6,6 +6,7 @@ use std::{
 
 use super::{
     gaps,
+    task,
     block,
     storage,
 };
@@ -19,17 +20,10 @@ pub struct Blocks {
 pub struct BlockEntry {
     pub offset: u64,
     pub header: storage::BlockHeader,
-    pub state: BlockState,
     pub environs: Environs,
+    pub tasks_head: task::store::TasksHead,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum BlockState {
-    Regular,
-    Writing,
-    Tombstone,
-    Defrag,
-}
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct BlockInfo<'a> {

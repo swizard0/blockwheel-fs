@@ -1,5 +1,6 @@
 use super::{
     gaps,
+    task,
     block,
     index,
     storage,
@@ -13,17 +14,18 @@ pub struct Schema {
     gaps: gaps::Index,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum WriteBlockOp {
-    Perform(WriteBlockPerform),
+#[derive(Debug)]
+pub enum WriteBlockOp<'a> {
+    Perform(WriteBlockPerform<'a>),
     QueuePendingDefrag,
     ReplyNoSpaceLeft,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub struct WriteBlockPerform {
+#[derive(Debug)]
+pub struct WriteBlockPerform<'a> {
     pub defrag_op: DefragOp,
     pub task_op: WriteBlockTaskOp,
+    pub tasks_head: &'a mut task::store::TasksHead,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -45,34 +47,29 @@ pub enum WriteBlockTaskCommitType {
     CommitAndEof,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum ReadBlockOp {
-    Perform(ReadBlockPerform),
+#[derive(Debug)]
+pub enum ReadBlockOp<'a> {
+    Perform(ReadBlockPerform<'a>),
     NotFound,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub struct ReadBlockPerform {
+#[derive(Debug)]
+pub struct ReadBlockPerform<'a> {
     pub block_offset: u64,
-    pub block_header: storage::BlockHeader,
+    pub block_header: &'a storage::BlockHeader,
+    pub tasks_head: &'a mut task::store::TasksHead,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum DeleteBlockOp {
-    Perform(DeleteBlockPerform),
+#[derive(Debug)]
+pub enum DeleteBlockOp<'a> {
+    Perform(DeleteBlockPerform<'a>),
     NotFound,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub struct DeleteBlockPerform {
+#[derive(Debug)]
+pub struct DeleteBlockPerform<'a> {
     pub block_offset: u64,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum ReadBlockTaskRunOp {
-    Proceed,
-    Defer,
-    BlockGone,
+    pub tasks_head: &'a mut task::store::TasksHead,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -110,7 +107,12 @@ impl Schema {
         &self.storage_layout
     }
 
-    pub fn process_write_block_request(&mut self, block_bytes: &block::Bytes) -> WriteBlockOp {
+    pub fn block_tasks_head(&mut self, block_id: &block::Id) -> Option<&mut task::store::TasksHead> {
+        self.blocks_index.get_mut(block_id)
+            .map(|block_entry| &mut block_entry.tasks_head)
+    }
+
+    pub fn process_write_block_request<'a>(&'a mut self, block_bytes: &block::Bytes) -> WriteBlockOp<'a> {
         let block_id = self.next_block_id.clone();
         self.next_block_id = self.next_block_id.next();
 
@@ -156,11 +158,11 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        state: index::BlockState::Writing,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Start,
                             right: self_env,
                         },
+                        tasks_head: Default::default(),
                     },
                 );
                 self.blocks_index.update_env_left(&right_block_id, right_env);
@@ -207,11 +209,11 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        state: index::BlockState::Writing,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
                         },
+                        tasks_head: Default::default(),
                     },
                 );
                 self.blocks_index.update_env_right(&left_block_id, left_env);
@@ -253,11 +255,11 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        state: index::BlockState::Writing,
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
                         },
+                        tasks_head: Default::default(),
                     },
                 );
                 self.blocks_index.update_env_right(&left_block_id, left_env);
@@ -296,8 +298,8 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        state: index::BlockState::Writing,
                         environs,
+                        tasks_head: Default::default(),
                     },
                 );
 
@@ -315,6 +317,7 @@ impl Schema {
 
         WriteBlockOp::Perform(
             WriteBlockPerform {
+                tasks_head: &mut self.blocks_index.get_mut(&block_id).unwrap().tasks_head,
                 defrag_op,
                 task_op: WriteBlockTaskOp {
                     block_id,
@@ -325,80 +328,33 @@ impl Schema {
         )
     }
 
-    pub fn process_read_block_request(&mut self, block_id: &block::Id) -> ReadBlockOp {
-        match self.blocks_index.get(block_id) {
+    pub fn process_read_block_request<'a>(&'a mut self, block_id: &block::Id) -> ReadBlockOp<'a> {
+        match self.blocks_index.get_mut(block_id) {
             Some(block_entry) =>
-                match block_entry.state {
-                    index::BlockState::Regular |
-                    index::BlockState::Writing |
-                    index::BlockState::Defrag =>
-                        ReadBlockOp::Perform(ReadBlockPerform {
-                            block_offset: block_entry.offset,
-                            block_header: block_entry.header.clone(),
-                        }),
-                    index::BlockState::Tombstone =>
-                        ReadBlockOp::NotFound,
-                },
+                ReadBlockOp::Perform(ReadBlockPerform {
+                    block_offset: block_entry.offset,
+                    block_header: &block_entry.header,
+                    tasks_head: &mut block_entry.tasks_head,
+                }),
             None =>
                 ReadBlockOp::NotFound,
         }
     }
 
-    pub fn process_delete_block_request(&mut self, block_id: &block::Id) -> DeleteBlockOp {
+    pub fn process_delete_block_request<'a>(&'a mut self, block_id: &block::Id) -> DeleteBlockOp<'a> {
         match self.blocks_index.get_mut(&block_id) {
             Some(block_entry) =>
-                match block_entry.state {
-                    index::BlockState::Regular |
-                    index::BlockState::Writing |
-                    index::BlockState::Defrag =>
-                        DeleteBlockOp::Perform(DeleteBlockPerform {
-                            block_offset: block_entry.offset,
-                        }),
-                    index::BlockState::Tombstone =>
-                        DeleteBlockOp::NotFound,
-                },
+                DeleteBlockOp::Perform(DeleteBlockPerform {
+                    block_offset: block_entry.offset,
+                    tasks_head: &mut block_entry.tasks_head,
+                }),
             None =>
                 DeleteBlockOp::NotFound,
         }
     }
 
-    pub fn process_write_block_task_run(&mut self, block_id: &block::Id) {
-        let block_entry = self.blocks_index.get_mut(block_id).unwrap();
-        assert!(matches!(block_entry.state, index::BlockState::Writing));
-    }
-
-    pub fn process_read_block_task_run(&mut self, block_header: &storage::BlockHeader) -> ReadBlockTaskRunOp {
-        let block_entry = self.blocks_index.get_mut(&block_header.block_id).unwrap();
-        match block_entry.state {
-            index::BlockState::Regular =>
-                ReadBlockTaskRunOp::Proceed,
-            index::BlockState::Writing |
-            index::BlockState::Defrag =>
-                ReadBlockTaskRunOp::Defer,
-            index::BlockState::Tombstone =>
-                ReadBlockTaskRunOp::BlockGone,
-        }
-    }
-
-    pub fn process_delete_block_task_run(&mut self, block_id: &block::Id) {
-        let block_entry = self.blocks_index.get_mut(block_id).unwrap();
-                // TODO: move inside on_task
-                // block_entry.tombstone = true;
-                // DeleteBlockOp::Perform(DeleteBlockPerform {
-                //     block_offset: block_entry.offset,
-                // })
-        unimplemented!()
-    }
-
-    pub fn process_write_block_task_done(&mut self, block_id: &block::Id) {
-        let block_entry = self.blocks_index.get_mut(block_id).unwrap();
-        let old_state = std::mem::replace(&mut block_entry.state, index::BlockState::Regular);
-        assert!(matches!(old_state, index::BlockState::Writing));
-    }
-
     pub fn process_delete_block_task_done(&mut self, removed_block_id: block::Id) -> DeleteBlockTaskDoneOp {
         let block_entry = self.blocks_index.remove(&removed_block_id).unwrap();
-        assert!(matches!(block_entry.state, index::BlockState::Tombstone));
         let mut defrag_op = DefragOp::None;
 
         match block_entry.environs {
