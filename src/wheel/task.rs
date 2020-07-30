@@ -13,49 +13,49 @@ pub struct Task<C> where C: Context {
     pub kind: TaskKind<C>,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub enum TaskKind<C> where C: Context {
     WriteBlock(WriteBlock<C::WriteBlock>),
     ReadBlock(ReadBlock<C::ReadBlock>),
     DeleteBlock(DeleteBlock<C::DeleteBlock>),
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub struct WriteBlock<C> {
     pub block_bytes: block::Bytes,
     pub commit_type: CommitType,
     pub context: WriteBlockContext<C>,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub enum CommitType {
     CommitOnly,
     CommitAndEof,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub enum WriteBlockContext<C> {
     External(C),
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub struct ReadBlock<C> {
     pub block_header: storage::BlockHeader,
     pub block_bytes: block::BytesMut,
     pub context: ReadBlockContext<C>,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub enum ReadBlockContext<C> {
     External(C),
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub struct DeleteBlock<C> {
     pub context: DeleteBlockContext<C>,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub enum DeleteBlockContext<C> {
     External(C),
 }

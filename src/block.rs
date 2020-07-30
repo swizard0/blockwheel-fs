@@ -1,5 +1,10 @@
 use std::{
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{
+            AtomicUsize,
+        },
+    },
     ops::{
         Deref,
         DerefMut,
@@ -36,18 +41,27 @@ impl Id {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Debug)]
 pub struct Bytes {
-    bytes: Arc<Vec<u8>>,
+    pub(crate) bytes: Arc<Vec<u8>>,
+    pub(crate) release_key: Arc<AtomicUsize>,
+    pub(crate) release_prev: Arc<AtomicUsize>,
+    pub(crate) release_head: Arc<AtomicUsize>,
 }
 
 impl Bytes {
     pub fn into_mut(self) -> Result<BytesMut, Bytes> {
         match Arc::try_unwrap(self.bytes) {
             Ok(bytes) =>
-                Ok(BytesMut { bytes, }),
+                Ok(BytesMut {
+                    bytes,
+                    release_head: self.release_head,
+                }),
             Err(bytes) =>
-                Err(Bytes { bytes, }),
+                Err(Bytes {
+                    bytes,
+                    ..self
+                }),
         }
     }
 }
@@ -68,21 +82,26 @@ impl Deref for Bytes {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug)]
+#[derive(Debug)]
 pub struct BytesMut {
     bytes: Vec<u8>,
+    pub(crate) release_head: Arc<AtomicUsize>,
 }
 
 impl BytesMut {
-    pub(crate) fn new() -> BytesMut {
+    pub(crate) fn new(release_head: Arc<AtomicUsize>) -> BytesMut {
         BytesMut {
             bytes: Vec::new(),
+            release_head,
         }
     }
 
     pub fn freeze(self) -> Bytes {
         Bytes {
             bytes: Arc::new(self.bytes),
+            release_key: Arc::new(AtomicUsize::new(0)),
+            release_prev: Arc::new(AtomicUsize::new(0)),
+            release_head: self.release_head,
         }
     }
 }
