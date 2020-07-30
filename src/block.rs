@@ -2,6 +2,8 @@ use std::{
     sync::{
         Arc,
         atomic::{
+            Ordering,
+            AtomicU64,
             AtomicUsize,
         },
     },
@@ -43,10 +45,27 @@ impl Id {
 
 #[derive(Clone, Debug)]
 pub struct Bytes {
-    pub(crate) bytes: Arc<Vec<u8>>,
-    pub(crate) release_key: Arc<AtomicUsize>,
-    pub(crate) release_prev: Arc<AtomicUsize>,
-    pub(crate) release_head: Arc<AtomicUsize>,
+    bytes: Arc<Vec<u8>>,
+    pub(crate) release: Release,
+}
+
+#[derive(Debug)]
+pub(crate) struct Release {
+    pub(crate) key: Arc<AtomicU64>,
+    pub(crate) prev: Arc<AtomicUsize>,
+    pub(crate) head: Arc<AtomicUsize>,
+}
+
+pub(crate) fn make_release_key(index_succ: usize, refs_count: usize) -> u64 {
+    assert!(index_succ < (u32::MAX as usize));
+    assert!(refs_count < (u32::MAX as usize));
+    ((index_succ as u64) << 32) | (refs_count as u64)
+}
+
+pub(crate) fn split_release_key(release_key: u64) -> (usize, usize) {
+    let index_succ = (release_key >> 32) as usize;
+    let refs_count = (release_key & (u32::MAX as u64)) as usize;
+    (index_succ, refs_count)
 }
 
 impl Bytes {
@@ -55,13 +74,44 @@ impl Bytes {
             Ok(bytes) =>
                 Ok(BytesMut {
                     bytes,
-                    release_head: self.release_head,
+                    release_head: self.release.head.clone(),
                 }),
             Err(bytes) =>
                 Err(Bytes {
                     bytes,
                     ..self
                 }),
+        }
+    }
+}
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        let prev_release_key = self.key.fetch_sub(1, Ordering::SeqCst);
+        let (index_succ, refs_count) = split_release_key(prev_release_key);
+        if index_succ != 0 && refs_count == 2 {
+            // move to release list in case of repayed and unique reference
+            let mut release_head = self.head.load(Ordering::SeqCst);
+            loop {
+                self.prev.store(release_head, Ordering::Relaxed);
+                match self.head.compare_exchange(release_head, index_succ, Ordering::SeqCst, Ordering::Relaxed) {
+                    Ok(..) =>
+                        break,
+                    Err(value) =>
+                        release_head = value,
+                }
+            }
+        }
+    }
+}
+
+impl Clone for Release {
+    fn clone(&self) -> Release {
+        self.key.fetch_add(1, Ordering::SeqCst);
+        Release {
+            key: self.key.clone(),
+            prev: self.prev.clone(),
+            head: self.head.clone(),
         }
     }
 }
@@ -82,6 +132,12 @@ impl Deref for Bytes {
     }
 }
 
+impl PartialEq for Bytes {
+    fn eq(&self, other: &Bytes) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
 #[derive(Debug)]
 pub struct BytesMut {
     bytes: Vec<u8>,
@@ -96,12 +152,18 @@ impl BytesMut {
         }
     }
 
+    pub(crate) fn new_detached() -> BytesMut {
+        Self::new(Arc::new(AtomicUsize::new(0)))
+    }
+
     pub fn freeze(self) -> Bytes {
         Bytes {
             bytes: Arc::new(self.bytes),
-            release_key: Arc::new(AtomicUsize::new(0)),
-            release_prev: Arc::new(AtomicUsize::new(0)),
-            release_head: self.release_head,
+            release: Release {
+                key: Arc::new(AtomicU64::new(make_release_key(0, 1))),
+                prev: Arc::new(AtomicUsize::new(0)),
+                head: self.release_head,
+            },
         }
     }
 }
