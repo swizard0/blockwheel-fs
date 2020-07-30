@@ -151,7 +151,7 @@ mod tests {
     };
 
     fn sample_hello_world() -> block::Bytes {
-        let mut block_bytes_mut = block::BytesMut::new();
+        let mut block_bytes_mut = block::BytesMut::new_detached();
         block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
         block_bytes_mut.freeze()
     }

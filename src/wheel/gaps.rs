@@ -217,11 +217,11 @@ mod tests {
                                 block_size: 4,
                                 ..Default::default()
                             },
-                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Start,
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                             },
+                            tasks_head: Default::default(),
                         },
                     },
                     right_block: index::BlockInfo {
@@ -233,11 +233,11 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
-                            }
+                            },
+                            tasks_head: Default::default(),
                         },
                     },
                 },
@@ -263,11 +263,11 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
+                            tasks_head: Default::default(),
                         },
                     },
                 },
@@ -313,11 +313,11 @@ mod tests {
                                 block_size: 4,
                                 ..Default::default()
                             },
-                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Start,
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                             },
+                            tasks_head: Default::default(),
                         },
                     },
                     right_block: index::BlockInfo {
@@ -329,11 +329,11 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
-                            }
+                            },
+                            tasks_head: Default::default(),
                         },
                     },
                 },
@@ -353,11 +353,11 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            tombstone: false,
                             environs: index::Environs {
                                 left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
+                            tasks_head: Default::default(),
                         },
                     },
                 },
@@ -398,11 +398,11 @@ mod tests {
                     block_size: 4,
                     ..Default::default()
                 },
-                tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Start,
                     right: index::RightEnvirons::Space { space_key: space_key_a, },
                 },
+                tasks_head: Default::default(),
             });
             blocks_index.insert(block_b_id.clone(), index::BlockEntry {
                 offset: 8,
@@ -411,11 +411,11 @@ mod tests {
                     block_size: 0,
                     ..Default::default()
                 },
-                tombstone: false,
                 environs: index::Environs {
                     left: index::LeftEnvirons::Space { space_key: space_key_a, },
                     right: index::RightEnvirons::Space { space_key: space_key_b, },
                 },
+                tasks_head: Default::default(),
             });
 
             Init { block_a_id, block_b_id, blocks_index, gaps, }
