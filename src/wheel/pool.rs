@@ -97,6 +97,10 @@ impl Blocks {
             }
         }
     }
+
+    pub fn will_reuse(&self) -> bool {
+        self.release_head.load(Ordering::SeqCst) != 0
+    }
 }
 
 #[cfg(test)]
@@ -110,15 +114,18 @@ mod tests {
     fn reusing() {
         let mut blocks = Blocks::new();
 
+        assert!(!blocks.will_reuse());
         let mut block_a = blocks.lend();
         block_a.push(0);
         let ptr_a = block_a.as_ptr();
 
+        assert!(!blocks.will_reuse());
         let mut block_b = blocks.lend();
         block_b.push(1);
         let ptr_b = block_b.as_ptr();
         assert_ne!(ptr_a, ptr_b);
 
+        assert!(!blocks.will_reuse());
         let mut block_c = blocks.lend();
         block_c.push(2);
         let ptr_c = block_c.as_ptr();
@@ -126,6 +133,7 @@ mod tests {
 
         blocks.repay(block_b.freeze());
 
+        assert!(blocks.will_reuse());
         let mut block_d = blocks.lend();
         block_d.push(3);
         assert_eq!(block_d.as_ptr(), ptr_b);
@@ -134,11 +142,13 @@ mod tests {
         let block_e_freezed = block_a_freezed.clone();
         blocks.repay(block_a_freezed);
 
+        assert!(!blocks.will_reuse());
         let mut block_f = blocks.lend();
         block_f.push(4);
         assert_ne!(block_f.as_ptr(), ptr_b);
 
         std::mem::drop(block_e_freezed);
+        assert!(blocks.will_reuse());
         let mut block_g = blocks.lend();
         block_g.push(5);
         assert_eq!(block_g.as_ptr(), ptr_a);
@@ -148,13 +158,15 @@ mod tests {
         let block_i_freezed = block_h_freezed.clone();
         blocks.repay(block_h_freezed);
 
+        assert!(!blocks.will_reuse());
         let mut block_j = blocks.lend();
-        block_f.push(6);
+        block_j.push(6);
         assert_ne!(block_j.as_ptr(), ptr_c);
 
         std::mem::drop(block_c_freezed);
-        std::mem::drop(block_g.freeze());
+        blocks.repay(block_g.freeze());
 
+        assert!(blocks.will_reuse());
         let mut block_k = blocks.lend();
         block_k.push(7);
         assert_ne!(block_k.as_ptr(), ptr_c);
@@ -162,6 +174,7 @@ mod tests {
 
         std::mem::drop(block_i_freezed);
 
+        assert!(blocks.will_reuse());
         let mut block_l = blocks.lend();
         block_l.push(8);
         assert_eq!(block_l.as_ptr(), ptr_c);
