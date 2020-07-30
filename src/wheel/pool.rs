@@ -98,17 +98,15 @@ impl Blocks {
         }
     }
 
-    pub fn will_reuse(&self) -> bool {
+    #[cfg(test)]
+    fn will_reuse(&self) -> bool {
         self.release_head.load(Ordering::SeqCst) != 0
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        block,
-        Blocks,
-    };
+    use super::Blocks;
 
     #[test]
     fn reusing() {

@@ -545,17 +545,17 @@ impl<C> Inner<C> where C: Context {
     }
 
     fn next_defrag(&mut self) {
-        if let Some(defrag::Queues { tasks, .. }) = self.defrag_queues.as_mut() {
-            match mem::replace(&mut self.defrag_state, DefragState::Idle) {
-                DefragState::Idle =>
-                    while let Some((offset, space_key)) = tasks.pop() {
+        // if let Some(defrag::Queues { tasks, .. }) = self.defrag_queues.as_mut() {
+        //     match mem::replace(&mut self.defrag_state, DefragState::Idle) {
+        //         DefragState::Idle =>
+        //             while let Some((offset, space_key)) = tasks.pop() {
 
-                        unimplemented!()
-                    },
-                DefragState::InProgress { task, } =>
-                    unimplemented!(),
-            }
-        }
+        //                 unimplemented!()
+        //             },
+        //         DefragState::InProgress { task, } =>
+        //             unimplemented!(),
+        //     }
+        // }
     }
 
     fn next_bg_task(mut self) -> Op<C> {
