@@ -72,12 +72,34 @@ pub struct DeleteBlockPerform<'a> {
     pub tasks_head: &'a mut task::store::TasksHead,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Debug)]
+pub enum WriteBlockTaskDoneOp<'a> {
+    Perform(WriteBlockTaskDonePerform<'a>),
+}
+
+#[derive(Debug)]
+pub struct WriteBlockTaskDonePerform<'a> {
+    pub block_offset: u64,
+    pub tasks_head: &'a mut task::store::TasksHead,
+}
+
+#[derive(Debug)]
+pub enum ReadBlockTaskDoneOp<'a> {
+    Perform(ReadBlockTaskDonePerform<'a>),
+}
+
+#[derive(Debug)]
+pub struct ReadBlockTaskDonePerform<'a> {
+    pub block_offset: u64,
+    pub tasks_head: &'a mut task::store::TasksHead,
+}
+
+#[derive(Debug)]
 pub enum DeleteBlockTaskDoneOp {
     Perform(DeleteBlockTaskDonePerform),
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Debug)]
 pub struct DeleteBlockTaskDonePerform {
     pub defrag_op: DefragOp,
 }
@@ -351,6 +373,22 @@ impl Schema {
             None =>
                 DeleteBlockOp::NotFound,
         }
+    }
+
+    pub fn process_write_block_task_done<'a>(&'a mut self, written_block_id: &block::Id) -> WriteBlockTaskDoneOp<'a> {
+        let block_entry = self.blocks_index.get_mut(written_block_id).unwrap();
+        WriteBlockTaskDoneOp::Perform(WriteBlockTaskDonePerform {
+            block_offset: block_entry.offset,
+            tasks_head: &mut block_entry.tasks_head,
+        })
+    }
+
+    pub fn process_read_block_task_done<'a>(&'a mut self, read_block_id: &block::Id) -> ReadBlockTaskDoneOp<'a> {
+        let block_entry = self.blocks_index.get_mut(read_block_id).unwrap();
+        ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform {
+            block_offset: block_entry.offset,
+            tasks_head: &mut block_entry.tasks_head,
+        })
     }
 
     pub fn process_delete_block_task_done(&mut self, removed_block_id: block::Id) -> DeleteBlockTaskDoneOp {

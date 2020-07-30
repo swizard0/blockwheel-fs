@@ -218,22 +218,35 @@ pub enum TaskReadBlockDoneLoop<C> where C: Context {
 
 impl<C> TaskReadBlockDoneNext<C> where C: Context {
     pub fn step(mut self) -> TaskReadBlockDoneLoop<C> {
-        if let Some(tasks_head) = self.inner.schema.block_tasks_head(&self.block_id) {
-            if let Some(read_block) = self.inner.tasks_queue.pop_read_task(tasks_head) {
-                unimplemented!();
-                self.inner.blocks_pool.repay(read_block.block_bytes.freeze()); // think here: should we really do that?
-                match read_block.context {
-                    task::ReadBlockContext::External(context) =>
-                        return TaskReadBlockDoneLoop::More(ReadBlockDoneOp {
-                            block_bytes: self.block_bytes.clone(),
-                            context,
-                            next: self,
-                        }),
+        match self.inner.schema.process_read_block_task_done(&self.block_id) {
+            schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform { block_offset, tasks_head, }) => {
+                if let Some(read_block) = self.inner.tasks_queue.pop_read_task(tasks_head) {
+                    self.inner.blocks_pool.repay(read_block.block_bytes.freeze());
+                    match read_block.context {
+                        task::ReadBlockContext::External(context) =>
+                            return TaskReadBlockDoneLoop::More(ReadBlockDoneOp {
+                                block_bytes: self.block_bytes.clone(),
+                                context,
+                                next: self,
+                            }),
+                    }
                 }
+
+                if let Some(task_kind) = self.inner.tasks_queue.pop_task(tasks_head) {
+                    self.inner.tasks_queue.push(
+                        self.inner.bg_task.current_offset,
+                        block_offset,
+                        task::Task {
+                            block_id: self.block_id.clone(),
+                            kind: task_kind,
+                        },
+                        tasks_head,
+                    );
+                }
+
+                TaskReadBlockDoneLoop::Done(Performer { inner: self.inner, })
             }
         }
-
-        TaskReadBlockDoneLoop::Done(Performer { inner: self.inner, })
     }
 }
 
@@ -253,7 +266,13 @@ impl<C> TaskDeleteBlockDoneNext<C> where C: Context {
     pub fn step(mut self) -> TaskDeleteBlockDoneLoop<C> {
         if let Some(tasks_head) = self.inner.schema.block_tasks_head(&self.block_id) {
             if let Some(delete_block) = self.inner.tasks_queue.pop_delete_task(tasks_head) {
-                unimplemented!();
+                match delete_block.context {
+                    task::DeleteBlockContext::External(context) =>
+                        return TaskDeleteBlockDoneLoop::More(DeleteBlockDoneOp {
+                            context,
+                            next: self,
+                        }),
+                }
             }
         }
 
@@ -451,9 +470,21 @@ impl<C> Inner<C> where C: Context {
             RequestOrInterpreterIncoming::Interpreter(
                 task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::WriteBlock(write_block), }, },
             ) => {
-                unimplemented!(); // reschedule associated read / delete tasks
-
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+                match self.schema.process_write_block_task_done(&block_id) {
+                    schema::WriteBlockTaskDoneOp::Perform(schema::WriteBlockTaskDonePerform { block_offset, tasks_head, }) =>
+                        if let Some(task_kind) = self.tasks_queue.pop_task(tasks_head) {
+                            self.tasks_queue.push(
+                                self.bg_task.current_offset,
+                                block_offset,
+                                task::Task {
+                                    block_id: block_id.clone(),
+                                    kind: task_kind,
+                                },
+                                tasks_head,
+                            );
+                        },
+                }
                 match write_block.context {
                     task::WriteBlockContext::External(context) =>
                         PerformOp::TaskDone(TaskDone::WriteBlockDone(WriteBlockDoneOp {

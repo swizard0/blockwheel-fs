@@ -152,6 +152,7 @@ impl BytesMut {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn new_detached() -> BytesMut {
         Self::new(Arc::new(AtomicUsize::new(0)))
     }

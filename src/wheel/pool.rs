@@ -142,5 +142,28 @@ mod tests {
         let mut block_g = blocks.lend();
         block_g.push(5);
         assert_eq!(block_g.as_ptr(), ptr_a);
+
+        let block_c_freezed = block_c.freeze();
+        let block_h_freezed = block_c_freezed.clone();
+        let block_i_freezed = block_h_freezed.clone();
+        blocks.repay(block_h_freezed);
+
+        let mut block_j = blocks.lend();
+        block_f.push(6);
+        assert_ne!(block_j.as_ptr(), ptr_c);
+
+        std::mem::drop(block_c_freezed);
+        std::mem::drop(block_g.freeze());
+
+        let mut block_k = blocks.lend();
+        block_k.push(7);
+        assert_ne!(block_k.as_ptr(), ptr_c);
+        assert_eq!(block_k.as_ptr(), ptr_a);
+
+        std::mem::drop(block_i_freezed);
+
+        let mut block_l = blocks.lend();
+        block_l.push(8);
+        assert_eq!(block_l.as_ptr(), ptr_c);
     }
 }
