@@ -108,5 +108,39 @@ mod tests {
 
     #[test]
     fn reusing() {
+        let mut blocks = Blocks::new();
+
+        let mut block_a = blocks.lend();
+        block_a.push(0);
+        let ptr_a = block_a.as_ptr();
+
+        let mut block_b = blocks.lend();
+        block_b.push(1);
+        let ptr_b = block_b.as_ptr();
+        assert_ne!(ptr_a, ptr_b);
+
+        let mut block_c = blocks.lend();
+        block_c.push(2);
+        let ptr_c = block_c.as_ptr();
+        assert_ne!(ptr_b, ptr_c);
+
+        blocks.repay(block_b.freeze());
+
+        let mut block_d = blocks.lend();
+        block_d.push(3);
+        assert_eq!(block_d.as_ptr(), ptr_b);
+
+        let block_a_freezed = block_a.freeze();
+        let block_e_freezed = block_a_freezed.clone();
+        blocks.repay(block_a_freezed);
+
+        let mut block_f = blocks.lend();
+        block_f.push(4);
+        assert_ne!(block_f.as_ptr(), ptr_b);
+
+        std::mem::drop(block_e_freezed);
+        let mut block_g = blocks.lend();
+        block_g.push(5);
+        assert_eq!(block_g.as_ptr(), ptr_a);
     }
 }
