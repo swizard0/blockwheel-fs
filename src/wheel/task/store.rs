@@ -74,23 +74,46 @@ impl<C> Tasks<C> where C: Context {
     }
 
     pub fn pop(&mut self, tasks_head: &mut TasksHead) -> Option<TaskKind<C>> {
-        if let Some(node_ref) = tasks_head.head_write.take() {
-            let task = self.tasks_write.remove(node_ref).unwrap();
+        if let Some(task) = self.pop_write(tasks_head) {
             return Some(TaskKind::WriteBlock(task));
         }
 
-        if let Some(node_ref) = tasks_head.head_read.take() {
-            let node = self.tasks_read.remove(node_ref).unwrap();
-            tasks_head.head_read = node.parent;
-            return Some(TaskKind::ReadBlock(node.item));
+        if let Some(task) = self.pop_read(tasks_head) {
+            return Some(TaskKind::ReadBlock(task));
         }
 
-        if let Some(node_ref) = tasks_head.head_delete.take() {
-            let node = self.tasks_delete.remove(node_ref).unwrap();
-            tasks_head.head_delete = node.parent;
-            return Some(TaskKind::DeleteBlock(node.item));
+        if let Some(task) = self.pop_delete(tasks_head) {
+            return Some(TaskKind::DeleteBlock(task));
         }
 
         None
+    }
+
+    pub fn pop_write(&mut self, tasks_head: &mut TasksHead) -> Option<WriteBlock<C::WriteBlock>> {
+        if let Some(node_ref) = tasks_head.head_write.take() {
+            Some(self.tasks_write.remove(node_ref).unwrap())
+        } else {
+            None
+        }
+    }
+
+    pub fn pop_read(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C::ReadBlock>> {
+        if let Some(node_ref) = tasks_head.head_read.take() {
+            let node = self.tasks_read.remove(node_ref).unwrap();
+            tasks_head.head_read = node.parent;
+            Some(node.item)
+        } else {
+            None
+        }
+    }
+
+    pub fn pop_delete(&mut self, tasks_head: &mut TasksHead) -> Option<DeleteBlock<C::DeleteBlock>> {
+        if let Some(node_ref) = tasks_head.head_delete.take() {
+            let node = self.tasks_delete.remove(node_ref).unwrap();
+            tasks_head.head_delete = node.parent;
+            Some(node.item)
+        } else {
+            None
+        }
     }
 }

@@ -263,26 +263,46 @@ async fn busyloop(
                 performer
             },
 
-            performer::PerformOp::WriteBlockDone(performer::WriteBlockDoneOp::Done { block_id, context: reply_tx, performer, }) => {
+            performer::PerformOp::TaskDone(performer::TaskDone::WriteBlockDone(
+                performer::WriteBlockDoneOp { block_id, context: reply_tx, performer, },
+            )) => {
                 if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
                     log::warn!("client channel was closed before a block is actually written");
                 }
                 performer
             },
 
-            performer::PerformOp::ReadBlockDone(performer::ReadBlockDoneOp::Done { block_bytes, context: reply_tx, performer, }) => {
-                if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-                    log::warn!("client channel was closed before a block is actually read");
-                }
-                performer
-            },
+            performer::PerformOp::TaskDone(performer::TaskDone::ReadBlockDone(
+                mut done_op @ performer::ReadBlockDoneOp { .. },
+            )) =>
+                loop {
+                    let performer::ReadBlockDoneOp { block_bytes, context: reply_tx, next, } = done_op;
+                    if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+                        log::warn!("client channel was closed before a block is actually read");
+                    }
+                    match next.step() {
+                        performer::TaskReadBlockDoneLoop::Done(performer) =>
+                            break performer,
+                        performer::TaskReadBlockDoneLoop::More(done_op_more) =>
+                            done_op = done_op_more,
+                    }
+                },
 
-            performer::PerformOp::DeleteBlockDone(performer::DeleteBlockDoneOp::Done { context: reply_tx, performer, }) => {
-                if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
-                    log::warn!("client channel was closed before a block is actually deleted");
-                }
-                performer
-            },
+            performer::PerformOp::TaskDone(performer::TaskDone::DeleteBlockDone(
+                mut done_op @ performer::DeleteBlockDoneOp { .. },
+            )) =>
+                loop {
+                    let performer::DeleteBlockDoneOp { context: reply_tx, next, } = done_op;
+                    if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
+                        log::warn!("client channel was closed before a block is actually deleted");
+                    }
+                    match next.step() {
+                        performer::TaskDeleteBlockDoneLoop::Done(performer) =>
+                            break performer,
+                        performer::TaskDeleteBlockDoneLoop::More(done_op_more) =>
+                            done_op = done_op_more,
+                    }
+                },
         };
     }
 }

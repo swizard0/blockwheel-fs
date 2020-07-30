@@ -135,9 +135,7 @@ pub enum PerformOp<C> where C: Context {
     WriteBlock(WriteBlockOp<C>),
     ReadBlock(ReadBlockOp<C>),
     DeleteBlock(DeleteBlockOp<C>),
-    WriteBlockDone(WriteBlockDoneOp<C>),
-    ReadBlockDone(ReadBlockDoneOp<C>),
-    DeleteBlockDone(DeleteBlockDoneOp<C>),
+    TaskDone(TaskDone<C>),
 }
 
 #[derive(Debug)]
@@ -179,29 +177,88 @@ pub enum DeleteBlockOp<C> where C: Context {
 }
 
 #[derive(Debug)]
-pub enum WriteBlockDoneOp<C> where C: Context {
-    Done {
-        block_id: block::Id,
-        context: C::WriteBlock,
-        performer: Performer<C>,
-    },
+pub enum TaskDone<C> where C: Context {
+    WriteBlockDone(WriteBlockDoneOp<C>),
+    ReadBlockDone(ReadBlockDoneOp<C>),
+    DeleteBlockDone(DeleteBlockDoneOp<C>),
 }
 
 #[derive(Debug)]
-pub enum ReadBlockDoneOp<C> where C: Context {
-    Done {
-        block_bytes: block::Bytes,
-        context: C::ReadBlock,
-        performer: Performer<C>,
-    },
+pub struct WriteBlockDoneOp<C> where C: Context {
+    pub block_id: block::Id,
+    pub context: C::WriteBlock,
+    pub performer: Performer<C>,
 }
 
 #[derive(Debug)]
-pub enum DeleteBlockDoneOp<C> where C: Context {
-    Done {
-        context: C::DeleteBlock,
-        performer: Performer<C>,
-    },
+pub struct ReadBlockDoneOp<C> where C: Context {
+    pub block_bytes: block::Bytes,
+    pub context: C::ReadBlock,
+    pub next: TaskReadBlockDoneNext<C>,
+}
+
+#[derive(Debug)]
+pub struct DeleteBlockDoneOp<C> where C: Context {
+    pub context: C::DeleteBlock,
+    pub next: TaskDeleteBlockDoneNext<C>,
+}
+
+#[derive(Debug)]
+pub struct TaskReadBlockDoneNext<C> where C: Context {
+    block_id: block::Id,
+    block_bytes: block::Bytes,
+    inner: Inner<C>,
+}
+
+#[derive(Debug)]
+pub enum TaskReadBlockDoneLoop<C> where C: Context {
+    Done(Performer<C>),
+    More(ReadBlockDoneOp<C>),
+}
+
+impl<C> TaskReadBlockDoneNext<C> where C: Context {
+    pub fn step(mut self) -> TaskReadBlockDoneLoop<C> {
+        if let Some(tasks_head) = self.inner.schema.block_tasks_head(&self.block_id) {
+            if let Some(read_block) = self.inner.tasks_queue.pop_read_task(tasks_head) {
+                unimplemented!();
+                self.inner.blocks_pool.repay(read_block.block_bytes.freeze()); // think here: should we really do that?
+                match read_block.context {
+                    task::ReadBlockContext::External(context) =>
+                        return TaskReadBlockDoneLoop::More(ReadBlockDoneOp {
+                            block_bytes: self.block_bytes.clone(),
+                            context,
+                            next: self,
+                        }),
+                }
+            }
+        }
+
+        TaskReadBlockDoneLoop::Done(Performer { inner: self.inner, })
+    }
+}
+
+#[derive(Debug)]
+pub struct TaskDeleteBlockDoneNext<C> where C: Context {
+    block_id: block::Id,
+    inner: Inner<C>,
+}
+
+#[derive(Debug)]
+pub enum TaskDeleteBlockDoneLoop<C> where C: Context {
+    Done(Performer<C>),
+    More(DeleteBlockDoneOp<C>),
+}
+
+impl<C> TaskDeleteBlockDoneNext<C> where C: Context {
+    pub fn step(mut self) -> TaskDeleteBlockDoneLoop<C> {
+        if let Some(tasks_head) = self.inner.schema.block_tasks_head(&self.block_id) {
+            if let Some(delete_block) = self.inner.tasks_queue.pop_delete_task(tasks_head) {
+                unimplemented!();
+            }
+        }
+
+        TaskDeleteBlockDoneLoop::Done(Performer { inner: self.inner, })
+    }
 }
 
 impl<C> fmt::Debug for Inner<C> where C: Context {
@@ -394,41 +451,44 @@ impl<C> Inner<C> where C: Context {
             RequestOrInterpreterIncoming::Interpreter(
                 task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::WriteBlock(write_block), }, },
             ) => {
+                unimplemented!(); // reschedule associated read / delete tasks
+
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-
-
-
-
                 match write_block.context {
                     task::WriteBlockContext::External(context) =>
-                        PerformOp::WriteBlockDone(WriteBlockDoneOp::Done {
+                        PerformOp::TaskDone(TaskDone::WriteBlockDone(WriteBlockDoneOp {
                             block_id,
                             context,
                             performer: Performer { inner: self, },
-                        }),
+                        })),
                 }
             },
 
             RequestOrInterpreterIncoming::Interpreter(
                 task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::ReadBlock(read_block), }, },
             ) => {
+                self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 let block_bytes = read_block.block_bytes.freeze();
                 self.lru_cache.insert(block_id.clone(), block_bytes.clone());
-                self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 match read_block.context {
                     task::ReadBlockContext::External(context) =>
-                        PerformOp::ReadBlockDone(ReadBlockDoneOp::Done {
-                            block_bytes,
+                        PerformOp::TaskDone(TaskDone::ReadBlockDone(ReadBlockDoneOp {
+                            block_bytes: block_bytes.clone(),
                             context,
-                            performer: Performer { inner: self, },
-                        }),
+                            next: TaskReadBlockDoneNext {
+                                block_id,
+                                block_bytes,
+                                inner: self,
+                            },
+                        })),
                 }
             },
 
             RequestOrInterpreterIncoming::Interpreter(
                 task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::DeleteBlock(delete_block), }, },
             ) => {
-                match self.schema.process_delete_block_task_done(block_id) {
+                self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+                match self.schema.process_delete_block_task_done(block_id.clone()) {
                     schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, }) => {
                         match (defrag_op, self.defrag_queues.as_mut()) {
                             (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
@@ -438,13 +498,15 @@ impl<C> Inner<C> where C: Context {
                         }
                     },
                 }
-                self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 match delete_block.context {
                     task::DeleteBlockContext::External(context) =>
-                        PerformOp::DeleteBlockDone(DeleteBlockDoneOp::Done {
+                        PerformOp::TaskDone(TaskDone::DeleteBlockDone(DeleteBlockDoneOp {
                             context,
-                            performer: Performer { inner: self, },
-                        }),
+                            next: TaskDeleteBlockDoneNext {
+                                block_id,
+                                inner: self,
+                            },
+                        })),
                 }
             },
 
