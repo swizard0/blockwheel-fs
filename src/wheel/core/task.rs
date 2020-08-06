@@ -1,11 +1,13 @@
 use super::{
     block,
     storage,
-    context::Context,
+    SpaceKey,
 };
 
+use crate::context::Context;
+
 pub mod queue;
-pub mod store;
+// pub mod store;
 
 #[derive(Debug)]
 pub struct Task<C> where C: Context {
@@ -27,15 +29,18 @@ pub struct WriteBlock<C> {
     pub context: WriteBlockContext<C>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CommitType {
     CommitOnly,
     CommitAndEof,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum WriteBlockContext<C> {
     External(C),
+    Defrag {
+        space_key: SpaceKey,
+    },
 }
 
 #[derive(Debug)]
@@ -45,9 +50,10 @@ pub struct ReadBlock<C> {
     pub context: ReadBlockContext<C>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum ReadBlockContext<C> {
     External(C),
+    Defrag { space_key: SpaceKey, },
 }
 
 #[derive(Debug)]
@@ -55,9 +61,13 @@ pub struct DeleteBlock<C> {
     pub context: DeleteBlockContext<C>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum DeleteBlockContext<C> {
     External(C),
+    Defrag {
+        block_bytes: block::Bytes,
+        space_key: SpaceKey,
+    },
 }
 
 #[derive(Debug)]

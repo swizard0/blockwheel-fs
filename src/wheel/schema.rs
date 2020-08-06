@@ -102,6 +102,7 @@ pub enum DeleteBlockTaskDoneOp {
 #[derive(Debug)]
 pub struct DeleteBlockTaskDonePerform {
     pub defrag_op: DefragOp,
+    pub block_entry: index::BlockEntry,
 }
 
 impl Schema {
@@ -134,7 +135,14 @@ impl Schema {
             .map(|block_entry| &mut block_entry.tasks_head)
     }
 
-    pub fn process_write_block_request<'a>(&'a mut self, block_bytes: &block::Bytes) -> WriteBlockOp<'a> {
+    pub fn process_write_block_request<'a>(
+        &'a mut self,
+        block_bytes: &block::Bytes,
+        defrag_pending: usize,
+        defrag_in_progress: usize,
+    )
+        -> WriteBlockOp<'a>
+    {
         let block_id = self.next_block_id.clone();
         self.next_block_id = self.next_block_id.next();
 
@@ -144,7 +152,7 @@ impl Schema {
         let space_required = block_bytes.len()
             + self.storage_layout.data_size_block_min();
 
-        let block_offset = match self.gaps.allocate(space_required, &self.blocks_index) {
+        let block_offset = match self.gaps.allocate(space_required, &self.blocks_index, defrag_pending, defrag_in_progress) {
 
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndBlock { right_block, }, }) => {
                 let block_offset = self.storage_layout.wheel_header_size as u64;
@@ -180,6 +188,7 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
+                        block_bytes: Some(block_bytes.clone()),
                         environs: index::Environs {
                             left: index::LeftEnvirons::Start,
                             right: self_env,
@@ -231,6 +240,7 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
+                        block_bytes: Some(block_bytes.clone()),
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
@@ -277,6 +287,7 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
+                        block_bytes: Some(block_bytes.clone()),
                         environs: index::Environs {
                             left: index::LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
@@ -320,6 +331,7 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
+                        block_bytes: Some(block_bytes.clone()),
                         environs,
                         tasks_head: Default::default(),
                     },
@@ -671,7 +683,7 @@ impl Schema {
             },
         }
 
-        DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform { defrag_op, })
+        DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform { defrag_op, block_entry, })
     }
 }
 

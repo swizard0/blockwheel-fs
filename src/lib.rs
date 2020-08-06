@@ -26,6 +26,7 @@ pub mod block;
 mod wheel;
 mod proto;
 mod storage;
+mod context;
 
 #[derive(Clone, Debug)]
 pub struct Params {
@@ -50,7 +51,7 @@ impl Default for Params {
     }
 }
 
-type Request = proto::Request<wheel::context::blockwheel::Context>;
+type Request = proto::Request<blockwheel_context::Context>;
 
 pub struct GenServer {
     request_tx: mpsc::Sender<Request>,
@@ -161,7 +162,7 @@ impl Pid {
             match reply_rx.await {
                 Ok(Ok(block_id)) =>
                     return Ok(block_id),
-                Ok(Err(wheel::context::blockwheel::RequestWriteBlockError::NoSpaceLeft)) =>
+                Ok(Err(blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) =>
                     return Err(WriteBlockError::NoSpaceLeft),
                 Err(oneshot::Canceled) =>
                     (),
@@ -183,7 +184,7 @@ impl Pid {
             match reply_rx.await {
                 Ok(Ok(block_bytes)) =>
                     return Ok(block_bytes),
-                Ok(Err(wheel::context::blockwheel::RequestReadBlockError::NotFound)) =>
+                Ok(Err(blockwheel_context::RequestReadBlockError::NotFound)) =>
                     return Err(ReadBlockError::NotFound),
                 Err(oneshot::Canceled) =>
                     (),
@@ -205,11 +206,52 @@ impl Pid {
             match reply_rx.await {
                 Ok(Ok(Deleted)) =>
                     return Ok(Deleted),
-                Ok(Err(wheel::context::blockwheel::RequestDeleteBlockError::NotFound)) =>
+                Ok(Err(blockwheel_context::RequestDeleteBlockError::NotFound)) =>
                     return Err(DeleteBlockError::NotFound),
                 Err(oneshot::Canceled) =>
                     (),
             }
         }
+    }
+}
+
+mod blockwheel_context {
+    use futures::{
+        channel::{
+            oneshot,
+        },
+        future,
+    };
+
+    use super::{
+        block,
+        context,
+        wheel::core::task,
+        Deleted,
+    };
+
+    pub struct Context;
+
+    impl context::Context for Context {
+        type LendBlock = oneshot::Sender<block::BytesMut>;
+        type WriteBlock = oneshot::Sender<Result<block::Id, RequestWriteBlockError>>;
+        type ReadBlock = oneshot::Sender<Result<block::Bytes, RequestReadBlockError>>;
+        type DeleteBlock = oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>;
+        type Interpreter = future::Fuse<oneshot::Receiver<task::Done<Self>>>;
+    }
+
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub enum RequestWriteBlockError {
+        NoSpaceLeft,
+    }
+
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub enum RequestReadBlockError {
+        NotFound,
+    }
+
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub enum RequestDeleteBlockError {
+        NotFound,
     }
 }

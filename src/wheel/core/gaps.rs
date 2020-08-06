@@ -6,7 +6,9 @@ use std::{
 
 use super::{
     block,
-    index,
+    SpaceKey,
+    BlockInfo,
+    BlockEntry,
 };
 
 #[derive(Debug)]
@@ -32,23 +34,11 @@ pub enum GapBetween<B> {
     StartAndEnd,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct SpaceKey {
-    pub(crate) space_available: usize,
-    pub(crate) serial: usize,
-}
-
-impl SpaceKey {
-    pub fn space_available(&self) -> usize {
-        self.space_available
-    }
-}
-
 #[derive(Clone, PartialEq, Debug)]
 pub enum Allocated<'a> {
     Success {
         space_available: usize,
-        between: GapBetween<index::BlockInfo<'a>>,
+        between: GapBetween<BlockInfo<'a>>,
     },
     PendingDefragmentation,
 }
@@ -81,12 +71,13 @@ impl Index {
         space_key
     }
 
-    pub fn allocate<'a>(
+    pub fn allocate<'a, G>(
         &mut self,
         space_required: usize,
-        blocks_index: &'a index::Blocks,
+        block_get: G,
     )
         -> Result<Allocated<'a>, Error>
+    where G: Fn(&block::Id) -> Option<&'a BlockEntry>
     {
         let mut maybe_result = None;
         let mut candidates = self.gaps.range(SpaceKey { space_available: space_required, serial: 0, } ..);
@@ -107,11 +98,11 @@ impl Index {
                             break;
                         },
                         GapBetween::StartAndBlock { right_block, } =>
-                            if let Some(block_entry) = blocks_index.get(right_block) {
+                            if let Some(block_entry) = block_get(right_block) {
                                 maybe_result = Some(Allocated::Success {
                                     space_available: key.space_available,
                                     between: GapBetween::StartAndBlock {
-                                        right_block: index::BlockInfo {
+                                        right_block: BlockInfo {
                                             block_id: right_block.clone(),
                                             block_entry,
                                         },
@@ -122,17 +113,17 @@ impl Index {
                                 break;
                             },
                         GapBetween::TwoBlocks { left_block, right_block, } => {
-                            let maybe_left = blocks_index.get(left_block);
-                            let maybe_right = blocks_index.get(right_block);
+                            let maybe_left = block_get(left_block);
+                            let maybe_right = block_get(right_block);
                             if let (Some(left_block_entry), Some(right_block_entry)) = (maybe_left, maybe_right) {
                                 maybe_result = Some(Allocated::Success {
                                     space_available: key.space_available,
                                     between: GapBetween::TwoBlocks {
-                                        left_block: index::BlockInfo {
+                                        left_block: BlockInfo {
                                             block_id: left_block.clone(),
                                             block_entry: left_block_entry,
                                         },
-                                        right_block: index::BlockInfo {
+                                        right_block: BlockInfo {
                                             block_id: right_block.clone(),
                                             block_entry: right_block_entry,
                                         },
@@ -144,11 +135,11 @@ impl Index {
                             }
                         },
                         GapBetween::BlockAndEnd { left_block, } =>
-                            if let Some(block_entry) = blocks_index.get(left_block) {
+                            if let Some(block_entry) = block_get(left_block) {
                                 maybe_result = Some(Allocated::Success {
                                     space_available: key.space_available,
                                     between: GapBetween::BlockAndEnd {
-                                        left_block: index::BlockInfo {
+                                        left_block: BlockInfo {
                                             block_id: left_block.clone(),
                                             block_entry,
                                         },
@@ -188,10 +179,22 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::{
+            HashMap,
+        },
+    };
+
     use super::{
-        super::storage,
+        super::{
+            storage,
+            Environs,
+            LeftEnvirons,
+            RightEnvirons,
+            BlockEntry,
+            BlockInfo,
+        },
         block,
-        index,
         Index,
         Error,
         SpaceKey,
@@ -201,41 +204,43 @@ mod tests {
 
     #[test]
     fn allocated_success_between_two_blocks() {
-        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+        let Init { block_a_id, block_b_id, blocks_index, mut gaps_index, } = Init::new();
 
         assert_eq!(
-            gaps.allocate(3, &blocks_index),
+            gaps_index.allocate(3, |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 4,
                 between: GapBetween::TwoBlocks {
-                    left_block: index::BlockInfo {
+                    left_block: BlockInfo {
                         block_id: block_a_id.clone(),
-                        block_entry: &index::BlockEntry {
+                        block_entry: &BlockEntry {
                             offset: 0,
                             header: storage::BlockHeader {
                                 block_id: block_a_id.clone(),
                                 block_size: 4,
                                 ..Default::default()
                             },
-                            environs: index::Environs {
-                                left: index::LeftEnvirons::Start,
-                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                            block_bytes: None,
+                            environs: Environs {
+                                left: LeftEnvirons::Start,
+                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                             },
                             tasks_head: Default::default(),
                         },
                     },
-                    right_block: index::BlockInfo {
+                    right_block: BlockInfo {
                         block_id: block_b_id.clone(),
-                        block_entry: &index::BlockEntry {
+                        block_entry: &BlockEntry {
                             offset: 8,
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            environs: index::Environs {
-                                left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
-                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
+                            block_bytes: None,
+                            environs: Environs {
+                                left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                             tasks_head: Default::default(),
                         },
@@ -247,25 +252,26 @@ mod tests {
 
     #[test]
     fn allocated_success_between_block_and_end() {
-        let Init { block_b_id, blocks_index, mut gaps, .. } = Init::new();
+        let Init { block_b_id, blocks_index, mut gaps_index, .. } = Init::new();
 
         assert_eq!(
-            gaps.allocate(33, &blocks_index),
+            gaps_index.allocate(33, |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 60,
                 between: GapBetween::BlockAndEnd {
-                    left_block: index::BlockInfo {
+                    left_block: BlockInfo {
                         block_id: block_b_id.clone(),
-                        block_entry: &index::BlockEntry {
+                        block_entry: &BlockEntry {
                             offset: 8,
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            environs: index::Environs {
-                                left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
-                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
+                            block_bytes: None,
+                            environs: Environs {
+                                left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                             tasks_head: Default::default(),
                         },
@@ -277,61 +283,63 @@ mod tests {
 
     #[test]
     fn allocated_success_pending_defragmentation() {
-        let Init { blocks_index, mut gaps, .. } = Init::new();
+        let Init { blocks_index, mut gaps_index, .. } = Init::new();
 
         assert_eq!(
-            gaps.allocate(61, &blocks_index),
+            gaps_index.allocate(61, |key| blocks_index.get(key)),
             Ok(Allocated::PendingDefragmentation),
         );
     }
 
     #[test]
     fn allocated_error_no_space_left() {
-        let Init { blocks_index, mut gaps, .. } = Init::new();
+        let Init { blocks_index, mut gaps_index, .. } = Init::new();
 
         assert_eq!(
-            gaps.allocate(65, &blocks_index),
+            gaps_index.allocate(65, |key| blocks_index.get(key)),
             Err(Error::NoSpaceLeft),
         );
     }
 
     #[test]
     fn allocate_until_no_space() {
-        let Init { block_a_id, block_b_id, blocks_index, mut gaps, } = Init::new();
+        let Init { block_a_id, block_b_id, blocks_index, mut gaps_index, } = Init::new();
 
         assert_eq!(
-            gaps.allocate(3, &blocks_index),
+            gaps_index.allocate(3, |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 4,
                 between: GapBetween::TwoBlocks {
-                    left_block: index::BlockInfo {
+                    left_block: BlockInfo {
                         block_id: block_a_id.clone(),
-                        block_entry: &index::BlockEntry {
+                        block_entry: &BlockEntry {
                             offset: 0,
                             header: storage::BlockHeader {
                                 block_id: block_a_id.clone(),
                                 block_size: 4,
                                 ..Default::default()
                             },
-                            environs: index::Environs {
-                                left: index::LeftEnvirons::Start,
-                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                            block_bytes: None,
+                            environs: Environs {
+                                left: LeftEnvirons::Start,
+                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                             },
                             tasks_head: Default::default(),
                         },
                     },
-                    right_block: index::BlockInfo {
+                    right_block: BlockInfo {
                         block_id: block_b_id.clone(),
-                        block_entry: &index::BlockEntry {
+                        block_entry: &BlockEntry {
                             offset: 8,
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            environs: index::Environs {
-                                left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
-                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
+                            block_bytes: None,
+                            environs: Environs {
+                                left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                             tasks_head: Default::default(),
                         },
@@ -340,22 +348,23 @@ mod tests {
             }),
         );
         assert_eq!(
-            gaps.allocate(3, &blocks_index),
+            gaps_index.allocate(3, |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 60,
                 between: GapBetween::BlockAndEnd {
-                    left_block: index::BlockInfo {
+                    left_block: BlockInfo {
                         block_id: block_b_id.clone(),
-                        block_entry: &index::BlockEntry {
+                        block_entry: &BlockEntry {
                             offset: 8,
                             header: storage::BlockHeader {
                                 block_id: block_b_id.clone(),
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            environs: index::Environs {
-                                left: index::LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
-                                right: index::RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
+                            block_bytes: None,
+                            environs: Environs {
+                                left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
+                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                             tasks_head: Default::default(),
                         },
@@ -364,7 +373,7 @@ mod tests {
             }),
         );
         assert_eq!(
-            gaps.allocate(3, &blocks_index),
+            gaps_index.allocate(3, |key| blocks_index.get(key)),
             Err(Error::NoSpaceLeft),
         );
     }
@@ -372,8 +381,8 @@ mod tests {
     struct Init {
         block_a_id: block::Id,
         block_b_id: block::Id,
-        blocks_index: index::Blocks,
-        gaps: Index,
+        blocks_index: HashMap<block::Id, BlockEntry>,
+        gaps_index: Index,
     }
 
     impl Init {
@@ -381,44 +390,46 @@ mod tests {
             let block_a_id = block::Id::init();
             let block_b_id = block_a_id.next();
 
-            let mut gaps = Index::new();
-            let space_key_a = gaps.insert(4, GapBetween::TwoBlocks {
+            let mut gaps_index = Index::new();
+            let space_key_a = gaps_index.insert(4, GapBetween::TwoBlocks {
                 left_block: block_a_id.clone(),
                 right_block: block_b_id.clone(),
             });
-            let space_key_b = gaps.insert(60, GapBetween::BlockAndEnd {
+            let space_key_b = gaps_index.insert(60, GapBetween::BlockAndEnd {
                 left_block: block_b_id.clone(),
             });
 
-            let mut blocks_index = index::Blocks::new();
-            blocks_index.insert(block_a_id.clone(), index::BlockEntry {
+            let mut blocks_index = HashMap::new();
+            blocks_index.insert(block_a_id.clone(), BlockEntry {
                 offset: 0,
                 header: storage::BlockHeader {
                     block_id: block_a_id.clone(),
                     block_size: 4,
                     ..Default::default()
                 },
-                environs: index::Environs {
-                    left: index::LeftEnvirons::Start,
-                    right: index::RightEnvirons::Space { space_key: space_key_a, },
+                block_bytes: None,
+                environs: Environs {
+                    left: LeftEnvirons::Start,
+                    right: RightEnvirons::Space { space_key: space_key_a, },
                 },
                 tasks_head: Default::default(),
             });
-            blocks_index.insert(block_b_id.clone(), index::BlockEntry {
+            blocks_index.insert(block_b_id.clone(), BlockEntry {
                 offset: 8,
                 header: storage::BlockHeader {
                     block_id: block_b_id.clone(),
                     block_size: 0,
                     ..Default::default()
                 },
-                environs: index::Environs {
-                    left: index::LeftEnvirons::Space { space_key: space_key_a, },
-                    right: index::RightEnvirons::Space { space_key: space_key_b, },
+                block_bytes: None,
+                environs: Environs {
+                    left: LeftEnvirons::Space { space_key: space_key_a, },
+                    right: RightEnvirons::Space { space_key: space_key_b, },
                 },
                 tasks_head: Default::default(),
             });
 
-            Init { block_a_id, block_b_id, blocks_index, gaps, }
+            Init { block_a_id, block_b_id, blocks_index, gaps_index, }
         }
     }
 }

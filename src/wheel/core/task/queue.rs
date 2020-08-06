@@ -7,13 +7,15 @@ use std::{
 
 use super::{
     block,
-    store,
     Task,
     TaskKind,
     ReadBlock,
     DeleteBlock,
     Context,
+    super::TasksHead,
 };
+
+mod store;
 
 pub struct Queue<C> where C: Context {
     queue_left: BinaryHeap<QueuedTask>,
@@ -35,7 +37,7 @@ impl<C> Queue<C> where C: Context {
         current_offset: u64,
         offset: u64,
         task: Task<C>,
-        tasks_head: &mut store::TasksHead,
+        tasks_head: &mut TasksHead,
     )
     {
         let block_id = task.block_id.clone();
@@ -71,15 +73,15 @@ impl<C> Queue<C> where C: Context {
         }
     }
 
-    pub fn pop_task(&mut self, tasks_head: &mut store::TasksHead) -> Option<TaskKind<C>> {
+    pub fn pop_task(&mut self, tasks_head: &mut TasksHead) -> Option<TaskKind<C>> {
         self.tasks.pop(tasks_head)
     }
 
-    pub fn pop_read_task(&mut self, tasks_head: &mut store::TasksHead) -> Option<ReadBlock<C::ReadBlock>> {
+    pub fn pop_read_task(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C::ReadBlock>> {
         self.tasks.pop_read(tasks_head)
     }
 
-    pub fn pop_delete_task(&mut self, tasks_head: &mut store::TasksHead) -> Option<DeleteBlock<C::DeleteBlock>> {
+    pub fn pop_delete_task(&mut self, tasks_head: &mut TasksHead) -> Option<DeleteBlock<C::DeleteBlock>> {
         self.tasks.pop_delete(tasks_head)
     }
 }

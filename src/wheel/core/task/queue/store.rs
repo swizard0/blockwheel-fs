@@ -7,25 +7,21 @@ use o1::{
 };
 
 use super::{
-    Task,
-    TaskKind,
-    WriteBlock,
-    ReadBlock,
-    DeleteBlock,
-    Context,
+    super::{
+        Task,
+        TaskKind,
+        WriteBlock,
+        ReadBlock,
+        DeleteBlock,
+        Context,
+    },
+    TasksHead,
 };
 
 pub struct Tasks<C> where C: Context {
     tasks_write: Set<WriteBlock<C::WriteBlock>>,
     tasks_read: Forest1<ReadBlock<C::ReadBlock>>,
     tasks_delete: Forest1<DeleteBlock<C::DeleteBlock>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
-pub struct TasksHead {
-    head_write: Option<Ref>,
-    head_read: Option<Ref>,
-    head_delete: Option<Ref>,
 }
 
 pub enum PushStatus {

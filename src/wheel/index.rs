@@ -9,46 +9,15 @@ use super::{
     task,
     block,
     storage,
+    primitives::{
+        BlockHeader,
+        BlockInfo,
+    },
 };
 
 #[derive(Debug)]
 pub struct Blocks {
     index: HashMap<block::Id, BlockEntry>,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct BlockEntry {
-    pub offset: u64,
-    pub header: storage::BlockHeader,
-    pub environs: Environs,
-    pub tasks_head: task::store::TasksHead,
-}
-
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct BlockInfo<'a> {
-    pub block_id: block::Id,
-    pub block_entry: &'a BlockEntry,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Environs {
-    pub left: LeftEnvirons,
-    pub right: RightEnvirons,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum LeftEnvirons {
-    Start,
-    Space { space_key: gaps::SpaceKey, },
-    Block { block_id: block::Id, },
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum RightEnvirons {
-    End,
-    Space { space_key: gaps::SpaceKey, },
-    Block { block_id: block::Id, },
 }
 
 impl Blocks {
