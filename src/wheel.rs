@@ -42,7 +42,6 @@ pub mod core;
 mod lru;
 // mod task;
 mod pool;
-// mod index;
 // mod defrag;
 // mod schema;
 // mod performer;

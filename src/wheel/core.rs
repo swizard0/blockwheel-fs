@@ -8,6 +8,7 @@ use super::{
 pub mod task;
 
 mod gaps;
+mod blocks;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct BlockEntry {
