@@ -518,29 +518,33 @@ impl<C> Inner<C> where C: Context {
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::DeleteBlock(delete_block), }, } => {
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-                match self.schema.process_delete_block_task_done(block_id.clone()) {
-                    schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, block_entry, }) => {
-                        match (defrag_op, self.defrag_queues.as_mut()) {
-                            (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
-                                tasks.push(free_space_offset, space_key),
-                            (schema::DefragOp::None, _) | (_, None) =>
-                                (),
-                        }
+                match delete_block.context {
+                    task::DeleteBlockContext::External(context) =>
+                        match self.schema.process_delete_block_task_done(block_id.clone()) {
+                            schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, }) => {
+                                match (defrag_op, self.defrag_queues.as_mut()) {
+                                    (schema::DefragOp::Queue { free_space_offset, space_key, }, Some(defrag::Queues { tasks, .. })) =>
+                                        tasks.push(free_space_offset, space_key),
+                                    (schema::DefragOp::None, _) | (_, None) =>
+                                        (),
+                                }
 
-                        match delete_block.context {
-                            task::DeleteBlockContext::External(context) =>
                                 PerformOp::TaskDone(TaskDone::DeleteBlockDone(DeleteBlockDoneOp {
                                     context,
                                     next: TaskDeleteBlockDoneNext {
                                         block_id,
                                         inner: self,
                                     },
-                                })),
-                            task::ReadBlockContext::Defrag { space_key, } => {
-                                // TODO
+                                }))
                             },
                         }
-                    },
+                    task::ReadBlockContext::Defrag { space_key, } =>
+                        match self.schema.process_delete_block_task_done_defrag(&block_id, space_key) {
+                            schema::DeleteBlockTaskDoneDefragOp::Perform(schema::DeleteBlockTaskDoneDefragPerform { block_offset, tasks_head, }) => {
+                                // TODO
+
+                            },
+                        },
                 }
             },
 

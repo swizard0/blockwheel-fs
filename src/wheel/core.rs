@@ -9,6 +9,7 @@ pub mod task;
 
 mod gaps;
 mod blocks;
+mod schema;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct BlockEntry {

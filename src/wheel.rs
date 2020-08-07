@@ -43,7 +43,6 @@ mod lru;
 // mod task;
 mod pool;
 // mod defrag;
-// mod schema;
 // mod performer;
 mod interpret;
 

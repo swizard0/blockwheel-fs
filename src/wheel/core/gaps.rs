@@ -163,7 +163,7 @@ impl Index {
                             },
                     }
                 },
-                Some((key, Gap { state: GapState::LockedDefrag, .. })) =>
+                Some((_key, Gap { state: GapState::LockedDefrag, .. })) =>
                     (),
             }
         }
