@@ -399,6 +399,7 @@ impl Schema {
 
     pub fn process_write_block_task_done<'a>(&'a mut self, written_block_id: &block::Id) -> WriteBlockTaskDoneOp<'a> {
         let block_entry = self.blocks_index.get_mut(written_block_id).unwrap();
+        block_entry.block_bytes = None;
         WriteBlockTaskDoneOp::Perform(WriteBlockTaskDonePerform {
             block_offset: block_entry.offset,
             tasks_head: &mut block_entry.tasks_head,
@@ -938,6 +939,8 @@ mod tests {
         DeleteBlockPerform,
         DeleteBlockTaskDoneOp,
         DeleteBlockTaskDonePerform,
+        DeleteBlockTaskDoneDefragOp,
+        DeleteBlockTaskDoneDefragPerform,
     };
 
     fn init() -> Schema {
@@ -1199,6 +1202,60 @@ mod tests {
                 ..
             }) if block_id == &block::Id::init().next().next()
         ));
+        assert_eq!(schema.gaps_index.space_total(), 59);
+    }
+
+    #[test]
+    fn process_delete_block_task_done_defrag() {
+        let mut schema = init();
+        assert_eq!(schema.gaps_index.space_total(), 112);
+
+        schema.process_write_block_request(&sample_hello_world());
+        schema.process_write_block_request(&sample_hello_world());
+
+        let op = schema.process_delete_block_request(&block::Id::init());
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));
+
+        let op = schema.process_delete_block_task_done(block::Id::init());
+        assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
+            defrag_op: DefragOp::Queue {
+                free_space_offset: 24,
+                space_key: SpaceKey { space_available: 53, serial: 4, },
+            },
+        })));
+
+        // defrag delete
+        assert_eq!(schema.gaps_index.space_total(), 59);
+
+        let op = schema.process_delete_block_request(&block::Id::init().next());
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 77, .. })));
+
+        let op = schema.process_delete_block_task_done_defrag(
+            block::Id::init().next(),
+            SpaceKey { space_available: 53, serial: 4, },
+        );
+        assert!(matches!(op, DeleteBlockTaskDoneDefragOp::Perform(DeleteBlockTaskDoneDefragPerform {
+            block_offset: 24,
+            ..
+        })));
+
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init().next()),
+            Some(&BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    block_id: ref block_id_a,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Start,
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 59, serial: 5, }, },
+                },
+                ..
+            }) if block_id_a == &block::Id::init().next()
+        ));
+
         assert_eq!(schema.gaps_index.space_total(), 59);
     }
 }
