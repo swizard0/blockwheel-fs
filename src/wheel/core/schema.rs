@@ -716,8 +716,10 @@ impl Schema {
                             space_key.space_available(),
                             gaps::GapBetween::BlockAndEnd { left_block: removed_block_id.clone(), },
                         );
-                        self.blocks_index.update_env_left(&removed_block_id, LeftEnvirons::Start);
-                        self.blocks_index.update_env_right(&removed_block_id, RightEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                            block_entry.environs.left = LeftEnvirons::Start;
+                            block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
+                        });
                     },
                     // before: ^| ... | A | ... | R |$
                     // after:  ^| ... | A | R | ... |$
@@ -727,8 +729,10 @@ impl Schema {
                             space_key.space_available(),
                             gaps::GapBetween::BlockAndEnd { left_block: removed_block_id.clone(), },
                         );
-                        self.blocks_index.update_env_left(&removed_block_id, LeftEnvirons::Block { block_id: left_block.clone(), });
-                        self.blocks_index.update_env_right(&removed_block_id, RightEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                            block_entry.environs.left = LeftEnvirons::Block { block_id: left_block.clone(), };
+                            block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
+                        });
                         self.blocks_index.update_env_right(&left_block, RightEnvirons::Block { block_id: removed_block_id.clone(), });
                     },
                 },
@@ -757,11 +761,13 @@ impl Schema {
                             space_key_left.space_available() + space_key_right.space_available(),
                             gaps::GapBetween::BlockAndEnd { left_block: removed_block_id.clone(), },
                         );
-                        self.blocks_index.update_env_left(&removed_block_id, LeftEnvirons::Start);
-                        self.blocks_index.update_env_right(&removed_block_id, RightEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                            block_entry.environs.left = LeftEnvirons::Start;
+                            block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
+                        });
                     },
-                    // before: ^| A | ... | R | ... |$
-                    // after:  ^| A | R | ......... |$
+                    // before: ^| ... | R | ... | A | ... |$
+                    // after:  ^| R | ......... | A | ... |$
                     (
                         Some(gaps::GapBetween::StartAndBlock { right_block: right_block_left, }),
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
@@ -772,8 +778,10 @@ impl Schema {
                             space_key_left.space_available() + space_key_right.space_available(),
                             gaps::GapBetween::TwoBlocks { left_block: removed_block_id.clone(), right_block: right_block_right.clone(), },
                         );
-                        self.blocks_index.update_env_left(&removed_block_id, LeftEnvirons::Start);
-                        self.blocks_index.update_env_right(&removed_block_id, RightEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                            block_entry.environs.left = LeftEnvirons::Start;
+                            block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
+                        });
                         self.blocks_index.update_env_left(&right_block_right, LeftEnvirons::Space { space_key: moved_space_key, });
                     },
                     // before: ^| ... | A | ... | R | ... |$
@@ -788,8 +796,10 @@ impl Schema {
                             space_key_left.space_available() + space_key_right.space_available(),
                             gaps::GapBetween::BlockAndEnd { left_block: removed_block_id.clone(), },
                         );
-                        self.blocks_index.update_env_left(&removed_block_id, LeftEnvirons::Block { block_id: right_block_left, });
-                        self.blocks_index.update_env_right(&removed_block_id, RightEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                            block_entry.environs.left = LeftEnvirons::Block { block_id: right_block_left, };
+                            block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
+                        });
                         self.blocks_index.update_env_right(&left_block_left, RightEnvirons::Block { block_id: removed_block_id.clone(), });
                     },
                     // before: ^| ... | A | ... | R | ... | B | ... |$
@@ -807,8 +817,10 @@ impl Schema {
                                 right_block: right_block_right.clone(),
                             },
                         );
-                        self.blocks_index.update_env_left(&removed_block_id, LeftEnvirons::Block { block_id: left_block_left.clone(), });
-                        self.blocks_index.update_env_right(&removed_block_id, RightEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                            block_entry.environs.left = LeftEnvirons::Block { block_id: left_block_left.clone(), };
+                            block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
+                        });
                         self.blocks_index.update_env_right(&left_block_left, RightEnvirons::Block { block_id: removed_block_id.clone(), });
                         self.blocks_index.update_env_left(&right_block_right, LeftEnvirons::Space { space_key: moved_space_key, });
                     },
@@ -829,8 +841,10 @@ impl Schema {
                             space_key.space_available(),
                             gaps::GapBetween::TwoBlocks { left_block: removed_block_id.clone(), right_block: block_id.clone(), },
                         );
-                        self.blocks_index.update_env_left(&removed_block_id, LeftEnvirons::Start);
-                        self.blocks_index.update_env_right(&removed_block_id, RightEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                            block_entry.environs.left = LeftEnvirons::Start;
+                            block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
+                        });
                         self.blocks_index.update_env_left(&right_block, LeftEnvirons::Space { space_key: moved_space_key, });
                     },
                     // before: ^| ... | A | ... | R | B | ... |$
@@ -844,8 +858,10 @@ impl Schema {
                                 right_block: block_id.clone(),
                             },
                         );
-                        self.blocks_index.update_env_left(&removed_block_id, LeftEnvirons::Block { block_id: left_block.clone(), });
-                        self.blocks_index.update_env_right(&removed_block_id, RightEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                            block_entry.environs.left = LeftEnvirons::Block { block_id: left_block.clone(), };
+                            block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
+                        });
                         self.blocks_index.update_env_right(&left_block, RightEnvirons::Block { block_id: removed_block_id.clone(), });
                         self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key: moved_space_key, });
                     },

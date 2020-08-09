@@ -35,14 +35,20 @@ impl Index {
         self.index.get_mut(block_id)
     }
 
+    pub fn with_mut<F, T>(&mut self, block_id: &block::Id, action: F) -> Option<T> where F: FnOnce(&mut BlockEntry) -> T {
+        if let Some(value) = self.get_mut(block_id) {
+            Some(action(value))
+        } else {
+            None
+        }
+     }
+
     pub fn update_env_left(&mut self, block_id: &block::Id, env: LeftEnvirons) {
-        let block_entry = self.get_mut(block_id).unwrap();
-        block_entry.environs.left = env;
+        self.with_mut(block_id, |block_entry| block_entry.environs.left = env).unwrap()
     }
 
     pub fn update_env_right(&mut self, block_id: &block::Id, env: RightEnvirons) {
-        let block_entry = self.get_mut(block_id).unwrap();
-        block_entry.environs.right = env;
+        self.with_mut(block_id, |block_entry| block_entry.environs.right = env).unwrap()
     }
 
     pub fn remove(&mut self, block_id: &block::Id) -> Option<BlockEntry> {
