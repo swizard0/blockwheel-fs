@@ -9,6 +9,7 @@ pub mod task;
 
 mod gaps;
 mod blocks;
+mod defrag;
 mod schema;
 
 #[derive(Clone, PartialEq, Debug)]

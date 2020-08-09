@@ -40,7 +40,6 @@ use super::{
 pub mod core;
 
 mod lru;
-// mod task;
 mod pool;
 // mod defrag;
 // mod performer;

@@ -7,8 +7,8 @@ use std::{
 };
 
 use super::{
-    gaps,
-    proto,
+    super::proto,
+    SpaceKey,
 };
 
 #[derive(Debug)]
@@ -53,11 +53,11 @@ impl TaskQueue {
         }
     }
 
-    pub fn push(&mut self, offset: u64, space_key: gaps::SpaceKey) {
+    pub fn push(&mut self, offset: u64, space_key: SpaceKey) {
         self.queue.push(DefragTask { offset, space_key, });
     }
 
-    pub fn pop(&mut self) -> Option<(u64, gaps::SpaceKey)> {
+    pub fn pop(&mut self) -> Option<(u64, SpaceKey)> {
         self.queue.pop()
             .map(|defrag_task| (defrag_task.offset, defrag_task.space_key))
     }
@@ -66,7 +66,7 @@ impl TaskQueue {
 #[derive(Clone, Debug)]
 struct DefragTask {
     offset: u64,
-    space_key: gaps::SpaceKey,
+    space_key: SpaceKey,
 }
 
 impl PartialEq for DefragTask {
