@@ -916,286 +916,289 @@ impl Schema {
 
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::{
-//         gaps,
-//         block,
-//         index,
-//         storage,
-//         Schema,
-//         WriteBlockOp,
-//         WriteBlockPerform,
-//         DefragOp,
-//         WriteBlockTaskOp,
-//         WriteBlockTaskCommitType,
-//         ReadBlockOp,
-//         ReadBlockPerform,
-//         DeleteBlockOp,
-//         DeleteBlockPerform,
-//         DeleteBlockTaskDoneOp,
-//         DeleteBlockTaskDonePerform,
-//     };
+#[cfg(test)]
+mod tests {
+    use super::{
+        block,
+        storage,
+        BlockEntry,
+        SpaceKey,
+        Environs,
+        LeftEnvirons,
+        RightEnvirons,
+        Schema,
+        WriteBlockOp,
+        WriteBlockPerform,
+        DefragOp,
+        WriteBlockTaskOp,
+        WriteBlockTaskCommitType,
+        ReadBlockOp,
+        ReadBlockPerform,
+        DeleteBlockOp,
+        DeleteBlockPerform,
+        DeleteBlockTaskDoneOp,
+        DeleteBlockTaskDonePerform,
+    };
 
-//     fn init() -> Schema {
-//         let storage_layout = storage::Layout {
-//             wheel_header_size: 24,
-//             block_header_size: 24,
-//             commit_tag_size: 16,
-//             eof_tag_size: 8,
-//         };
-//         let mut schema = Schema::new(storage_layout);
-//         schema.initialize_empty(144);
-//         schema
-//     }
+    fn init() -> Schema {
+        let storage_layout = storage::Layout {
+            wheel_header_size: 24,
+            block_header_size: 24,
+            commit_tag_size: 16,
+            eof_tag_size: 8,
+        };
+        let mut schema = Schema::new(storage_layout);
+        schema.initialize_empty(144);
+        schema
+    }
 
-//     fn sample_hello_world() -> block::Bytes {
-//         let mut block_bytes_mut = block::BytesMut::new_detached();
-//         block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
-//         block_bytes_mut.freeze()
-//     }
+    fn sample_hello_world() -> block::Bytes {
+        let mut block_bytes_mut = block::BytesMut::new_detached();
+        block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
+        block_bytes_mut.freeze()
+    }
 
-//     #[test]
-//     fn process_write_block_request() {
-//         let mut schema = init();
-//         assert_eq!(schema.gaps.space_total(), 112);
+    #[test]
+    fn process_write_block_request() {
+        let mut schema = init();
+        assert_eq!(schema.gaps_index.space_total(), 112);
 
-//         let op = schema.process_write_block_request(&sample_hello_world());
-//         assert!(matches!(op, WriteBlockOp::Perform(WriteBlockPerform {
-//             defrag_op: DefragOp::None,
-//             task_op: WriteBlockTaskOp {
-//                 block_id,
-//                 block_offset: 24,
-//                 commit_type: WriteBlockTaskCommitType::CommitAndEof,
-//             },
-//             ..
-//         }) if block_id == block::Id::init()));
+        let op = schema.process_write_block_request(&sample_hello_world());
+        assert!(matches!(op, WriteBlockOp::Perform(WriteBlockPerform {
+            defrag_op: DefragOp::None,
+            task_op: WriteBlockTaskOp {
+                block_id,
+                block_offset: 24,
+                commit_type: WriteBlockTaskCommitType::CommitAndEof,
+            },
+            ..
+        }) if block_id == block::Id::init()));
 
-//         assert_eq!(schema.next_block_id, block::Id::init().next());
-//         assert!(matches!(
-//             schema.blocks_index.get(&block::Id::init()),
-//             Some(&index::BlockEntry {
-//                 offset: 24,
-//                 header: storage::BlockHeader {
-//                     ref block_id,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 environs: index::Environs {
-//                     left: index::LeftEnvirons::Start,
-//                     right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 59, serial: 2, }, },
-//                 },
-//                 ..
-//             }) if block_id == &block::Id::init()
-//         ));
-//         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-//         assert_eq!(schema.gaps.space_total(), 59);
+        assert_eq!(schema.next_block_id, block::Id::init().next());
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init()),
+            Some(&BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    ref block_id,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Start,
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 59, serial: 2, }, },
+                },
+                ..
+            }) if block_id == &block::Id::init()
+        ));
+        assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
+        assert_eq!(schema.gaps_index.space_total(), 59);
 
-//         let op = schema.process_write_block_request(&sample_hello_world());
-//         assert!(matches!(op, WriteBlockOp::Perform(
-//             WriteBlockPerform {
-//                 defrag_op: DefragOp::None,
-//                 task_op: WriteBlockTaskOp {
-//                     block_id,
-//                     block_offset: 77,
-//                     commit_type: WriteBlockTaskCommitType::CommitAndEof,
-//                 },
-//                 ..
-//             },
-//         ) if block_id == block::Id::init().next()));
+        let op = schema.process_write_block_request(&sample_hello_world());
+        assert!(matches!(op, WriteBlockOp::Perform(
+            WriteBlockPerform {
+                defrag_op: DefragOp::None,
+                task_op: WriteBlockTaskOp {
+                    block_id,
+                    block_offset: 77,
+                    commit_type: WriteBlockTaskCommitType::CommitAndEof,
+                },
+                ..
+            },
+        ) if block_id == block::Id::init().next()));
 
-//         assert_eq!(schema.next_block_id, block::Id::init().next().next());
-//         assert!(matches!(
-//             schema.blocks_index.get(&block::Id::init()),
-//             Some(&index::BlockEntry {
-//                 offset: 24,
-//                 header: storage::BlockHeader {
-//                     block_id: ref block_id_a,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 environs: index::Environs {
-//                     left: index::LeftEnvirons::Start,
-//                     right: index::RightEnvirons::Block { block_id: ref block_id_b, },
-//                 },
-//                 ..
-//             }) if block_id_a == &block::Id::init() && block_id_b == &block::Id::init().next()
-//         ));
-//         assert!(matches!(
-//             schema.blocks_index.get(&block::Id::init().next()),
-//             Some(&index::BlockEntry {
-//                 offset: 77,
-//                 header: storage::BlockHeader {
-//                     block_id: ref block_id_a,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 environs: index::Environs {
-//                     left: index::LeftEnvirons::Block { block_id: ref block_id_b, },
-//                     right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 6, serial: 3, }, },
-//                 },
-//                 ..
-//             }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init()
-//         ));
-//         assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
-//         assert_eq!(schema.gaps.space_total(), 6);
+        assert_eq!(schema.next_block_id, block::Id::init().next().next());
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init()),
+            Some(&BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    block_id: ref block_id_a,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Start,
+                    right: RightEnvirons::Block { block_id: ref block_id_b, },
+                },
+                ..
+            }) if block_id_a == &block::Id::init() && block_id_b == &block::Id::init().next()
+        ));
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init().next()),
+            Some(&BlockEntry {
+                offset: 77,
+                header: storage::BlockHeader {
+                    block_id: ref block_id_a,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Block { block_id: ref block_id_b, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                },
+                ..
+            }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init()
+        ));
+        assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
+        assert_eq!(schema.gaps_index.space_total(), 6);
 
-//         let op = schema.process_write_block_request(&sample_hello_world());
-//         assert!(matches!(op, WriteBlockOp::ReplyNoSpaceLeft));
-//     }
+        let op = schema.process_write_block_request(&sample_hello_world());
+        assert!(matches!(op, WriteBlockOp::ReplyNoSpaceLeft));
+    }
 
-//     #[test]
-//     fn process_write_read_block_requests() {
-//         let mut schema = init();
-//         assert_eq!(schema.gaps.space_total(), 112);
+    #[test]
+    fn process_write_read_block_requests() {
+        let mut schema = init();
+        assert_eq!(schema.gaps_index.space_total(), 112);
 
-//         let op = schema.process_read_block_request(&block::Id::init());
-//         assert!(matches!(op, ReadBlockOp::NotFound));
+        let op = schema.process_read_block_request(&block::Id::init());
+        assert!(matches!(op, ReadBlockOp::NotFound));
 
-//         let op = schema.process_write_block_request(&sample_hello_world());
-//         assert!(matches!(op, WriteBlockOp::Perform(
-//             WriteBlockPerform {
-//                 defrag_op: DefragOp::None,
-//                 task_op: WriteBlockTaskOp {
-//                     ref block_id,
-//                     block_offset: 24,
-//                     commit_type: WriteBlockTaskCommitType::CommitAndEof,
-//                 },
-//                 ..
-//             },
-//         ) if block_id == &block::Id::init()));
+        let op = schema.process_write_block_request(&sample_hello_world());
+        assert!(matches!(op, WriteBlockOp::Perform(
+            WriteBlockPerform {
+                defrag_op: DefragOp::None,
+                task_op: WriteBlockTaskOp {
+                    ref block_id,
+                    block_offset: 24,
+                    commit_type: WriteBlockTaskCommitType::CommitAndEof,
+                },
+                ..
+            },
+        ) if block_id == &block::Id::init()));
 
-//         assert_eq!(schema.next_block_id, block::Id::init().next());
-//         assert!(matches!(
-//             schema.blocks_index.get(&block::Id::init()),
-//             Some(&index::BlockEntry {
-//                 offset: 24,
-//                 header: storage::BlockHeader {
-//                     ref block_id,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 environs: index::Environs {
-//                     left: index::LeftEnvirons::Start,
-//                     right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 59, serial: 2, }, },
-//                 },
-//                 ..
-//             }) if block_id == &block::Id::init()
-//         ));
-//         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-//         assert_eq!(schema.gaps.space_total(), 59);
+        assert_eq!(schema.next_block_id, block::Id::init().next());
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init()),
+            Some(&BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    ref block_id,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Start,
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 59, serial: 2, }, },
+                },
+                ..
+            }) if block_id == &block::Id::init()
+        ));
+        assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
+        assert_eq!(schema.gaps_index.space_total(), 59);
 
-//         let op = schema.process_read_block_request(&block::Id::init());
-//         assert!(matches!(op, ReadBlockOp::Perform(
-//             ReadBlockPerform {
-//                 block_offset: 24,
-//                 block_header: storage::BlockHeader {
-//                     ref block_id,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 ..
-//             },
-//         ) if block_id == &block::Id::init()));
-//     }
+        let op = schema.process_read_block_request(&block::Id::init());
+        assert!(matches!(op, ReadBlockOp::Perform(
+            ReadBlockPerform {
+                block_offset: 24,
+                block_header: storage::BlockHeader {
+                    ref block_id,
+                    block_size: 13,
+                    ..
+                },
+                ..
+            },
+        ) if block_id == &block::Id::init()));
+    }
 
-//     #[test]
-//     fn process_delete_block_request() {
-//         let mut schema = init();
-//         assert_eq!(schema.gaps.space_total(), 112);
+    #[test]
+    fn process_delete_block_request() {
+        let mut schema = init();
+        assert_eq!(schema.gaps_index.space_total(), 112);
 
-//         schema.process_write_block_request(&sample_hello_world());
-//         schema.process_write_block_request(&sample_hello_world());
+        schema.process_write_block_request(&sample_hello_world());
+        schema.process_write_block_request(&sample_hello_world());
 
-//         let op = schema.process_delete_block_request(&block::Id::init());
-//         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));
+        let op = schema.process_delete_block_request(&block::Id::init());
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));
 
-//         assert!(matches!(
-//             schema.blocks_index.get(&block::Id::init()),
-//             Some(&index::BlockEntry {
-//                 offset: 24,
-//                 header: storage::BlockHeader {
-//                     block_id: ref block_id_a,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 environs: index::Environs {
-//                     left: index::LeftEnvirons::Start,
-//                     right: index::RightEnvirons::Block { block_id: ref block_id_b, },
-//                 },
-//                 ..
-//             }) if block_id_a == &block::Id::init() && block_id_b == &block::Id::init().next()
-//         ));
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init()),
+            Some(&BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    block_id: ref block_id_a,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Start,
+                    right: RightEnvirons::Block { block_id: ref block_id_b, },
+                },
+                ..
+            }) if block_id_a == &block::Id::init() && block_id_b == &block::Id::init().next()
+        ));
 
-//         let op = schema.process_delete_block_task_done(block::Id::init());
-//         assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
-//             defrag_op: DefragOp::Queue {
-//                 free_space_offset: 24,
-//                 space_key: gaps::SpaceKey { space_available: 53, serial: 4, },
-//             },
-//         })));
+        let op = schema.process_delete_block_task_done(block::Id::init());
+        assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
+            defrag_op: DefragOp::Queue {
+                free_space_offset: 24,
+                space_key: SpaceKey { space_available: 53, serial: 4, },
+            },
+        })));
 
-//         assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
-//         assert!(matches!(
-//             schema.blocks_index.get(&block::Id::init().next()),
-//             Some(&index::BlockEntry {
-//                 offset: 77,
-//                 header: storage::BlockHeader {
-//                     ref block_id,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 environs: index::Environs {
-//                     left: index::LeftEnvirons::Space { space_key: gaps::SpaceKey { space_available: 53, serial: 4, }, },
-//                     right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 6, serial: 3, }, },
-//                 },
-//                 ..
-//             }) if block_id == &block::Id::init().next()
-//         ));
-//         assert_eq!(schema.gaps.space_total(), 59);
+        assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init().next()),
+            Some(&BlockEntry {
+                offset: 77,
+                header: storage::BlockHeader {
+                    ref block_id,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 53, serial: 4, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                },
+                ..
+            }) if block_id == &block::Id::init().next()
+        ));
+        assert_eq!(schema.gaps_index.space_total(), 59);
 
-//         schema.process_write_block_request(&sample_hello_world());
+        schema.process_write_block_request(&sample_hello_world());
 
-//         let op = schema.process_delete_block_request(&block::Id::init().next());
-//         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 77, .. })));
+        let op = schema.process_delete_block_request(&block::Id::init().next());
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 77, .. })));
 
-//         assert!(matches!(
-//             schema.blocks_index.get(&block::Id::init().next()),
-//             Some(&index::BlockEntry {
-//                 offset: 77,
-//                 header: storage::BlockHeader {
-//                     block_id: ref block_id_a,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 environs: index::Environs {
-//                     left: index::LeftEnvirons::Block { block_id: ref block_id_b, },
-//                     right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 6, serial: 3, }, },
-//                 },
-//                 ..
-//             }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init().next().next()
-//         ));
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init().next()),
+            Some(&BlockEntry {
+                offset: 77,
+                header: storage::BlockHeader {
+                    block_id: ref block_id_a,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Block { block_id: ref block_id_b, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                },
+                ..
+            }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init().next().next()
+        ));
 
-//         let op = schema.process_delete_block_task_done(block::Id::init().next());
-//         assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform { defrag_op: DefragOp::None, .. })));
+        let op = schema.process_delete_block_task_done(block::Id::init().next());
+        assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform { defrag_op: DefragOp::None, .. })));
 
-//         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-//         assert!(matches!(
-//             schema.blocks_index.get(&block::Id::init().next().next()),
-//             Some(&index::BlockEntry {
-//                 offset: 24,
-//                 header: storage::BlockHeader {
-//                     ref block_id,
-//                     block_size: 13,
-//                     ..
-//                 },
-//                 environs: index::Environs {
-//                     left: index::LeftEnvirons::Start,
-//                     right: index::RightEnvirons::Space { space_key: gaps::SpaceKey { space_available: 59, serial: 5, }, },
-//                 },
-//                 ..
-//             }) if block_id == &block::Id::init().next().next()
-//         ));
-//         assert_eq!(schema.gaps.space_total(), 59);
-//     }
-// }
+        assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
+        assert!(matches!(
+            schema.blocks_index.get(&block::Id::init().next().next()),
+            Some(&BlockEntry {
+                offset: 24,
+                header: storage::BlockHeader {
+                    ref block_id,
+                    block_size: 13,
+                    ..
+                },
+                environs: Environs {
+                    left: LeftEnvirons::Start,
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 59, serial: 5, }, },
+                },
+                ..
+            }) if block_id == &block::Id::init().next().next()
+        ));
+        assert_eq!(schema.gaps_index.space_total(), 59);
+    }
+}
