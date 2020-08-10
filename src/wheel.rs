@@ -41,8 +41,6 @@ pub mod core;
 
 mod lru;
 mod pool;
-// mod defrag;
-// mod performer;
 mod interpret;
 
 #[derive(Debug)]

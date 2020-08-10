@@ -11,6 +11,7 @@ mod gaps;
 mod blocks;
 mod defrag;
 mod schema;
+mod performer;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct BlockEntry {
