@@ -65,7 +65,6 @@ pub struct DeleteBlock<C> {
 pub enum DeleteBlockContext<C> {
     External(C),
     Defrag {
-        block_bytes: block::Bytes,
         space_key: SpaceKey,
     },
 }
