@@ -97,6 +97,7 @@ pub enum ReadBlockTaskDoneOp<'a> {
 #[derive(Debug)]
 pub struct ReadBlockTaskDonePerform<'a> {
     pub block_offset: u64,
+    pub block_bytes_cached: &'a mut Option<block::Bytes>,
     pub tasks_head: &'a mut TasksHead,
 }
 
@@ -118,6 +119,7 @@ pub enum DeleteBlockTaskDoneDefragOp<'a> {
 #[derive(Debug)]
 pub struct DeleteBlockTaskDoneDefragPerform<'a> {
     pub block_offset: u64,
+    pub block_bytes: block::Bytes,
     pub tasks_head: &'a mut TasksHead,
 }
 
@@ -410,6 +412,7 @@ impl Schema {
         let block_entry = self.blocks_index.get_mut(read_block_id).unwrap();
         ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform {
             block_offset: block_entry.offset,
+            block_bytes_cached: &mut block_entry.block_bytes,
             tasks_head: &mut block_entry.tasks_head,
         })
     }
@@ -906,6 +909,11 @@ impl Schema {
         let block_entry = self.blocks_index.get_mut(&removed_block_id).unwrap();
         DeleteBlockTaskDoneDefragOp::Perform(DeleteBlockTaskDoneDefragPerform {
             block_offset: block_entry.offset,
+            block_bytes: block_entry
+                .block_bytes
+                .as_ref()
+                .map(Clone::clone)
+                .unwrap(),
             tasks_head: &mut block_entry.tasks_head,
         })
     }
