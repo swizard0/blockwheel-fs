@@ -39,7 +39,6 @@ struct Defrag<C> {
 
 enum DoneTask {
     None,
-    WriteBlockDefrag { block_id: block::Id, },
     ReadBlock { block_id: block::Id, },
     DeleteBlockRegular { block_id: block::Id, },
     DeleteBlockDefrag { block_id: block::Id, },
@@ -226,13 +225,6 @@ impl<C> Inner<C> where C: Context {
         match mem::replace(&mut self.done_task, DoneTask::None) {
             DoneTask::None =>
                 (),
-            DoneTask::WriteBlockDefrag { block_id, } => {
-                let defrag = self.defrag.as_mut().unwrap();
-                assert!(defrag.in_progress_tasks_count > 0);
-                defrag.in_progress_tasks_count -= 1;
-
-                unimplemented!()
-            },
             DoneTask::ReadBlock { block_id, } =>
                 unimplemented!(),
             DoneTask::DeleteBlockRegular { block_id, } =>
@@ -484,9 +476,9 @@ impl<C> Inner<C> where C: Context {
                             performer: Performer { inner: self, },
                         }),
                     task::WriteBlockContext::Defrag { space_key, } => {
-                        self.done_task = DoneTask::WriteBlockDefrag {
-                            block_id: block_id.clone(),
-                        };
+                        let defrag = self.defrag.as_mut().unwrap();
+                        assert!(defrag.in_progress_tasks_count > 0);
+                        defrag.in_progress_tasks_count -= 1;
                         Op::Idle(Performer { inner: self, })
                     },
                 }
