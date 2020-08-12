@@ -56,6 +56,7 @@ pub enum WriteBlockTaskCommitType {
 #[derive(Debug)]
 pub enum ReadBlockOp<'a> {
     Perform(ReadBlockPerform<'a>),
+    Cached { block_bytes: block::Bytes, },
     NotFound,
 }
 
@@ -386,11 +387,15 @@ impl Schema {
     pub fn process_read_block_request<'a>(&'a mut self, block_id: &block::Id) -> ReadBlockOp<'a> {
         match self.blocks_index.get_mut(block_id) {
             Some(block_entry) =>
-                ReadBlockOp::Perform(ReadBlockPerform {
-                    block_offset: block_entry.offset,
-                    block_header: &block_entry.header,
-                    tasks_head: &mut block_entry.tasks_head,
-                }),
+                if let Some(ref block_bytes) = block_entry.block_bytes {
+                    ReadBlockOp::Cached { block_bytes: block_bytes.clone(), }
+                } else {
+                    ReadBlockOp::Perform(ReadBlockPerform {
+                        block_offset: block_entry.offset,
+                        block_header: &block_entry.header,
+                        tasks_head: &mut block_entry.tasks_head,
+                    })
+                },
             None =>
                 ReadBlockOp::NotFound,
         }

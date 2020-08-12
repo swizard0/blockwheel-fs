@@ -402,6 +402,15 @@ impl<C> Inner<C> where C: Context {
                             Op::Idle(Performer { inner: self, })
                         },
 
+                    schema::ReadBlockOp::Cached { block_bytes, } =>
+                        Op::Event(Event {
+                            op: EventOp::ReadBlock(TaskDoneOp {
+                                context: request_read_block.context,
+                                op: ReadBlockOp::Done { block_bytes, },
+                            }),
+                            performer: Performer { inner: self, },
+                        }),
+
                     schema::ReadBlockOp::NotFound =>
                         Op::Event(Event {
                             op: EventOp::ReadBlock(TaskDoneOp {
