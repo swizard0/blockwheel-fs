@@ -83,6 +83,10 @@ impl Index {
         space_key
     }
 
+    pub fn get(&self, space_key: &SpaceKey) -> Option<&GapBetween<block::Id>> {
+        self.gaps.get(space_key).map(|gap| &gap.between)
+    }
+
     pub fn allocate<'a, G>(
         &mut self,
         space_required: usize,
@@ -184,12 +188,6 @@ impl Index {
     pub fn lock_defrag(&mut self, key: &SpaceKey) {
         if let Some(gap) = self.gaps.get_mut(key) {
             gap.state = GapState::LockedDefrag;
-        }
-    }
-
-    pub fn unlock_defrag(&mut self, key: &SpaceKey) {
-        if let Some(gap) = self.gaps.get_mut(key) {
-            gap.state = GapState::Regular;
         }
     }
 
