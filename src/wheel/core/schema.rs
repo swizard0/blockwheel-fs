@@ -110,6 +110,7 @@ pub enum DeleteBlockTaskDoneOp {
 #[derive(Debug)]
 pub struct DeleteBlockTaskDonePerform {
     pub defrag_op: DefragOp,
+    pub block_entry: BlockEntry,
 }
 
 #[derive(Debug)]
@@ -435,7 +436,7 @@ impl Schema {
         let block_entry = self.blocks_index.remove(&removed_block_id).unwrap();
         let mut defrag_op = DefragOp::None;
 
-        match block_entry.environs {
+        match &block_entry.environs {
 
             // before: ^| ... | R | ... |$
             // after:  ^| ............. |$
@@ -737,7 +738,7 @@ impl Schema {
             },
         }
 
-        DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform { defrag_op, })
+        DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform { defrag_op, block_entry, })
     }
 
     pub fn process_delete_block_task_done_defrag<'a>(
@@ -983,8 +984,12 @@ impl Schema {
     }
 
     pub fn block_tasks_head(&mut self, block_id: &block::Id) -> Option<&mut TasksHead> {
+        self.block_offset_tasks_head(block_id).map(|pair| pair.1)
+    }
+
+    pub fn block_offset_tasks_head(&mut self, block_id: &block::Id) -> Option<(u64, &mut TasksHead)> {
         self.blocks_index.get_mut(block_id)
-            .map(|block_entry| &mut block_entry.tasks_head)
+            .map(|block_entry| (block_entry.offset, &mut block_entry.tasks_head))
     }
 
     pub fn lookup_defrag_space_key(&mut self, space_key: &SpaceKey) -> Option<&mut BlockEntry> {

@@ -9,6 +9,7 @@ use super::{
     block,
     Task,
     TaskKind,
+    WriteBlock,
     ReadBlock,
     DeleteBlock,
     Context,
@@ -75,6 +76,10 @@ impl<C> Queue<C> where C: Context {
 
     pub fn pop_task(&mut self, tasks_head: &mut TasksHead) -> Option<TaskKind<C>> {
         self.tasks.pop(tasks_head)
+    }
+
+    pub fn pop_write_task(&mut self, tasks_head: &mut TasksHead) -> Option<WriteBlock<C::WriteBlock>> {
+        self.tasks.pop_write(tasks_head)
     }
 
     pub fn pop_read_task(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C::ReadBlock>> {

@@ -16,6 +16,7 @@ use super::{
     block,
     schema,
     defrag,
+    BlockEntry,
 };
 
 #[cfg(test)]
@@ -39,9 +40,19 @@ struct Defrag<C> {
 
 enum DoneTask {
     None,
-    ReadBlock { block_id: block::Id, },
-    DeleteBlockRegular { block_id: block::Id, },
-    DeleteBlockDefrag { block_id: block::Id, },
+    Reenqueue { block_id: block::Id, },
+    ReadBlock {
+        block_id: block::Id,
+        block_bytes: block::Bytes,
+    },
+    DeleteBlockRegular {
+        block_id: block::Id,
+        block_entry: BlockEntry,
+    },
+    DeleteBlockDefrag {
+        block_id: block::Id,
+        block_bytes: block::Bytes,
+    },
 }
 
 pub struct Performer<C> where C: Context {
@@ -225,12 +236,106 @@ impl<C> Inner<C> where C: Context {
         match mem::replace(&mut self.done_task, DoneTask::None) {
             DoneTask::None =>
                 (),
-            DoneTask::ReadBlock { block_id, } =>
-                unimplemented!(),
-            DoneTask::DeleteBlockRegular { block_id, } =>
-                unimplemented!(),
-            DoneTask::DeleteBlockDefrag { block_id, } =>
-                unimplemented!(),
+            DoneTask::Reenqueue { block_id, } =>
+                if let Some((block_offset, tasks_head)) = self.schema.block_offset_tasks_head(&block_id) {
+                    if let Some(kind) = self.tasks_queue.pop_task(tasks_head) {
+                        self.tasks_queue.push(self.bg_task.current_offset, block_offset, task::Task { block_id, kind, }, tasks_head);
+                    }
+                },
+            DoneTask::ReadBlock { block_id, block_bytes, } => {
+                if let Some(tasks_head) = self.schema.block_tasks_head(&block_id) {
+                    assert!(self.tasks_queue.pop_write_task(tasks_head).is_none());
+                    if let Some(read_block) = self.tasks_queue.pop_read_task(tasks_head) {
+                        self.blocks_pool.repay(read_block.block_bytes.freeze());
+                        self.done_task = DoneTask::ReadBlock {
+                            block_id: block_id.clone(),
+                            block_bytes: block_bytes.clone(),
+                        };
+                        return self.proceed_read_block_task_done(block_id, block_bytes, read_block.context);
+                    }
+                }
+                self.done_task = DoneTask::Reenqueue { block_id, };
+                return Op::Idle(Performer { inner: self, });
+            },
+            DoneTask::DeleteBlockRegular { block_id, mut block_entry, } => {
+                while let Some(write_block) = self.tasks_queue.pop_write_task(&mut block_entry.tasks_head) {
+                    match write_block.context {
+                        task::WriteBlockContext::External(..) =>
+                            unreachable!(),
+                        task::WriteBlockContext::Defrag { .. } =>
+                        // cancel defrag write task
+                            (),
+                    }
+                }
+                while let Some(read_block) = self.tasks_queue.pop_read_task(&mut block_entry.tasks_head) {
+                    self.blocks_pool.repay(read_block.block_bytes.freeze());
+                    match read_block.context {
+                        task::ReadBlockContext::External(context) => {
+                            self.done_task = DoneTask::DeleteBlockRegular {
+                                block_id: block_id.clone(),
+                                block_entry,
+                            };
+                            return Op::Event(Event {
+                                op: EventOp::ReadBlock(TaskDoneOp {
+                                    context,
+                                    op: ReadBlockOp::NotFound,
+                                }),
+                                performer: Performer { inner: self, },
+                            });
+                        },
+                        task::ReadBlockContext::Defrag { .. } =>
+                        // cancel defrag read task
+                            (),
+                    }
+                }
+                while let Some(delete_block) = self.tasks_queue.pop_delete_task(&mut block_entry.tasks_head) {
+                    match delete_block.context {
+                        task::DeleteBlockContext::External(context) => {
+                            self.done_task = DoneTask::DeleteBlockRegular {
+                                block_id: block_id.clone(),
+                                block_entry,
+                            };
+                            return Op::Event(Event {
+                                op: EventOp::DeleteBlock(TaskDoneOp {
+                                    context,
+                                    op: DeleteBlockOp::NotFound,
+                                }),
+                                performer: Performer { inner: self, },
+                            });
+                        },
+                        task::DeleteBlockContext::Defrag { .. } =>
+                        // cancel defrag delete task
+                            (),
+                    }
+                }
+            },
+            DoneTask::DeleteBlockDefrag { block_id, block_bytes, } => {
+                if let Some(tasks_head) = self.schema.block_tasks_head(&block_id) {
+                    while let Some(read_block) = self.tasks_queue.pop_read_task(tasks_head) {
+                        self.blocks_pool.repay(read_block.block_bytes.freeze());
+                        match read_block.context {
+                            task::ReadBlockContext::External(context) => {
+                                self.done_task = DoneTask::DeleteBlockDefrag {
+                                    block_id: block_id.clone(),
+                                    block_bytes: block_bytes.clone(),
+                                };
+                                return Op::Event(Event {
+                                    op: EventOp::ReadBlock(TaskDoneOp {
+                                        context,
+                                        op: ReadBlockOp::Done { block_bytes, },
+                                    }),
+                                    performer: Performer { inner: self, },
+                                });
+                            },
+                            task::ReadBlockContext::Defrag { .. } =>
+                                unreachable!(),
+                        }
+                    }
+                }
+
+                self.done_task = DoneTask::Reenqueue { block_id, };
+                return Op::Idle(Performer { inner: self, });
+            },
         }
 
         if let Some(defrag) = self.defrag.as_mut() {
@@ -475,6 +580,9 @@ impl<C> Inner<C> where C: Context {
                             );
                         },
                 }
+                self.done_task = DoneTask::Reenqueue {
+                    block_id: block_id.clone(),
+                };
                 match write_block.context {
                     task::WriteBlockContext::External(context) =>
                         Op::Event(Event {
@@ -499,39 +607,9 @@ impl<C> Inner<C> where C: Context {
                 self.lru_cache.insert(block_id.clone(), block_bytes.clone());
                 self.done_task = DoneTask::ReadBlock {
                     block_id: block_id.clone(),
+                    block_bytes: block_bytes.clone(),
                 };
-                match self.schema.process_read_block_task_done(&block_id) {
-                    schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform { block_offset, block_bytes_cached, tasks_head, }) =>
-                        match read_block.context {
-                            task::ReadBlockContext::External(context) =>
-                                Op::Event(Event {
-                                    op: EventOp::ReadBlock(TaskDoneOp {
-                                        context,
-                                        op: ReadBlockOp::Done {
-                                            block_bytes,
-                                        },
-                                    }),
-                                    performer: Performer { inner: self, },
-                                }),
-                            task::ReadBlockContext::Defrag { space_key, } => {
-                                let block_bytes_cached_prev =
-                                    mem::replace(block_bytes_cached, Some(block_bytes));
-                                assert_eq!(block_bytes_cached_prev, None);
-                                self.tasks_queue.push(
-                                    self.bg_task.current_offset,
-                                    block_offset,
-                                    task::Task {
-                                        block_id: block_id,
-                                        kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
-                                            context: task::DeleteBlockContext::Defrag { space_key, },
-                                        }),
-                                    },
-                                    tasks_head,
-                                );
-                                Op::Idle(Performer { inner: self, })
-                            },
-                        },
-                }
+                self.proceed_read_block_task_done(block_id, block_bytes, read_block.context)
             },
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::DeleteBlock(delete_block), }, } => {
@@ -539,7 +617,7 @@ impl<C> Inner<C> where C: Context {
                 match delete_block.context {
                     task::DeleteBlockContext::External(context) =>
                         match self.schema.process_delete_block_task_done(block_id.clone()) {
-                            schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, }) => {
+                            schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, block_entry, }) => {
                                 match (defrag_op, self.defrag.as_mut()) {
                                     (
                                         schema::DefragOp::Queue { free_space_offset, space_key, },
@@ -551,6 +629,7 @@ impl<C> Inner<C> where C: Context {
                                 }
                                 self.done_task = DoneTask::DeleteBlockRegular {
                                     block_id: block_id.clone(),
+                                    block_entry,
                                 };
                                 Op::Event(Event {
                                     op: EventOp::DeleteBlock(TaskDoneOp { context, op: DeleteBlockOp::Done { block_id, }, }),
@@ -577,7 +656,7 @@ impl<C> Inner<C> where C: Context {
                                         block_id: block_id.clone(),
                                         kind: task::TaskKind::WriteBlock(
                                             task::WriteBlock {
-                                                block_bytes: task_op.block_bytes,
+                                                block_bytes: task_op.block_bytes.clone(),
                                                 commit_type: task::CommitType::CommitOnly,
                                                 context: task::WriteBlockContext::Defrag { space_key, },
                                             },
@@ -585,13 +664,54 @@ impl<C> Inner<C> where C: Context {
                                     },
                                     task_op.tasks_head,
                                 );
-                                self.done_task = DoneTask::DeleteBlockDefrag { block_id, };
+                                self.done_task = DoneTask::DeleteBlockDefrag {
+                                    block_id,
+                                    block_bytes: task_op.block_bytes,
+                                };
                                 Op::Idle(Performer { inner: self, })
                             },
                         },
                 }
             },
 
+        }
+    }
+
+    fn proceed_read_block_task_done(
+        mut self,
+        block_id: block::Id,
+        block_bytes: block::Bytes,
+        task_context: task::ReadBlockContext<C::ReadBlock>,
+    ) -> Op<C> {
+        match self.schema.process_read_block_task_done(&block_id) {
+            schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform { block_offset, block_bytes_cached, tasks_head, }) =>
+                match task_context {
+                    task::ReadBlockContext::External(context) =>
+                        Op::Event(Event {
+                            op: EventOp::ReadBlock(TaskDoneOp {
+                                context,
+                                op: ReadBlockOp::Done { block_bytes, },
+                            }),
+                            performer: Performer { inner: self, },
+                        }),
+                    task::ReadBlockContext::Defrag { space_key, } => {
+                        let block_bytes_cached_prev =
+                            mem::replace(block_bytes_cached, Some(block_bytes));
+                        assert_eq!(block_bytes_cached_prev, None);
+                        self.tasks_queue.push(
+                            self.bg_task.current_offset,
+                            block_offset,
+                            task::Task {
+                                block_id,
+                                kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                                    context: task::DeleteBlockContext::Defrag { space_key, },
+                                }),
+                            },
+                            tasks_head,
+                        );
+                        Op::Idle(Performer { inner: self, })
+                    },
+                },
         }
     }
 }
