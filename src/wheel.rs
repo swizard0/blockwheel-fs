@@ -38,6 +38,10 @@ use super::{
 };
 
 pub mod core;
+use self::core::{
+    schema,
+    performer,
+};
 
 mod lru;
 mod pool;
@@ -75,8 +79,6 @@ pub struct State {
 }
 
 pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> Result<(), ErrorSeverity<State, Error>> {
-    unimplemented!()
-
     // let WheelState { wheel_file, work_block, schema, state, } = match fs::metadata(&state.params.wheel_filename).await {
     //     Ok(ref metadata) if metadata.file_type().is_file() =>
     //         wheel_open(state).await?,
@@ -111,284 +113,304 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
     // );
 
     // busyloop(supervisor_pid, interpret_tx, interpret_error_rx.fuse(), state, schema).await
+
+    unimplemented!()
 }
 
-// async fn busyloop(
-//     _supervisor_pid: SupervisorPid,
-//     mut interpret_tx: mpsc::Sender<interpret::Request>,
-//     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
-//     mut state: State,
-//     schema: schema::Schema,
-// )
-//     -> Result<(), ErrorSeverity<State, Error>>
-// {
-//     let mut performer = performer::Performer::new(
-//         schema,
-//         lru::Cache::new(state.params.lru_cache_size_bytes),
-//         if state.params.disable_defragmentation {
-//             None
-//         } else {
-//             Some(defrag::Queues {
-//                 pending: defrag::PendingQueue::new(),
-//                 tasks: defrag::TaskQueue::new(),
-//             })
-//         },
-//     );
+async fn busyloop(
+    _supervisor_pid: SupervisorPid,
+    mut interpret_tx: mpsc::Sender<interpret::Request>,
+    mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
+    mut state: State,
+    schema: schema::Schema,
+)
+    -> Result<(), ErrorSeverity<State, Error>>
+{
+    let performer = performer::Performer::new(
+        schema,
+        lru::Cache::new(state.params.lru_cache_size_bytes),
+        if state.params.disable_defragmentation {
+            None
+        } else {
+            Some(performer::DefragConfig::new(1))
+        },
+    );
 
-//     loop {
-//         let perform_op = match performer.next() {
+    let mut op = performer.next();
+    loop {
+        op = match op {
 
-//             performer::Op::PollRequestAndInterpreter(poll) => {
-//                 enum Source<A, B, C> {
-//                     Pid(A),
-//                     InterpreterDone(B),
-//                     InterpreterError(C),
-//                 }
+            performer::Op::Idle(performer) =>
+                performer.next(),
 
-//                 let mut fused_interpret_result_rx = poll.interpreter_context;
-//                 let source = select! {
-//                     result = state.fused_request_rx.next() =>
-//                         Source::Pid(result),
-//                     result = fused_interpret_result_rx =>
-//                         Source::InterpreterDone(result),
-//                     result = fused_interpret_error_rx =>
-//                         Source::InterpreterError(result),
-//                 };
-//                 match source {
-//                     Source::Pid(Some(request)) =>
-//                         poll.next.incoming_request(request, fused_interpret_result_rx),
-//                     Source::InterpreterDone(Ok(task_done)) =>
-//                         poll.next.incoming_task_done(task_done),
-//                     Source::Pid(None) => {
-//                         log::debug!("all Pid frontends have been terminated");
-//                         return Ok(());
-//                     },
-//                     Source::InterpreterDone(Err(oneshot::Canceled)) => {
-//                         log::debug!("interpreter reply channel closed: shutting down");
-//                         return Ok(());
-//                     },
-//                     Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-//                         return Err(ErrorSeverity::Recoverable { state, }),
-//                     Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-//                         return Err(ErrorSeverity::Fatal(error)),
-//                     Source::InterpreterError(Err(oneshot::Canceled)) => {
-//                         log::debug!("interpreter error channel closed: shutting down");
-//                         return Ok(());
-//                     },
-//                 }
-//             },
+            performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
+                enum Source<A, B, C> {
+                    Pid(A),
+                    InterpreterDone(B),
+                    InterpreterError(C),
+                }
 
-//             performer::Op::PollRequest(poll) => {
-//                 enum Source<A, B> {
-//                     Pid(A),
-//                     InterpreterError(B),
-//                 }
+                let mut fused_interpret_result_rx = poll.interpreter_context;
+                let source = select! {
+                    result = state.fused_request_rx.next() =>
+                        Source::Pid(result),
+                    result = fused_interpret_result_rx =>
+                        Source::InterpreterDone(result),
+                    result = fused_interpret_error_rx =>
+                        Source::InterpreterError(result),
+                };
+                match source {
+                    Source::Pid(Some(request)) =>
+                        poll.next.incoming_request(request, fused_interpret_result_rx),
+                    Source::InterpreterDone(Ok(task_done)) =>
+                        poll.next.incoming_task_done(task_done),
+                    Source::Pid(None) => {
+                        log::debug!("all Pid frontends have been terminated");
+                        return Ok(());
+                    },
+                    Source::InterpreterDone(Err(oneshot::Canceled)) => {
+                        log::debug!("interpreter reply channel closed: shutting down");
+                        return Ok(());
+                    },
+                    Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+                        return Err(ErrorSeverity::Recoverable { state, }),
+                    Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+                        return Err(ErrorSeverity::Fatal(error)),
+                    Source::InterpreterError(Err(oneshot::Canceled)) => {
+                        log::debug!("interpreter error channel closed: shutting down");
+                        return Ok(());
+                    },
+                }
+            },
 
-//                 let source = select! {
-//                     result = state.fused_request_rx.next() =>
-//                         Source::Pid(result),
-//                     result = fused_interpret_error_rx =>
-//                         Source::InterpreterError(result),
-//                 };
-//                 match source {
-//                     Source::Pid(Some(request)) =>
-//                         poll.next.incoming_request(request),
-//                     Source::Pid(None) => {
-//                         log::debug!("all Pid frontends have been terminated");
-//                         return Ok(());
-//                     },
-//                     Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-//                         return Err(ErrorSeverity::Recoverable { state, }),
-//                     Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-//                         return Err(ErrorSeverity::Fatal(error)),
-//                     Source::InterpreterError(Err(oneshot::Canceled)) => {
-//                         log::debug!("interpreter error channel closed: shutting down");
-//                         return Ok(());
-//                     },
-//                 }
-//             },
+            performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
+                enum Source<A, B> {
+                    Pid(A),
+                    InterpreterError(B),
+                }
 
-//             performer::Op::InterpretTask(performer::InterpretTask { offset, task, next, }) => {
-//                 let (reply_tx, reply_rx) = oneshot::channel();
-//                 if let Err(_send_error) = interpret_tx.send(interpret::Request { offset, task, reply_tx, }).await {
-//                     log::warn!("interpreter request channel closed");
-//                 }
-//                 performer = next.task_accepted(reply_rx.fuse());
-//                 continue;
-//             },
+                let source = select! {
+                    result = state.fused_request_rx.next() =>
+                        Source::Pid(result),
+                    result = fused_interpret_error_rx =>
+                        Source::InterpreterError(result),
+                };
+                match source {
+                    Source::Pid(Some(request)) =>
+                        poll.next.incoming_request(request),
+                    Source::Pid(None) => {
+                        log::debug!("all Pid frontends have been terminated");
+                        return Ok(());
+                    },
+                    Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+                        return Err(ErrorSeverity::Recoverable { state, }),
+                    Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+                        return Err(ErrorSeverity::Fatal(error)),
+                    Source::InterpreterError(Err(oneshot::Canceled)) => {
+                        log::debug!("interpreter error channel closed: shutting down");
+                        return Ok(());
+                    },
+                }
+            },
 
-//         };
+            performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                if let Err(_send_error) = interpret_tx.send(interpret::Request { offset, task, reply_tx, }).await {
+                    log::warn!("interpreter request channel closed");
+                }
+                let performer = next.task_accepted(reply_rx.fuse());
+                performer.next()
+            },
 
-//         performer = match perform_op {
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::LendBlock(
+                    performer::TaskDoneOp { context: reply_tx, op: performer::LendBlockOp::Success { block_bytes, }, },
+                ),
+                performer,
+            }) => {
+                if let Err(_send_error) = reply_tx.send(block_bytes) {
+                    log::warn!("Pid is gone during LendBlock query result send");
+                }
+                performer.next()
+            },
 
-//             performer::PerformOp::Idle(performer) =>
-//                 performer,
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::WriteBlock(
+                    performer::TaskDoneOp { context: reply_tx, op: performer::WriteBlockOp::NoSpaceLeft, },
+                ),
+                performer,
+            }) => {
+                if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) {
+                    log::warn!("reply channel has been closed during WriteBlock result send");
+                }
+                performer.next()
+            },
 
-//             performer::PerformOp::LendBlock(performer::LendBlockOp::Success { block_bytes, context: reply_tx, performer, }) => {
-//                 if let Err(_send_error) = reply_tx.send(block_bytes) {
-//                     log::warn!("Pid is gone during LendBlock query result send");
-//                 }
-//                 performer
-//             },
+            _ =>
+                unimplemented!(),
 
-//             performer::PerformOp::WriteBlock(performer::WriteBlockOp::NoSpaceLeft { context: reply_tx, performer, }) => {
-//                 if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestWriteBlockError::NoSpaceLeft)) {
-//                     log::warn!("reply channel has been closed during WriteBlock result send");
-//                 }
-//                 performer
-//             },
+        };
 
-//             performer::PerformOp::ReadBlock(performer::ReadBlockOp::CacheHit { context: reply_tx, block_bytes, performer, }) => {
-//                 if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-//                     log::warn!("pid is gone during ReadBlock query result send");
-//                 }
-//                 performer
-//             },
+        // performer = match perform_op {
 
-//             performer::PerformOp::ReadBlock(performer::ReadBlockOp::NotFound { context: reply_tx, performer, }) => {
-//                 if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestReadBlockError::NotFound)) {
-//                     log::warn!("reply channel has been closed during ReadBlock result send");
-//                 }
-//                 performer
-//             },
+        //     performer::PerformOp::WriteBlock(performer::WriteBlockOp::NoSpaceLeft { context: reply_tx, performer, }) => {
+        //         if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestWriteBlockError::NoSpaceLeft)) {
+        //             log::warn!("reply channel has been closed during WriteBlock result send");
+        //         }
+        //         performer
+        //     },
 
-//             performer::PerformOp::DeleteBlock(performer::DeleteBlockOp::NotFound { context: reply_tx, performer, }) => {
-//                 if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestDeleteBlockError::NotFound)) {
-//                     log::warn!("reply channel has been closed during DeleteBlock result send");
-//                 }
-//                 performer
-//             },
+        //     performer::PerformOp::ReadBlock(performer::ReadBlockOp::CacheHit { context: reply_tx, block_bytes, performer, }) => {
+        //         if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+        //             log::warn!("pid is gone during ReadBlock query result send");
+        //         }
+        //         performer
+        //     },
 
-//             performer::PerformOp::TaskDone(performer::TaskDone::WriteBlockDone(
-//                 performer::WriteBlockDoneOp { block_id, context: reply_tx, performer, },
-//             )) => {
-//                 if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
-//                     log::warn!("client channel was closed before a block is actually written");
-//                 }
-//                 performer
-//             },
+        //     performer::PerformOp::ReadBlock(performer::ReadBlockOp::NotFound { context: reply_tx, performer, }) => {
+        //         if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestReadBlockError::NotFound)) {
+        //             log::warn!("reply channel has been closed during ReadBlock result send");
+        //         }
+        //         performer
+        //     },
 
-//             performer::PerformOp::TaskDone(performer::TaskDone::ReadBlockDone(
-//                 mut done_op @ performer::ReadBlockDoneOp { .. },
-//             )) =>
-//                 loop {
-//                     let performer::ReadBlockDoneOp { block_bytes, context: reply_tx, next, } = done_op;
-//                     if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-//                         log::warn!("client channel was closed before a block is actually read");
-//                     }
-//                     match next.step() {
-//                         performer::TaskReadBlockDoneLoop::Done(performer) =>
-//                             break performer,
-//                         performer::TaskReadBlockDoneLoop::More(done_op_more) =>
-//                             done_op = done_op_more,
-//                     }
-//                 },
+        //     performer::PerformOp::DeleteBlock(performer::DeleteBlockOp::NotFound { context: reply_tx, performer, }) => {
+        //         if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestDeleteBlockError::NotFound)) {
+        //             log::warn!("reply channel has been closed during DeleteBlock result send");
+        //         }
+        //         performer
+        //     },
 
-//             performer::PerformOp::TaskDone(performer::TaskDone::DeleteBlockDone(
-//                 mut done_op @ performer::DeleteBlockDoneOp { .. },
-//             )) =>
-//                 loop {
-//                     let performer::DeleteBlockDoneOp { context: reply_tx, next, } = done_op;
-//                     if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
-//                         log::warn!("client channel was closed before a block is actually deleted");
-//                     }
-//                     match next.step() {
-//                         performer::TaskDeleteBlockDoneLoop::Done(performer) =>
-//                             break performer,
-//                         performer::TaskDeleteBlockDoneLoop::More(done_op_more) =>
-//                             done_op = done_op_more,
-//                     }
-//                 },
-//         };
-//     }
-// }
+        //     performer::PerformOp::TaskDone(performer::TaskDone::WriteBlockDone(
+        //         performer::WriteBlockDoneOp { block_id, context: reply_tx, performer, },
+        //     )) => {
+        //         if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
+        //             log::warn!("client channel was closed before a block is actually written");
+        //         }
+        //         performer
+        //     },
 
-// struct WheelState {
-//     wheel_file: fs::File,
-//     work_block: Vec<u8>,
-//     schema: schema::Schema,
-//     state: State,
-// }
+        //     performer::PerformOp::TaskDone(performer::TaskDone::ReadBlockDone(
+        //         mut done_op @ performer::ReadBlockDoneOp { .. },
+        //     )) =>
+        //         loop {
+        //             let performer::ReadBlockDoneOp { block_bytes, context: reply_tx, next, } = done_op;
+        //             if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+        //                 log::warn!("client channel was closed before a block is actually read");
+        //             }
+        //             match next.step() {
+        //                 performer::TaskReadBlockDoneLoop::Done(performer) =>
+        //                     break performer,
+        //                 performer::TaskReadBlockDoneLoop::More(done_op_more) =>
+        //                     done_op = done_op_more,
+        //             }
+        //         },
 
-// async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {
-//     log::debug!("creating new wheel file [ {:?} ]", state.params.wheel_filename);
+        //     performer::PerformOp::TaskDone(performer::TaskDone::DeleteBlockDone(
+        //         mut done_op @ performer::DeleteBlockDoneOp { .. },
+        //     )) =>
+        //         loop {
+        //             let performer::DeleteBlockDoneOp { context: reply_tx, next, } = done_op;
+        //             if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
+        //                 log::warn!("client channel was closed before a block is actually deleted");
+        //             }
+        //             match next.step() {
+        //                 performer::TaskDeleteBlockDoneLoop::Done(performer) =>
+        //                     break performer,
+        //                 performer::TaskDeleteBlockDoneLoop::More(done_op_more) =>
+        //                     done_op = done_op_more,
+        //             }
+        //         },
+        // };
+    }
+}
 
-//     let maybe_file = fs::OpenOptions::new()
-//         .read(true)
-//         .write(true)
-//         .create(true)
-//         .open(&state.params.wheel_filename)
-//         .await;
-//     let mut wheel_file = match maybe_file {
-//         Ok(file) =>
-//             file,
-//         Err(error) =>
-//             return Err(ErrorSeverity::Fatal(Error::WheelFileOpen {
-//                 wheel_filename: state.params.wheel_filename,
-//                 error,
-//             })),
-//     };
-//     let mut work_block: Vec<u8> = Vec::with_capacity(state.params.work_block_size_bytes);
+struct WheelState {
+    wheel_file: fs::File,
+    work_block: Vec<u8>,
+    schema: schema::Schema,
+    state: State,
+}
 
-//     let storage_layout = storage::Layout::calculate(&mut work_block)
-//         .map_err(Error::StorageLayoutCalculate)
-//         .map_err(ErrorSeverity::Fatal)?;
+async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {
+    log::debug!("creating new wheel file [ {:?} ]", state.params.wheel_filename);
 
-//     let wheel_header = storage::WheelHeader {
-//         size_bytes: state.params.init_wheel_size_bytes,
-//         ..storage::WheelHeader::default()
-//     };
-//     bincode::serialize_into(&mut work_block, &wheel_header)
-//         .map_err(Error::WheelHeaderSerialize)
-//         .map_err(ErrorSeverity::Fatal)?;
-//     bincode::serialize_into(&mut work_block, &storage::EofTag::default())
-//         .map_err(Error::EofTagSerialize)
-//         .map_err(ErrorSeverity::Fatal)?;
+    let maybe_file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&state.params.wheel_filename)
+        .await;
+    let mut wheel_file = match maybe_file {
+        Ok(file) =>
+            file,
+        Err(error) =>
+            return Err(ErrorSeverity::Fatal(Error::WheelFileOpen {
+                wheel_filename: state.params.wheel_filename,
+                error,
+            })),
+    };
+    let mut work_block: Vec<u8> = Vec::with_capacity(state.params.work_block_size_bytes);
 
-//     let mut cursor = work_block.len();
-//     let min_wheel_file_size = storage_layout.wheel_header_size + storage_layout.eof_tag_size;
-//     assert_eq!(cursor, min_wheel_file_size);
-//     wheel_file.write_all(&work_block).await
-//         .map_err(Error::WheelHeaderAndEofTagWrite)
-//         .map_err(ErrorSeverity::Fatal)?;
+    let storage_layout = storage::Layout::calculate(&mut work_block)
+        .map_err(Error::StorageLayoutCalculate)
+        .map_err(ErrorSeverity::Fatal)?;
 
-//     let size_bytes_total = state.params.init_wheel_size_bytes;
-//     if size_bytes_total < min_wheel_file_size {
-//         return Err(ErrorSeverity::Fatal(Error::InitWheelSizeIsTooSmall {
-//             provided: size_bytes_total,
-//             required_min: min_wheel_file_size,
-//         }));
-//     }
+    let wheel_header = storage::WheelHeader {
+        size_bytes: state.params.init_wheel_size_bytes,
+        ..storage::WheelHeader::default()
+    };
+    bincode::serialize_into(&mut work_block, &wheel_header)
+        .map_err(Error::WheelHeaderSerialize)
+        .map_err(ErrorSeverity::Fatal)?;
+    bincode::serialize_into(&mut work_block, &storage::EofTag::default())
+        .map_err(Error::EofTagSerialize)
+        .map_err(ErrorSeverity::Fatal)?;
 
-//     work_block.clear();
-//     work_block.extend((0 .. state.params.work_block_size_bytes).map(|_| 0));
+    let mut cursor = work_block.len();
+    let min_wheel_file_size = storage_layout.wheel_header_size + storage_layout.eof_tag_size;
+    assert_eq!(cursor, min_wheel_file_size);
+    wheel_file.write_all(&work_block).await
+        .map_err(Error::WheelHeaderAndEofTagWrite)
+        .map_err(ErrorSeverity::Fatal)?;
 
-//     while cursor < size_bytes_total {
-//         let bytes_remain = size_bytes_total - cursor;
-//         let write_amount = if bytes_remain < state.params.work_block_size_bytes {
-//             bytes_remain
-//         } else {
-//             state.params.work_block_size_bytes
-//         };
-//         wheel_file.write_all(&work_block[.. write_amount]).await
-//             .map_err(Error::ZeroChunkWrite)
-//             .map_err(ErrorSeverity::Fatal)?;
-//         cursor += write_amount;
-//     }
-//     wheel_file.flush().await
-//         .map_err(Error::WheelCreateFlush)
-//         .map_err(ErrorSeverity::Fatal)?;
+    let size_bytes_total = state.params.init_wheel_size_bytes;
+    if size_bytes_total < min_wheel_file_size {
+        return Err(ErrorSeverity::Fatal(Error::InitWheelSizeIsTooSmall {
+            provided: size_bytes_total,
+            required_min: min_wheel_file_size,
+        }));
+    }
 
-//     let mut schema = schema::Schema::new(storage_layout);
-//     schema.initialize_empty(size_bytes_total);
+    work_block.clear();
+    work_block.extend((0 .. state.params.work_block_size_bytes).map(|_| 0));
 
-//     log::debug!("initialized wheel schema: {:?}", schema);
+    while cursor < size_bytes_total {
+        let bytes_remain = size_bytes_total - cursor;
+        let write_amount = if bytes_remain < state.params.work_block_size_bytes {
+            bytes_remain
+        } else {
+            state.params.work_block_size_bytes
+        };
+        wheel_file.write_all(&work_block[.. write_amount]).await
+            .map_err(Error::ZeroChunkWrite)
+            .map_err(ErrorSeverity::Fatal)?;
+        cursor += write_amount;
+    }
+    wheel_file.flush().await
+        .map_err(Error::WheelCreateFlush)
+        .map_err(ErrorSeverity::Fatal)?;
 
-//     Ok(WheelState { wheel_file, work_block, schema, state, })
-// }
+    let mut schema = schema::Schema::new(storage_layout);
+    schema.initialize_empty(size_bytes_total);
 
-// async fn wheel_open(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {
-//     log::debug!("opening existing wheel file [ {:?} ]", state.params.wheel_filename);
+    log::debug!("initialized wheel schema: {:?}", schema);
 
-//     unimplemented!()
-// }
+    Ok(WheelState { wheel_file, work_block, schema, state, })
+}
+
+async fn wheel_open(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {
+    log::debug!("opening existing wheel file [ {:?} ]", state.params.wheel_filename);
+
+    unimplemented!()
+}

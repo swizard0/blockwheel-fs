@@ -10,8 +10,9 @@ pub mod task;
 mod gaps;
 mod blocks;
 mod defrag;
-mod schema;
-mod performer;
+
+pub mod schema;
+pub mod performer;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct BlockEntry {

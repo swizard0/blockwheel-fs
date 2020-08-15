@@ -17,6 +17,15 @@ pub struct Queues<C> {
     pub tasks: TaskQueue,
 }
 
+impl<C> Queues<C> {
+    pub fn new() -> Queues<C> {
+        Queues {
+            pending: PendingQueue::new(),
+            tasks: TaskQueue::new(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct PendingQueue<C> {
     queue: VecDeque<proto::RequestWriteBlock<C>>,

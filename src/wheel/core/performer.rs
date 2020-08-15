@@ -155,6 +155,15 @@ pub struct DefragConfig<C> {
     in_progress_tasks_limit: usize,
 }
 
+impl<C> DefragConfig<C> {
+    pub fn new(in_progress_tasks_limit: usize) -> DefragConfig<C> {
+        DefragConfig {
+            queues: defrag::Queues::new(),
+            in_progress_tasks_limit,
+        }
+    }
+}
+
 impl<C> Performer<C> where C: Context {
     pub fn new(
         schema: schema::Schema,
