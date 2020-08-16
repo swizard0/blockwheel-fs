@@ -1,55 +1,63 @@
 use super::{
+    task,
+    proto,
+    block,
     init,
     interpret,
+    hello_world_bytes,
     ScriptOp,
+    ExpectOp,
+    DoOp,
+    ExpectTask,
+    ExpectTaskKind,
+    ExpectTaskWriteBlock,
+    ExpectTaskReadBlock,
+    ExpectTaskDeleteBlock,
 };
 
 #[test]
 fn script_basic() {
     let performer = init();
     let script = vec![
-        ScriptOp::ExpectPollRequest,
-//         ScriptOp::RequestIncomingRequest {
-//             request: proto::Request::LendBlock(proto::RequestLendBlock { context: "ctx00", }),
-//         },
-//         ScriptOp::ExpectLendBlockSuccess {
-//             expect_context: "ctx00",
-//         },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequest,
-//         ScriptOp::RequestIncomingRequest {
-//             request: proto::Request::RepayBlock(proto::RequestRepayBlock { block_bytes: hello_world_bytes(), }),
-//         },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequest,
-//         ScriptOp::RequestIncomingRequest {
-//             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ctx01", }),
-//         },
-//         ScriptOp::ExpectReadBlockNotFound {
-//             expect_context: "ctx01",
-//         },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequest,
-//         ScriptOp::RequestIncomingRequest {
-//             request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ctx02", }),
-//         },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectInterpretTask {
-//             expect_offset: 24,
-//             expect_task: ExpectTask {
-//                 block_id: block::Id::init(),
-//                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-//                     block_bytes: hello_world_bytes(),
-//                     commit_type: task::CommitType::CommitAndEof,
-//                     context: task::WriteBlockContext::External("ctx02"),
-//                 }),
-//             },
-//         },
-//         ScriptOp::TaskAccepted { interpreter_context: "ctx03", },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequestAndInterpreter {
-//             expect_context: "ctx03",
-//         },
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::LendBlock(proto::RequestLendBlock { context: "ctx00", }),
+        }),
+        ScriptOp::Expect(ExpectOp::LendBlockSuccess {
+            expect_context: "ctx00",
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::RepayBlock(proto::RequestRepayBlock { block_bytes: hello_world_bytes(), }),
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ctx01", }),
+        }),
+        ScriptOp::Expect(ExpectOp::ReadBlockNotFound {
+            expect_context: "ctx01",
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ctx02", }),
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::InterpretTask {
+            expect_offset: 24,
+            expect_task: ExpectTask {
+                block_id: block::Id::init(),
+                kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    commit_type: task::CommitType::CommitAndEof,
+                    context: task::WriteBlockContext::External("ctx02"),
+                }),
+            },
+        }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ctx03", }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ctx03",
+        }),
 //         ScriptOp::RequestAndInterpreterIncomingRequest {
 //             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ctx04", }),
 //             interpreter_context: "ctx05",

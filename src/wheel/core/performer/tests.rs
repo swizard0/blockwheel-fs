@@ -60,21 +60,31 @@ fn hello_world_bytes() -> block::Bytes {
 
 #[derive(Debug)]
 enum ScriptOp {
-    ExpectIdle,
-    ExpectPollRequest,
-    ExpectPollRequestAndInterpreter { expect_context: C, },
-    ExpectInterpretTask { expect_offset: u64, expect_task: ExpectTask, },
-    DoRequestAndInterpreterIncomingRequest { request: proto::Request<Context>, interpreter_context: C, },
-    DoRequestAndInterpreterIncomingTaskDone { task_done: task::Done<Context>, },
-    DoRequestIncomingRequest { request: proto::Request<Context>, },
-    DoTaskAccept { interpreter_context: C, },
-    ExpectLendBlockSuccess { expect_context: C, },
-    ExpectWriteBlockNoSpaceLeft { expect_context: C, },
-    ExpectWriteBlockDone { expect_block_id: block::Id, expect_context: C, },
-    ExpectReadBlockNotFound { expect_context: C, },
-    ExpectReadBlockDone { expect_block_bytes: block::Bytes, expect_context: C, },
-    ExpectDeleteBlockNotFound { expect_context: C, },
-    ExpectDeleteBlockDone { expect_block_id: block::Id, expect_context: C, },
+    Expect(ExpectOp),
+    Do(DoOp),
+}
+
+#[derive(Debug)]
+enum ExpectOp {
+    Idle,
+    PollRequest,
+    PollRequestAndInterpreter { expect_context: C, },
+    InterpretTask { expect_offset: u64, expect_task: ExpectTask, },
+    LendBlockSuccess { expect_context: C, },
+    WriteBlockNoSpaceLeft { expect_context: C, },
+    WriteBlockDone { expect_block_id: block::Id, expect_context: C, },
+    ReadBlockNotFound { expect_context: C, },
+    ReadBlockDone { expect_block_bytes: block::Bytes, expect_context: C, },
+    DeleteBlockNotFound { expect_context: C, },
+    DeleteBlockDone { expect_block_id: block::Id, expect_context: C, },
+}
+
+#[derive(Debug)]
+enum DoOp {
+    RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, interpreter_context: C, },
+    RequestAndInterpreterIncomingTaskDone { task_done: task::Done<Context>, },
+    RequestIncomingRequest { request: proto::Request<Context>, },
+    TaskAccept { interpreter_context: C, },
 }
 
 #[derive(Debug)]
@@ -119,34 +129,35 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
             Op::Idle(performer) =>
                 match script.pop() {
                     None =>
-                        break,
-                    Some(ScriptOp::ExpectIdle) =>
+                        panic!("unexpected script end on Idle, expecting ExpectOp::Idle @ {}", script_len - script.len()),
+                    Some(ScriptOp::Expect(ExpectOp::Idle)) =>
                         performer.next(),
                     Some(other_op) =>
-                        panic!("expected ExpectIdle but got {:?} @ {}", other_op, script_len - script.len()),
+                        panic!("expected ExpectOp::Idle but got {:?} @ {}", other_op, script_len - script.len()),
                 },
 
             Op::Query(QueryOp::PollRequestAndInterpreter(poll)) =>
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on PollRequestAndInterpreter, expecting ExpectPollRequestAndInterpreter @ {}",
+                            "unexpected script end on PollRequestAndInterpreter, expecting ExpectOp::PollRequestAndInterpreter @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::ExpectPollRequestAndInterpreter { expect_context, }) if expect_context == poll.interpreter_context =>
+                    Some(ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter { expect_context, }))
+                        if expect_context == poll.interpreter_context =>
                         match script.pop() {
                             None =>
                                 break,
-                            Some(ScriptOp::DoRequestAndInterpreterIncomingRequest { request, interpreter_context, }) =>
+                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest { request, interpreter_context, })) =>
                                 poll.next.incoming_request(request, interpreter_context),
-                            Some(ScriptOp::DoRequestAndInterpreterIncomingTaskDone { task_done, }) =>
+                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone { task_done, })) =>
                                 poll.next.incoming_task_done(task_done),
                             Some(other_op) =>
-                                panic!("expected DoRequestAndInterpreterIncoming* but got {:?} @ {}", other_op, script_len - script.len()),
+                                panic!("expected DoOp::RequestAndInterpreterIncoming* but got {:?} @ {}", other_op, script_len - script.len()),
                         },
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectPollRequestAndInterpreter for PollRequestAndInterpreter but got {:?} @ {}",
+                            "expecting exact ExpectOp::PollRequestAndInterpreter for PollRequestAndInterpreter but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
@@ -154,29 +165,30 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
             Op::Query(QueryOp::PollRequest(poll)) =>
                 match script.pop() {
                     None =>
-                        panic!("unexpected script end on PollRequest, expecting ExpectPollRequest @ {}", script_len - script.len()),
-                    Some(ScriptOp::ExpectPollRequest) =>
+                        panic!("unexpected script end on PollRequest, expecting ExpectOp::PollRequest @ {}", script_len - script.len()),
+                    Some(ScriptOp::Expect(ExpectOp::PollRequest)) =>
                         match script.pop() {
                             None =>
                                 break,
-                            Some(ScriptOp::DoRequestIncomingRequest { request, }) =>
+                            Some(ScriptOp::Do(DoOp::RequestIncomingRequest { request, })) =>
                                 poll.next.incoming_request(request),
                             Some(other_op) =>
-                                panic!("expected DoRequestIncoming* but got {:?} @ {}", other_op, script_len - script.len()),
+                                panic!("expected DoOp::RequestIncoming* but got {:?} @ {}", other_op, script_len - script.len()),
                         },
                     Some(other_op) =>
-                        panic!("expecting exact ExpectPollRequest for PollRequest but got {:?} @ {}", other_op, script_len - script.len()),
+                        panic!("expecting exact ExpectOp::PollRequest for PollRequest but got {:?} @ {}", other_op, script_len - script.len()),
                 },
 
             Op::Query(QueryOp::InterpretTask(InterpretTask { offset, task, next, })) =>
                 match script.pop() {
                     None =>
-                        panic!("unexpected script end on InterpretTask, expecting ExpectInterpretTask @ {}", script_len - script.len()),
-                    Some(ScriptOp::ExpectInterpretTask { expect_offset, expect_task, }) if expect_offset == offset && expect_task == task =>
+                        panic!("unexpected script end on InterpretTask, expecting ExpectOp::InterpretTask @ {}", script_len - script.len()),
+                    Some(ScriptOp::Expect(ExpectOp::InterpretTask { expect_offset, expect_task, }))
+                        if expect_offset == offset && expect_task == task =>
                         match script.pop() {
                             None =>
-                                panic!("unexpected script end on ExpectInterpretTask, expecting DoTaskAccept @ {}", script_len - script.len()),
-                            Some(ScriptOp::DoTaskAccept { interpreter_context, }) => {
+                                panic!("unexpected script end on ExpectOp::InterpretTask, expecting DoOp::TaskAccept @ {}", script_len - script.len()),
+                            Some(ScriptOp::Do(DoOp::TaskAccept { interpreter_context, })) => {
                                 let performer = next.task_accepted(interpreter_context);
                                 performer.next()
                             },
@@ -184,31 +196,34 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 panic!("expected DoTaskAccept but got {:?} @ {}", other_op, script_len - script.len()),
                         },
                     Some(other_op) =>
-                        panic!("expecting exact ExpectInterpretTask for InterpretTask but got {:?} @ {}", other_op, script_len - script.len()),
+                        panic!("expecting exact ExpectOp::InterpretTask for InterpretTask but got {:?} @ {}", other_op, script_len - script.len()),
                 },
 
             Op::Event(Event { op: EventOp::LendBlock(TaskDoneOp { context, op: LendBlockOp::Success { .. }, }), performer, }) =>
                 match script.pop() {
                     None =>
-                        panic!("unexpected script end on LendBlockOp::Success, expecting ExpectLendBlockSuccess @ {}", script_len - script.len()),
-                    Some(ScriptOp::ExpectLendBlockSuccess { expect_context, }) if expect_context == context =>
+                        panic!("unexpected script end on LendBlockOp::Success, expecting ExpectOp::LendBlockSuccess @ {}", script_len - script.len()),
+                    Some(ScriptOp::Expect(ExpectOp::LendBlockSuccess { expect_context, })) if expect_context == context =>
                         performer.next(),
                     Some(other_op) =>
-                        panic!("expecting exact ExpectLendBlockSuccess for LendBlockOp::Success but got {:?} @ {}", other_op, script_len - script.len()),
+                        panic!(
+                            "expecting exact ExpectOp::LendBlockSuccess for LendBlockOp::Success but got {:?} @ {}",
+                            other_op, script_len - script.len(),
+                        ),
                 },
 
             Op::Event(Event { op: EventOp::WriteBlock(TaskDoneOp { context, op: WriteBlockOp::NoSpaceLeft, }), performer, }) =>
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on WriteBlockOp::NoSpaceLeft, expecting ExpectWriteBlockNoSpaceLeft @ {}",
+                            "unexpected script end on WriteBlockOp::NoSpaceLeft, expecting ExpectOp::WriteBlockNoSpaceLeft @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::ExpectWriteBlockNoSpaceLeft { expect_context, }) if expect_context == context =>
+                    Some(ScriptOp::Expect(ExpectOp::WriteBlockNoSpaceLeft { expect_context, })) if expect_context == context =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectWriteBlockNoSpaceLeft for WriteBlockOp::NoSpaceLeft but got {:?} @ {}",
+                            "expecting exact ExpectOp::WriteBlockNoSpaceLeft for WriteBlockOp::NoSpaceLeft but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
@@ -217,15 +232,15 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on WriteBlockOp::Done, expecting ExpectWriteBlockDone @ {}",
+                            "unexpected script end on WriteBlockOp::Done, expecting ExpectOp::WriteBlockDone @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::ExpectWriteBlockDone { expect_block_id, expect_context, })
+                    Some(ScriptOp::Expect(ExpectOp::WriteBlockDone { expect_block_id, expect_context, }))
                         if expect_block_id == block_id && expect_context == context =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectWriteBlockDone for WriteBlockOp::Done but got {:?} @ {}",
+                            "expecting exact ExpectOp::WriteBlockDone for WriteBlockOp::Done but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
@@ -234,14 +249,14 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on ReadBlockOp::NotFound, expecting ExpectReadBlockNotFound @ {}",
+                            "unexpected script end on ReadBlockOp::NotFound, expecting ExpectOp::ReadBlockNotFound @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::ExpectReadBlockNotFound { expect_context, }) if expect_context == context =>
+                    Some(ScriptOp::Expect(ExpectOp::ReadBlockNotFound { expect_context, })) if expect_context == context =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectReadBlockNotFound for ReadBlockOp::NotFound but got {:?} @ {}",
+                            "expecting exact ExpectOp::ReadBlockNotFound for ReadBlockOp::NotFound but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
@@ -250,15 +265,15 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on ReadBlockOp::Done, expecting ExpectReadBlockDone @ {}",
+                            "unexpected script end on ReadBlockOp::Done, expecting ExpectOp::ReadBlockDone @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::ExpectReadBlockDone { expect_block_bytes, expect_context, })
+                    Some(ScriptOp::Expect(ExpectOp::ReadBlockDone { expect_block_bytes, expect_context, }))
                         if expect_block_bytes == block_bytes && expect_context == context =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectReadBlockDone for ReadBlockOp::Done but got {:?} @ {}",
+                            "expecting exact ExpectOp::ReadBlockDone for ReadBlockOp::Done but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
@@ -267,14 +282,14 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on DeleteBlockOp::NotFound, expecting ExpectDeleteBlockNotFound @ {}",
+                            "unexpected script end on DeleteBlockOp::NotFound, expecting ExpectOp::DeleteBlockNotFound @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::ExpectDeleteBlockNotFound { expect_context, }) if expect_context == context =>
+                    Some(ScriptOp::Expect(ExpectOp::DeleteBlockNotFound { expect_context, })) if expect_context == context =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectDeleteBlockNotFound for ReadBlockOp::NotFound but got {:?} @ {}",
+                            "expecting exact ExpectOp::DeleteBlockNotFound for ReadBlockOp::NotFound but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
@@ -283,15 +298,15 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on DeleteBlockOp::Done, expecting ExpectDeleteBlockDone @ {}",
+                            "unexpected script end on DeleteBlockOp::Done, expecting ExpectOp::DeleteBlockDone @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::ExpectDeleteBlockDone { expect_block_id, expect_context, })
+                    Some(ScriptOp::Expect(ExpectOp::DeleteBlockDone { expect_block_id, expect_context, }))
                         if expect_block_id == block_id && expect_context == context =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectDeleteBlockDone for DeleteBlockOp::Done but got {:?} @ {}",
+                            "expecting exact ExpectOp::DeleteBlockDone for DeleteBlockOp::Done but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
