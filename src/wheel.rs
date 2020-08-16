@@ -79,42 +79,40 @@ pub struct State {
 }
 
 pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> Result<(), ErrorSeverity<State, Error>> {
-    // let WheelState { wheel_file, work_block, schema, state, } = match fs::metadata(&state.params.wheel_filename).await {
-    //     Ok(ref metadata) if metadata.file_type().is_file() =>
-    //         wheel_open(state).await?,
-    //     Ok(_metadata) => {
-    //         log::error!("[ {:?} ] is not a file", state.params.wheel_filename);
-    //         return Err(ErrorSeverity::Recoverable { state, });
-    //     },
-    //     Err(ref error) if error.kind() == io::ErrorKind::NotFound =>
-    //         wheel_create(state).await?,
-    //     Err(error) =>
-    //         return Err(ErrorSeverity::Fatal(Error::WheelFileMetadata {
-    //             wheel_filename: state.params.wheel_filename,
-    //             error,
-    //         })),
-    // };
+    let WheelState { wheel_file, work_block, schema, state, } = match fs::metadata(&state.params.wheel_filename).await {
+        Ok(ref metadata) if metadata.file_type().is_file() =>
+            wheel_open(state).await?,
+        Ok(_metadata) => {
+            log::error!("[ {:?} ] is not a file", state.params.wheel_filename);
+            return Err(ErrorSeverity::Recoverable { state, });
+        },
+        Err(ref error) if error.kind() == io::ErrorKind::NotFound =>
+            wheel_create(state).await?,
+        Err(error) =>
+            return Err(ErrorSeverity::Fatal(Error::WheelFileMetadata {
+                wheel_filename: state.params.wheel_filename,
+                error,
+            })),
+    };
 
-    // let (interpret_tx, interpret_rx) = mpsc::channel(0);
-    // let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
-    // let storage_layout = schema.storage_layout().clone();
-    // supervisor_pid.spawn_link_permanent(
-    //     async move {
-    //         let interpret_task = interpret::busyloop(
-    //             interpret_rx,
-    //             wheel_file,
-    //             work_block,
-    //             storage_layout,
-    //         );
-    //         if let Err(interpret_error) = interpret_task.await {
-    //             interpret_error_tx.send(ErrorSeverity::Fatal(Error::Interpret(interpret_error))).ok();
-    //         }
-    //     },
-    // );
+    let (interpret_tx, interpret_rx) = mpsc::channel(0);
+    let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
+    let storage_layout = schema.storage_layout().clone();
+    supervisor_pid.spawn_link_permanent(
+        async move {
+            let interpret_task = interpret::busyloop(
+                interpret_rx,
+                wheel_file,
+                work_block,
+                storage_layout,
+            );
+            if let Err(interpret_error) = interpret_task.await {
+                interpret_error_tx.send(ErrorSeverity::Fatal(Error::Interpret(interpret_error))).ok();
+            }
+        },
+    );
 
-    // busyloop(supervisor_pid, interpret_tx, interpret_error_rx.fuse(), state, schema).await
-
-    unimplemented!()
+    busyloop(supervisor_pid, interpret_tx, interpret_error_rx.fuse(), state, schema).await
 }
 
 async fn busyloop(
@@ -246,82 +244,67 @@ async fn busyloop(
                 performer.next()
             },
 
-            _ =>
-                unimplemented!(),
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::WriteBlock(
+                    performer::TaskDoneOp { context: reply_tx, op: performer::WriteBlockOp::Done { block_id, }, },
+                ),
+                performer,
+            }) => {
+                if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
+                    log::warn!("client channel was closed before a block is actually written");
+                }
+                performer.next()
+            },
+
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::ReadBlock(
+                    performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::NotFound, },
+                ),
+                performer,
+            }) => {
+                if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestReadBlockError::NotFound)) {
+                    log::warn!("reply channel has been closed during ReadBlock result send");
+                }
+                performer.next()
+            },
+
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::ReadBlock(
+                    performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::Done { block_bytes, }, },
+                ),
+                performer,
+            }) => {
+                if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+                    log::warn!("client channel was closed before a block is actually read");
+                }
+                performer.next()
+            },
+
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::DeleteBlock(
+                    performer::TaskDoneOp { context: reply_tx, op: performer::DeleteBlockOp::NotFound, },
+                ),
+                performer,
+            }) => {
+                if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestDeleteBlockError::NotFound)) {
+                    log::warn!("reply channel has been closed during DeleteBlock result send");
+                }
+                performer.next()
+            },
+
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::DeleteBlock(
+                    performer::TaskDoneOp { context: reply_tx, op: performer::DeleteBlockOp::Done { .. }, },
+                ),
+                performer,
+            }) => {
+                if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
+                    log::warn!("client channel was closed before a block is actually deleted");
+                }
+                performer.next()
+            },
 
         };
-
-        // performer = match perform_op {
-
-        //     performer::PerformOp::WriteBlock(performer::WriteBlockOp::NoSpaceLeft { context: reply_tx, performer, }) => {
-        //         if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestWriteBlockError::NoSpaceLeft)) {
-        //             log::warn!("reply channel has been closed during WriteBlock result send");
-        //         }
-        //         performer
-        //     },
-
-        //     performer::PerformOp::ReadBlock(performer::ReadBlockOp::CacheHit { context: reply_tx, block_bytes, performer, }) => {
-        //         if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-        //             log::warn!("pid is gone during ReadBlock query result send");
-        //         }
-        //         performer
-        //     },
-
-        //     performer::PerformOp::ReadBlock(performer::ReadBlockOp::NotFound { context: reply_tx, performer, }) => {
-        //         if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestReadBlockError::NotFound)) {
-        //             log::warn!("reply channel has been closed during ReadBlock result send");
-        //         }
-        //         performer
-        //     },
-
-        //     performer::PerformOp::DeleteBlock(performer::DeleteBlockOp::NotFound { context: reply_tx, performer, }) => {
-        //         if let Err(_send_error) = reply_tx.send(Err(context::blockwheel::RequestDeleteBlockError::NotFound)) {
-        //             log::warn!("reply channel has been closed during DeleteBlock result send");
-        //         }
-        //         performer
-        //     },
-
-        //     performer::PerformOp::TaskDone(performer::TaskDone::WriteBlockDone(
-        //         performer::WriteBlockDoneOp { block_id, context: reply_tx, performer, },
-        //     )) => {
-        //         if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
-        //             log::warn!("client channel was closed before a block is actually written");
-        //         }
-        //         performer
-        //     },
-
-        //     performer::PerformOp::TaskDone(performer::TaskDone::ReadBlockDone(
-        //         mut done_op @ performer::ReadBlockDoneOp { .. },
-        //     )) =>
-        //         loop {
-        //             let performer::ReadBlockDoneOp { block_bytes, context: reply_tx, next, } = done_op;
-        //             if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-        //                 log::warn!("client channel was closed before a block is actually read");
-        //             }
-        //             match next.step() {
-        //                 performer::TaskReadBlockDoneLoop::Done(performer) =>
-        //                     break performer,
-        //                 performer::TaskReadBlockDoneLoop::More(done_op_more) =>
-        //                     done_op = done_op_more,
-        //             }
-        //         },
-
-        //     performer::PerformOp::TaskDone(performer::TaskDone::DeleteBlockDone(
-        //         mut done_op @ performer::DeleteBlockDoneOp { .. },
-        //     )) =>
-        //         loop {
-        //             let performer::DeleteBlockDoneOp { context: reply_tx, next, } = done_op;
-        //             if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
-        //                 log::warn!("client channel was closed before a block is actually deleted");
-        //             }
-        //             match next.step() {
-        //                 performer::TaskDeleteBlockDoneLoop::Done(performer) =>
-        //                     break performer,
-        //                 performer::TaskDeleteBlockDoneLoop::More(done_op_more) =>
-        //                     done_op = done_op_more,
-        //             }
-        //         },
-        // };
     }
 }
 

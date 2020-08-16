@@ -1,6 +1,5 @@
 use std::{
     mem,
-    fmt,
 };
 
 use super::{
@@ -186,7 +185,7 @@ impl<C> Performer<C> where C: Context {
         }
     }
 
-    pub fn next(mut self) -> Op<C> {
+    pub fn next(self) -> Op<C> {
         self.inner.incoming_poke()
     }
 }
@@ -353,7 +352,7 @@ impl<C> Inner<C> where C: Context {
                     break;
                 }
                 if let Some((_free_space_offset, space_key)) = defrag.queues.tasks.pop() {
-                    if let Some(block_entry) = self.schema.lookup_defrag_space_key(&space_key) {
+                    if let Some(block_entry) = self.schema.pick_defrag_space_key(&space_key) {
                         let block_bytes = self.blocks_pool.lend();
                         self.tasks_queue.push(
                             self.bg_task.current_offset,
@@ -601,7 +600,7 @@ impl<C> Inner<C> where C: Context {
                             }),
                             performer: Performer { inner: self, },
                         }),
-                    task::WriteBlockContext::Defrag { space_key, } => {
+                    task::WriteBlockContext::Defrag => {
                         let defrag = self.defrag.as_mut().unwrap();
                         assert!(defrag.in_progress_tasks_count > 0);
                         defrag.in_progress_tasks_count -= 1;
@@ -667,7 +666,7 @@ impl<C> Inner<C> where C: Context {
                                             task::WriteBlock {
                                                 block_bytes: task_op.block_bytes.clone(),
                                                 commit_type: task::CommitType::CommitOnly,
-                                                context: task::WriteBlockContext::Defrag { space_key, },
+                                                context: task::WriteBlockContext::Defrag,
                                             },
                                         ),
                                     },

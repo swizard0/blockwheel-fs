@@ -38,9 +38,7 @@ pub enum CommitType {
 #[derive(Clone, PartialEq, Debug)]
 pub enum WriteBlockContext<C> {
     External(C),
-    Defrag {
-        space_key: SpaceKey,
-    },
+    Defrag,
 }
 
 #[derive(Debug)]

@@ -1,6 +1,5 @@
 use super::{
     gaps,
-    task,
     block,
     blocks,
     storage,
@@ -992,7 +991,7 @@ impl Schema {
             .map(|block_entry| (block_entry.offset, &mut block_entry.tasks_head))
     }
 
-    pub fn lookup_defrag_space_key(&mut self, space_key: &SpaceKey) -> Option<&mut BlockEntry> {
+    pub fn pick_defrag_space_key(&mut self, space_key: &SpaceKey) -> Option<&mut BlockEntry> {
         let block_id = match self.gaps_index.get(space_key)? {
             gaps::GapBetween::StartAndBlock { right_block, } =>
                 right_block,
@@ -1001,7 +1000,9 @@ impl Schema {
             gaps::GapBetween::BlockAndEnd { .. } | gaps::GapBetween::StartAndEnd =>
                 unreachable!(),
         };
-        Some(self.blocks_index.get_mut(block_id).unwrap())
+        let block_entry = self.blocks_index.get_mut(block_id).unwrap();
+        self.gaps_index.lock_defrag(space_key);
+        Some(block_entry)
     }
 }
 

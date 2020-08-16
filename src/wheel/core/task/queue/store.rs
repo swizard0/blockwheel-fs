@@ -1,8 +1,5 @@
 use o1::{
-    set::{
-        Ref,
-        Set,
-    },
+    set::Set,
     forest::Forest1,
 };
 
