@@ -50,12 +50,12 @@ fn hello_world_bytes() -> block::Bytes {
     block_bytes_mut.freeze()
 }
 
-// #[derive(Debug)]
-// enum ScriptOp {
-//     PerformerNext,
-//     ExpectPollRequest,
-//     ExpectPollRequestAndInterpreter { expect_context: C, },
-//     ExpectInterpretTask { expect_offset: u64, expect_task: ExpectTask, },
+#[derive(Debug)]
+enum ScriptOp {
+    ExpectIdle,
+    ExpectPollRequest,
+    ExpectPollRequestAndInterpreter { expect_context: C, },
+    ExpectInterpretTask { expect_offset: u64, expect_task: ExpectTask, },
 //     RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, interpreter_context: C, },
 //     RequestAndInterpreterIncomingTaskDone { task_done: task::Done<Context>, },
 //     RequestIncomingRequest { request: proto::Request<Context>, },
@@ -68,80 +68,80 @@ fn hello_world_bytes() -> block::Bytes {
 //     ExpectWriteBlockDoneDone { expect_block_id: block::Id, expect_context: C, },
 //     ExpectReadBlockDoneDone { expect_block_bytes: block::Bytes, expect_context: C, },
 //     ExpectDeleteBlockDoneDone { expect_context: C, },
-// }
+}
 
-// #[derive(Debug)]
-// struct ExpectTask {
-//     block_id: block::Id,
-//     kind: ExpectTaskKind,
-// }
+#[derive(Debug)]
+struct ExpectTask {
+    block_id: block::Id,
+    kind: ExpectTaskKind,
+}
 
-// #[derive(Debug)]
-// enum ExpectTaskKind {
-//     WriteBlock(ExpectTaskWriteBlock),
-//     ReadBlock(ExpectTaskReadBlock),
-//     DeleteBlock(ExpectTaskDeleteBlock),
-// }
+#[derive(Debug)]
+enum ExpectTaskKind {
+    WriteBlock(ExpectTaskWriteBlock),
+    ReadBlock(ExpectTaskReadBlock),
+    DeleteBlock(ExpectTaskDeleteBlock),
+}
 
-// #[derive(Debug)]
-// struct ExpectTaskWriteBlock {
-//     block_bytes: block::Bytes,
-//     commit_type: task::CommitType,
-//     context: task::WriteBlockContext<C>,
-// }
+#[derive(Debug)]
+struct ExpectTaskWriteBlock {
+    block_bytes: block::Bytes,
+    commit_type: task::CommitType,
+    context: task::WriteBlockContext<C>,
+}
 
-// #[derive(Debug)]
-// struct ExpectTaskReadBlock {
-//     block_header: storage::BlockHeader,
-//     context: task::ReadBlockContext<C>,
-// }
+#[derive(Debug)]
+struct ExpectTaskReadBlock {
+    block_header: storage::BlockHeader,
+    context: task::ReadBlockContext<C>,
+}
 
-// #[derive(Debug)]
-// struct ExpectTaskDeleteBlock {
-//     context: task::DeleteBlockContext<C>,
-// }
+#[derive(Debug)]
+struct ExpectTaskDeleteBlock {
+    context: task::DeleteBlockContext<C>,
+}
 
-// impl PartialEq<task::Task<Context>> for ExpectTask {
-//     fn eq(&self, task: &task::Task<Context>) -> bool {
-//         self.block_id == task.block_id && self.kind == task.kind
-//     }
-// }
+impl PartialEq<task::Task<Context>> for ExpectTask {
+    fn eq(&self, task: &task::Task<Context>) -> bool {
+        self.block_id == task.block_id && self.kind == task.kind
+    }
+}
 
-// impl PartialEq<task::TaskKind<Context>> for ExpectTaskKind {
-//     fn eq(&self, task: &task::TaskKind<Context>) -> bool {
-//         match (self, task) {
-//             (ExpectTaskKind::WriteBlock(a), task::TaskKind::WriteBlock(b)) =>
-//                 a == b,
-//             (ExpectTaskKind::ReadBlock(a), task::TaskKind::ReadBlock(b)) =>
-//                 a == b,
-//             (ExpectTaskKind::DeleteBlock(a), task::TaskKind::DeleteBlock(b)) =>
-//                 a == b,
-//             _ =>
-//                 false,
-//         }
-//     }
-// }
+impl PartialEq<task::TaskKind<Context>> for ExpectTaskKind {
+    fn eq(&self, task: &task::TaskKind<Context>) -> bool {
+        match (self, task) {
+            (ExpectTaskKind::WriteBlock(a), task::TaskKind::WriteBlock(b)) =>
+                a == b,
+            (ExpectTaskKind::ReadBlock(a), task::TaskKind::ReadBlock(b)) =>
+                a == b,
+            (ExpectTaskKind::DeleteBlock(a), task::TaskKind::DeleteBlock(b)) =>
+                a == b,
+            _ =>
+                false,
+        }
+    }
+}
 
-// impl PartialEq<task::WriteBlock<C>> for ExpectTaskWriteBlock {
-//     fn eq(&self, task: &task::WriteBlock<C>) -> bool {
-//         self.block_bytes == task.block_bytes
-//             && self.commit_type == task.commit_type
-//             && self.context == task.context
-//     }
-// }
+impl PartialEq<task::WriteBlock<C>> for ExpectTaskWriteBlock {
+    fn eq(&self, task: &task::WriteBlock<C>) -> bool {
+        self.block_bytes == task.block_bytes
+            && self.commit_type == task.commit_type
+            && self.context == task.context
+    }
+}
 
-// impl PartialEq<task::ReadBlock<C>> for ExpectTaskReadBlock {
-//     fn eq(&self, task: &task::ReadBlock<C>) -> bool {
-//         self.block_header == task.block_header
-//             && self.context == task.context
-//     }
-// }
+impl PartialEq<task::ReadBlock<C>> for ExpectTaskReadBlock {
+    fn eq(&self, task: &task::ReadBlock<C>) -> bool {
+        self.block_header == task.block_header
+            && self.context == task.context
+    }
+}
 
-// impl PartialEq<task::DeleteBlock<C>> for ExpectTaskDeleteBlock {
-//     fn eq(&self, task: &task::DeleteBlock<C>) -> bool {
-//         self.context == task.context
-//     }
-// }
+impl PartialEq<task::DeleteBlock<C>> for ExpectTaskDeleteBlock {
+    fn eq(&self, task: &task::DeleteBlock<C>) -> bool {
+        self.context == task.context
+    }
+}
 
 // fn interpret(mut performer: Performer<Context>, mut script: Vec<ScriptOp>) {
 //     let script_len = script.len();

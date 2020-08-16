@@ -437,50 +437,6 @@ mod tests {
             gaps_index.allocate(3, |key| blocks_index.get(key)),
             Ok(Allocated::PendingDefragmentation),
         );
-
-        gaps_index.unlock_defrag(&space_key_a);
-        assert_eq!(
-            gaps_index.allocate(3, |key| blocks_index.get(key)),
-            Ok(Allocated::Success {
-                space_available: 4,
-                between: GapBetween::TwoBlocks {
-                    left_block: BlockInfo {
-                        block_id: block_a_id.clone(),
-                        block_entry: &BlockEntry {
-                            offset: 0,
-                            header: storage::BlockHeader {
-                                block_id: block_a_id.clone(),
-                                block_size: 4,
-                                ..Default::default()
-                            },
-                            block_bytes: None,
-                            environs: Environs {
-                                left: LeftEnvirons::Start,
-                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
-                            },
-                            tasks_head: Default::default(),
-                        },
-                    },
-                    right_block: BlockInfo {
-                        block_id: block_b_id.clone(),
-                        block_entry: &BlockEntry {
-                            offset: 8,
-                            header: storage::BlockHeader {
-                                block_id: block_b_id.clone(),
-                                block_size: 0,
-                                ..Default::default()
-                            },
-                            block_bytes: None,
-                            environs: Environs {
-                                left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
-                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
-                            },
-                            tasks_head: Default::default(),
-                        },
-                    },
-                },
-            }),
-        );
     }
 
 

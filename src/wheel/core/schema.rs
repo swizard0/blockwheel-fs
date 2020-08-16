@@ -1022,6 +1022,8 @@ mod tests {
         DefragOp,
         WriteBlockTaskOp,
         WriteBlockTaskCommitType,
+        WriteBlockTaskDoneOp,
+        WriteBlockTaskDonePerform,
         ReadBlockOp,
         ReadBlockPerform,
         DeleteBlockOp,
@@ -1181,17 +1183,13 @@ mod tests {
         assert_eq!(schema.gaps_index.space_total(), 59);
 
         let op = schema.process_read_block_request(&block::Id::init());
-        assert!(matches!(op, ReadBlockOp::Perform(
-            ReadBlockPerform {
-                block_offset: 24,
-                block_header: storage::BlockHeader {
-                    ref block_id,
-                    block_size: 13,
-                    ..
-                },
-                ..
-            },
-        ) if block_id == &block::Id::init()));
+        assert!(matches!(op, ReadBlockOp::Cached { ref block_bytes, } if block_bytes == &sample_hello_world()));
+
+        let op = schema.process_write_block_task_done(&block::Id::init());
+        assert!(matches!(op, WriteBlockTaskDoneOp::Perform(WriteBlockTaskDonePerform { block_offset: 24, .. })));
+
+        let op = schema.process_read_block_request(&block::Id::init());
+        assert!(matches!(op, ReadBlockOp::Perform(ReadBlockPerform { block_offset: 24, .. })));
     }
 
     #[test]
@@ -1228,6 +1226,7 @@ mod tests {
                 free_space_offset: 24,
                 space_key: SpaceKey { space_available: 53, serial: 4, },
             },
+            ..
         })));
 
         assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
@@ -1311,6 +1310,7 @@ mod tests {
                 free_space_offset: 24,
                 space_key: SpaceKey { space_available: 53, serial: 4, },
             },
+            ..
         })));
 
         // defrag delete
