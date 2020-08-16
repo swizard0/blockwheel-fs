@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn lock_unlock_defrag() {
-        let Init { block_a_id, block_b_id, space_key_a, blocks_index, mut gaps_index, } = Init::new();
+        let Init { block_b_id, space_key_a, blocks_index, mut gaps_index, .. } = Init::new();
 
         gaps_index.lock_defrag(&space_key_a);
         assert_eq!(
