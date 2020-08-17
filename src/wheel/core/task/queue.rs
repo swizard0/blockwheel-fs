@@ -42,8 +42,20 @@ impl<C> Queue<C> where C: Context {
     )
     {
         let block_id = task.block_id.clone();
+
+        let tt = match &task.kind {
+            TaskKind::WriteBlock(..) =>
+                format!("[write block id = {:?}]", block_id),
+            TaskKind::ReadBlock(..) =>
+                format!("[read block id = {:?}]", block_id),
+            TaskKind::DeleteBlock(..) =>
+                format!("[delete block id = {:?}]", block_id),
+        };
+
         match self.tasks.push(tasks_head, task) {
             store::PushStatus::New => {
+                println!(" ;; Queue::push NEW @ current_offset = {}, offset = {}, task = {:?}", current_offset, offset, tt);
+
                 let queue = if offset >= current_offset {
                     &mut self.queue_right
                 } else {
@@ -60,6 +72,7 @@ impl<C> Queue<C> where C: Context {
         loop {
             if let Some(queued_task) = self.queue_right.pop() {
                 if queued_task.offset >= current_offset {
+                    println!(" ;; Queue::pop @ current_offset = {}, offset = {}", current_offset, queued_task.offset);
                     return Some((queued_task.offset, queued_task.block_id));
                 } else {
                     self.queue_left.push(queued_task);
@@ -67,6 +80,7 @@ impl<C> Queue<C> where C: Context {
             } else if let Some(QueuedTask { offset, block_id, }) = self.queue_left.pop() {
                 // rotate
                 mem::swap(&mut self.queue_left, &mut self.queue_right);
+                println!(" ;; Queue::pop @ current_offset = {}, offset = {}", current_offset, offset);
                 return Some((offset, block_id));
             } else {
                 return None;

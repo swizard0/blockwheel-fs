@@ -36,34 +36,39 @@ impl<C> Tasks<C> where C: Context {
     }
 
     pub fn push(&mut self, tasks_head: &mut TasksHead, task: Task<C>) -> PushStatus {
+        let status = if tasks_head.head_write.is_some()
+            || tasks_head.head_read.is_some()
+            || tasks_head.head_delete.is_some() {
+                PushStatus::Queued
+            } else {
+                PushStatus::New
+            };
+
         match task.kind {
             TaskKind::WriteBlock(write_block) => {
                 assert!(tasks_head.head_write.is_none());
                 let node_ref = self.tasks_write.insert(write_block);
                 tasks_head.head_write = Some(node_ref);
-                PushStatus::New
             },
             TaskKind::ReadBlock(read_block) =>
                 if let Some(prev_ref) = tasks_head.head_read.take() {
                     let node_ref = self.tasks_read.make_node(prev_ref, read_block);
                     tasks_head.head_read = Some(node_ref);
-                    PushStatus::Queued
                 } else {
                     let node_ref = self.tasks_read.make_root(read_block);
                     tasks_head.head_read = Some(node_ref);
-                    PushStatus::New
                 },
             TaskKind::DeleteBlock(delete_block) =>
                 if let Some(prev_ref) = tasks_head.head_delete.take() {
                     let node_ref = self.tasks_delete.make_node(prev_ref, delete_block);
                     tasks_head.head_delete = Some(node_ref);
-                    PushStatus::Queued
                 } else {
                     let node_ref = self.tasks_delete.make_root(delete_block);
                     tasks_head.head_delete = Some(node_ref);
-                    PushStatus::New
                 },
         }
+
+        status
     }
 
     pub fn pop(&mut self, tasks_head: &mut TasksHead) -> Option<TaskKind<C>> {

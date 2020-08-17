@@ -15,6 +15,7 @@ use super::{
     block,
     schema,
     defrag,
+    TasksHead,
     BlockEntry,
 };
 
@@ -192,7 +193,12 @@ impl<C> Performer<C> where C: Context {
 
 impl<C> PollRequestAndInterpreterNext<C> where C: Context {
     pub fn incoming_request(mut self, request: proto::Request<C>, interpreter_context: C::Interpreter) -> Op<C> {
-        self.inner.bg_task.state = BackgroundTaskState::InProgress { interpreter_context, };
+        self.inner.bg_task.state = match self.inner.bg_task.state {
+            BackgroundTaskState::Await { block_id, } =>
+                BackgroundTaskState::InProgress { block_id, interpreter_context, },
+            BackgroundTaskState::Idle | BackgroundTaskState::InProgress { .. } =>
+                unreachable!(),
+        };
         self.inner.incoming_request(request)
     }
 
@@ -209,7 +215,12 @@ impl<C> PollRequestNext<C> where C: Context {
 
 impl<C> InterpretTaskNext<C> where C: Context {
     pub fn task_accepted(mut self, interpreter_context: C::Interpreter) -> Performer<C> {
-        self.inner.bg_task.state = BackgroundTaskState::InProgress { interpreter_context, };
+        self.inner.bg_task.state = match self.inner.bg_task.state {
+            BackgroundTaskState::Await { block_id, } =>
+                BackgroundTaskState::InProgress { block_id, interpreter_context, },
+            BackgroundTaskState::Idle | BackgroundTaskState::InProgress { .. } =>
+                unreachable!(),
+        };
         Performer { inner: self.inner, }
     }
 }
@@ -221,7 +232,13 @@ struct BackgroundTask<C> {
 
 enum BackgroundTaskState<C> {
     Idle,
-    InProgress { interpreter_context: C, },
+    InProgress {
+        block_id: block::Id,
+        interpreter_context: C,
+    },
+    Await {
+        block_id: block::Id,
+    }
 }
 
 impl<C> Inner<C> where C: Context {
@@ -247,7 +264,8 @@ impl<C> Inner<C> where C: Context {
             DoneTask::Reenqueue { block_id, } =>
                 if let Some((block_offset, tasks_head)) = self.schema.block_offset_tasks_head(&block_id) {
                     if let Some(kind) = self.tasks_queue.pop_task(tasks_head) {
-                        self.tasks_queue.push(self.bg_task.current_offset, block_offset, task::Task { block_id, kind, }, tasks_head);
+                        println!(" -- reenqueue");
+                        tasks_queue_push(&mut self.tasks_queue, &self.bg_task, block_offset, task::Task { block_id, kind, }, tasks_head);
                     }
                 },
             DoneTask::ReadBlock { block_id, block_bytes, } => {
@@ -354,8 +372,10 @@ impl<C> Inner<C> where C: Context {
                 if let Some((_free_space_offset, space_key)) = defrag.queues.tasks.pop() {
                     if let Some(block_entry) = self.schema.pick_defrag_space_key(&space_key) {
                         let block_bytes = self.blocks_pool.lend();
-                        self.tasks_queue.push(
-                            self.bg_task.current_offset,
+                        println!(" -- defrag");
+                        tasks_queue_push(
+                            &mut self.tasks_queue,
+                            &self.bg_task,
                             block_entry.offset,
                             task::Task {
                                 block_id: block_entry.header.block_id.clone(),
@@ -380,6 +400,7 @@ impl<C> Inner<C> where C: Context {
                 if let Some((offset, block_id)) = self.tasks_queue.pop_block_id(self.bg_task.current_offset) {
                     let tasks_head = self.schema.block_tasks_head(&block_id).unwrap();
                     let task_kind = self.tasks_queue.pop_task(tasks_head).unwrap();
+                    self.bg_task.state = BackgroundTaskState::Await { block_id: block_id.clone(), };
                     Op::Query(QueryOp::InterpretTask(InterpretTask {
                         offset,
                         task: task::Task { block_id, kind: task_kind, },
@@ -394,13 +415,17 @@ impl<C> Inner<C> where C: Context {
                         },
                     }))
                 },
-            BackgroundTaskState::InProgress { interpreter_context, } =>
+            BackgroundTaskState::InProgress { block_id, interpreter_context, } => {
+                self.bg_task.state = BackgroundTaskState::Await { block_id, };
                 Op::Query(QueryOp::PollRequestAndInterpreter(PollRequestAndInterpreter {
                     interpreter_context,
                     next: PollRequestAndInterpreterNext {
                         inner: self,
                     },
-                })),
+                }))
+            },
+            BackgroundTaskState::Await { .. } =>
+                unreachable!(),
         }
     }
 
@@ -433,8 +458,10 @@ impl<C> Inner<C> where C: Context {
                             (schema::DefragOp::None, _) | (_, None) =>
                                 (),
                         }
-                        self.tasks_queue.push(
-                            self.bg_task.current_offset,
+                        println!(" -- request write block");
+                        tasks_queue_push(
+                            &mut self.tasks_queue,
+                            &self.bg_task,
                             task_op.block_offset,
                             task::Task {
                                 block_id: task_op.block_id,
@@ -497,8 +524,10 @@ impl<C> Inner<C> where C: Context {
                             })
                         } else {
                             let block_bytes = self.blocks_pool.lend();
-                            self.tasks_queue.push(
-                                self.bg_task.current_offset,
+                            println!(" -- request read block");
+                            tasks_queue_push(
+                                &mut self.tasks_queue,
+                                &self.bg_task,
                                 block_offset,
                                 task::Task {
                                     block_id: request_read_block.block_id.clone(),
@@ -539,9 +568,10 @@ impl<C> Inner<C> where C: Context {
                 match self.schema.process_delete_block_request(&request_delete_block.block_id) {
 
                     schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, tasks_head, }) => {
-                        self.lru_cache.invalidate(&request_delete_block.block_id);
-                        self.tasks_queue.push(
-                            self.bg_task.current_offset,
+                        println!(" -- request delete block");
+                        tasks_queue_push(
+                            &mut self.tasks_queue,
+                            &self.bg_task,
                             block_offset,
                             task::Task {
                                 block_id: request_delete_block.block_id,
@@ -573,21 +603,9 @@ impl<C> Inner<C> where C: Context {
         match incoming {
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::WriteBlock(write_block), }, } => {
+                println!(" // task done write block on {:?}", block_id);
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-                match self.schema.process_write_block_task_done(&block_id) {
-                    schema::WriteBlockTaskDoneOp::Perform(schema::WriteBlockTaskDonePerform { block_offset, tasks_head, }) =>
-                        if let Some(task_kind) = self.tasks_queue.pop_task(tasks_head) {
-                            self.tasks_queue.push(
-                                self.bg_task.current_offset,
-                                block_offset,
-                                task::Task {
-                                    block_id: block_id.clone(),
-                                    kind: task_kind,
-                                },
-                                tasks_head,
-                            );
-                        },
-                }
+                self.schema.process_write_block_task_done(&block_id);
                 self.done_task = DoneTask::Reenqueue {
                     block_id: block_id.clone(),
                 };
@@ -610,6 +628,7 @@ impl<C> Inner<C> where C: Context {
             },
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::ReadBlock(read_block), }, } => {
+                println!(" // task done read block on {:?}", block_id);
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 let block_bytes = read_block.block_bytes.freeze();
                 self.lru_cache.insert(block_id.clone(), block_bytes.clone());
@@ -621,9 +640,11 @@ impl<C> Inner<C> where C: Context {
             },
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::DeleteBlock(delete_block), }, } => {
+                println!(" // task done delete block on {:?}", block_id);
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 match delete_block.context {
-                    task::DeleteBlockContext::External(context) =>
+                    task::DeleteBlockContext::External(context) => {
+                        self.lru_cache.invalidate(&block_id);
                         match self.schema.process_delete_block_task_done(block_id.clone()) {
                             schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, block_entry, }) => {
                                 match (defrag_op, self.defrag.as_mut()) {
@@ -645,6 +666,7 @@ impl<C> Inner<C> where C: Context {
                                 })
                             },
                         }
+                    },
                     task::DeleteBlockContext::Defrag { space_key, } =>
                         match self.schema.process_delete_block_task_done_defrag(block_id.clone(), space_key) {
                             schema::DeleteBlockTaskDoneDefragOp::Perform(task_op) => {
@@ -657,8 +679,9 @@ impl<C> Inner<C> where C: Context {
                                     (schema::DefragOp::None, _) | (_, None) =>
                                         (),
                                 }
-                                self.tasks_queue.push(
-                                    self.bg_task.current_offset,
+                                tasks_queue_push(
+                                    &mut self.tasks_queue,
+                                    &self.bg_task,
                                     task_op.block_offset,
                                     task::Task {
                                         block_id: block_id.clone(),
@@ -706,8 +729,9 @@ impl<C> Inner<C> where C: Context {
                         let block_bytes_cached_prev =
                             mem::replace(block_bytes_cached, Some(block_bytes));
                         assert_eq!(block_bytes_cached_prev, None);
-                        self.tasks_queue.push(
-                            self.bg_task.current_offset,
+                        tasks_queue_push(
+                            &mut self.tasks_queue,
+                            &self.bg_task,
                             block_offset,
                             task::Task {
                                 block_id,
@@ -721,5 +745,25 @@ impl<C> Inner<C> where C: Context {
                     },
                 },
         }
+    }
+}
+
+fn tasks_queue_push<C>(
+    tasks_queue: &mut task::queue::Queue<C>,
+    bg_task: &BackgroundTask<C::Interpreter>,
+    block_offset: u64,
+    task: task::Task<C>,
+    tasks_head: &mut TasksHead,
+)
+    where C: Context
+{
+    match &bg_task.state {
+        BackgroundTaskState::Await { block_id, } | BackgroundTaskState::InProgress { block_id, .. } if block_id != &task.block_id =>
+            tasks_queue.push(bg_task.current_offset, block_offset, task, tasks_head),
+        BackgroundTaskState::Idle =>
+            tasks_queue.push(bg_task.current_offset, block_offset, task, tasks_head),
+        BackgroundTaskState::Await { .. } |
+        BackgroundTaskState::InProgress { .. } =>
+            (),
     }
 }

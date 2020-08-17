@@ -124,6 +124,8 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
 
     let mut op = performer.next();
     loop {
+        println!(" || script line: {}", script_len - script.len());
+
         op = match op {
 
             Op::Idle(performer) =>

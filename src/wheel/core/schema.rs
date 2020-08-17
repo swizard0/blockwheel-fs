@@ -79,17 +79,6 @@ pub struct DeleteBlockPerform<'a> {
 }
 
 #[derive(Debug)]
-pub enum WriteBlockTaskDoneOp<'a> {
-    Perform(WriteBlockTaskDonePerform<'a>),
-}
-
-#[derive(Debug)]
-pub struct WriteBlockTaskDonePerform<'a> {
-    pub block_offset: u64,
-    pub tasks_head: &'a mut TasksHead,
-}
-
-#[derive(Debug)]
 pub enum ReadBlockTaskDoneOp<'a> {
     Perform(ReadBlockTaskDonePerform<'a>),
 }
@@ -413,13 +402,10 @@ impl Schema {
         }
     }
 
-    pub fn process_write_block_task_done<'a>(&'a mut self, written_block_id: &block::Id) -> WriteBlockTaskDoneOp<'a> {
-        let block_entry = self.blocks_index.get_mut(written_block_id).unwrap();
-        block_entry.block_bytes = None;
-        WriteBlockTaskDoneOp::Perform(WriteBlockTaskDonePerform {
-            block_offset: block_entry.offset,
-            tasks_head: &mut block_entry.tasks_head,
-        })
+    pub fn process_write_block_task_done(&mut self, written_block_id: &block::Id) {
+        self.blocks_index.with_mut(written_block_id, |block_entry| {
+            block_entry.block_bytes = None;
+        }).unwrap();
     }
 
     pub fn process_read_block_task_done<'a>(&'a mut self, read_block_id: &block::Id) -> ReadBlockTaskDoneOp<'a> {
@@ -1022,8 +1008,6 @@ mod tests {
         DefragOp,
         WriteBlockTaskOp,
         WriteBlockTaskCommitType,
-        WriteBlockTaskDoneOp,
-        WriteBlockTaskDonePerform,
         ReadBlockOp,
         ReadBlockPerform,
         DeleteBlockOp,
@@ -1185,8 +1169,7 @@ mod tests {
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::Cached { ref block_bytes, } if block_bytes == &sample_hello_world()));
 
-        let op = schema.process_write_block_task_done(&block::Id::init());
-        assert!(matches!(op, WriteBlockTaskDoneOp::Perform(WriteBlockTaskDonePerform { block_offset: 24, .. })));
+        schema.process_write_block_task_done(&block::Id::init());
 
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::Perform(ReadBlockPerform { block_offset: 24, .. })));
