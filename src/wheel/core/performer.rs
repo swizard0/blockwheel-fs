@@ -264,7 +264,6 @@ impl<C> Inner<C> where C: Context {
             DoneTask::Reenqueue { block_id, } =>
                 if let Some((block_offset, tasks_head)) = self.schema.block_offset_tasks_head(&block_id) {
                     if let Some(kind) = self.tasks_queue.pop_task(tasks_head) {
-                        println!(" -- reenqueue");
                         tasks_queue_push(
                             &mut self.tasks_queue,
                             &self.bg_task,
@@ -378,7 +377,6 @@ impl<C> Inner<C> where C: Context {
                 if let Some((_free_space_offset, space_key)) = defrag.queues.tasks.pop() {
                     if let Some(block_entry) = self.schema.pick_defrag_space_key(&space_key) {
                         let block_bytes = self.blocks_pool.lend();
-                        println!(" -- defrag");
                         tasks_queue_push(
                             &mut self.tasks_queue,
                             &self.bg_task,
@@ -464,7 +462,6 @@ impl<C> Inner<C> where C: Context {
                             (schema::DefragOp::None, _) | (_, None) =>
                                 (),
                         }
-                        println!(" -- request write block");
                         tasks_queue_push(
                             &mut self.tasks_queue,
                             &self.bg_task,
@@ -530,7 +527,6 @@ impl<C> Inner<C> where C: Context {
                             })
                         } else {
                             let block_bytes = self.blocks_pool.lend();
-                            println!(" -- request read block");
                             tasks_queue_push(
                                 &mut self.tasks_queue,
                                 &self.bg_task,
@@ -574,7 +570,6 @@ impl<C> Inner<C> where C: Context {
                 match self.schema.process_delete_block_request(&request_delete_block.block_id) {
 
                     schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, tasks_head, }) => {
-                        println!(" -- request delete block");
                         tasks_queue_push(
                             &mut self.tasks_queue,
                             &self.bg_task,
@@ -609,7 +604,6 @@ impl<C> Inner<C> where C: Context {
         match incoming {
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::WriteBlock(write_block), }, } => {
-                println!(" // task done write block on {:?}", block_id);
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 self.schema.process_write_block_task_done(&block_id);
                 self.done_task = DoneTask::Reenqueue {
@@ -634,7 +628,6 @@ impl<C> Inner<C> where C: Context {
             },
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::ReadBlock(read_block), }, } => {
-                println!(" // task done read block on {:?}", block_id);
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 let block_bytes = read_block.block_bytes.freeze();
                 self.lru_cache.insert(block_id.clone(), block_bytes.clone());
@@ -646,7 +639,6 @@ impl<C> Inner<C> where C: Context {
             },
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::DeleteBlock(delete_block), }, } => {
-                println!(" // task done delete block on {:?}", block_id);
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 match delete_block.context {
                     task::DeleteBlockContext::External(context) => {

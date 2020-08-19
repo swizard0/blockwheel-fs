@@ -2,6 +2,7 @@ use super::{
     task,
     proto,
     block,
+    storage,
     init,
     interpret,
     hello_world_bytes,
@@ -181,98 +182,94 @@ fn script_basic() {
             expect_context: "ectx07",
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
-
-
-//         ScriptOp::RequestIncomingRequest {
-//             request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ctx0f", }),
-//         },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectInterpretTask {
-//             expect_offset: 24,
-//             expect_task: ExpectTask {
-//                 block_id: block::Id::init().next().next(),
-//                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-//                     block_bytes: hello_world_bytes(),
-//                     commit_type: task::CommitType::CommitOnly,
-//                     context: task::WriteBlockContext::External("ctx0f"),
-//                 }),
-//             },
-//         },
-//         ScriptOp::TaskAccepted { interpreter_context: "ctx10", },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequestAndInterpreter {
-//             expect_context: "ctx10",
-//         },
-//         ScriptOp::RequestAndInterpreterIncomingRequest {
-//             request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ctx11", }),
-//             interpreter_context: "ctx12",
-//         },
-//         ScriptOp::ExpectWriteBlockNoSpaceLeft {
-//             expect_context: "ctx11",
-//         },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequestAndInterpreter {
-//             expect_context: "ctx12",
-//         },
-//         ScriptOp::RequestAndInterpreterIncomingRequest {
-//             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init().next(), context: "ctx13", }),
-//             interpreter_context: "ctx14",
-//         },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequestAndInterpreter {
-//             expect_context: "ctx14",
-//         },
-//         ScriptOp::RequestAndInterpreterIncomingTaskDone {
-//             task_done: task::Done {
-//                 current_offset: 24,
-//                 task: task::TaskDone {
-//                     block_id: block::Id::init().next().next(),
-//                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
-//                         context: task::WriteBlockContext::External("ctx11"),
-//                     }),
-//                 },
-//             },
-//         },
-//         ScriptOp::ExpectWriteBlockDoneDone {
-//             expect_block_id: block::Id::init().next().next(),
-//             expect_context: "ctx11",
-//         },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectInterpretTask {
-//             expect_offset: 77,
-//             expect_task: ExpectTask {
-//                 block_id: block::Id::init().next(),
-//                 kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {
-//                     block_header: storage::BlockHeader {
-//                         block_id: block::Id::init().next(),
-//                         block_size: 13,
-//                         ..Default::default()
-//                     },
-//                     context: task::ReadBlockContext::External("ctx13"),
-//                 }),
-//             },
-//         },
-//         ScriptOp::TaskAccepted { interpreter_context: "ctx15", },
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequestAndInterpreter {
-//             expect_context: "ctx15",
-//         },
-//         ScriptOp::RequestAndInterpreterIncomingTaskDone {
-//             task_done: task::Done {
-//                 current_offset: 77,
-//                 task: task::TaskDone {
-//                     block_id: block::Id::init().next(),
-//                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-//                         block_bytes: hello_world_bytes().into_mut().unwrap(),
-//                         context: task::ReadBlockContext::External("ctx13"),
-//                     }),
-//                 },
-//             },
-//         },
-//         ScriptOp::ExpectReadBlockDoneDone {
-//             expect_block_bytes: hello_world_bytes(),
-//             expect_context: "ctx13",
-//         },
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ectx08", }),
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::InterpretTask {
+            expect_offset: 24,
+            expect_task: ExpectTask {
+                block_id: block::Id::init().next().next(),
+                kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    commit_type: task::CommitType::CommitOnly,
+                    context: task::WriteBlockContext::External("ectx08"),
+                }),
+            },
+        }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx08", }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx08",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ectx09", }),
+            interpreter_context: "ictx09",
+        }),
+        ScriptOp::Expect(ExpectOp::WriteBlockNoSpaceLeft {
+            expect_context: "ectx09",
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx09",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
+            request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init().next(), context: "ectx0a", }),
+            interpreter_context: "ictx0a",
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx0a",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 24,
+                task: task::TaskDone {
+                    block_id: block::Id::init().next().next(),
+                    kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                        context: task::WriteBlockContext::External("ectx08"),
+                    }),
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::WriteBlockDone {
+            expect_block_id: block::Id::init().next().next(),
+            expect_context: "ectx08",
+        }),
+        ScriptOp::Expect(ExpectOp::InterpretTask {
+            expect_offset: 77,
+            expect_task: ExpectTask {
+                block_id: block::Id::init().next(),
+                kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {
+                    block_header: storage::BlockHeader {
+                        block_id: block::Id::init().next(),
+                        block_size: 13,
+                        ..Default::default()
+                    },
+                    context: task::ReadBlockContext::External("ectx0a"),
+                }),
+            },
+        }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx0b", }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx0b",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 77,
+                task: task::TaskDone {
+                    block_id: block::Id::init().next(),
+                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                        block_bytes: hello_world_bytes().into_mut().unwrap(),
+                        context: task::ReadBlockContext::External("ectx0a"),
+                    }),
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::ReadBlockDone {
+            expect_block_bytes: hello_world_bytes(),
+            expect_context: "ectx0a",
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::PollRequest),
     ];
 
     interpret(performer, script)
