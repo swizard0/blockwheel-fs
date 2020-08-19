@@ -15,6 +15,7 @@ use super::{
     WriteBlockOp,
     DeleteBlockOp,
     InterpretTask,
+    DefragConfig,
     Context as BaseContext,
     super::{
         storage,
@@ -22,6 +23,7 @@ use super::{
 };
 
 mod basic;
+mod defrag;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Context;
@@ -37,6 +39,10 @@ impl BaseContext for Context {
 }
 
 fn init() -> Performer<Context> {
+    with_defrag_config(None)
+}
+
+fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Context> {
     let storage_layout = storage::Layout {
         wheel_header_size: 24,
         block_header_size: 24,
@@ -48,7 +54,7 @@ fn init() -> Performer<Context> {
     Performer::new(
         schema,
         lru::Cache::new(16),
-        None,
+        defrag_config,
     )
 }
 
@@ -124,8 +130,6 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
 
     let mut op = performer.next();
     loop {
-        println!(" || script line: {}", script_len - script.len());
-
         op = match op {
 
             Op::Idle(performer) =>
@@ -181,7 +185,10 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         panic!("expecting exact ExpectOp::PollRequest for PollRequest but got {:?} @ {}", other_op, script_len - script.len()),
                 },
 
-            Op::Query(QueryOp::InterpretTask(InterpretTask { offset, task, next, })) =>
+            Op::Query(QueryOp::InterpretTask(InterpretTask { offset, task, next, })) => {
+
+                println!(" ;; offset = {}, task = {:?}", offset, task);
+
                 match script.pop() {
                     None =>
                         panic!("unexpected script end on InterpretTask, expecting ExpectOp::InterpretTask @ {}", script_len - script.len()),
@@ -199,7 +206,8 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         },
                     Some(other_op) =>
                         panic!("expecting exact ExpectOp::InterpretTask for InterpretTask but got {:?} @ {}", other_op, script_len - script.len()),
-                },
+                }
+            },
 
             Op::Event(Event { op: EventOp::LendBlock(TaskDoneOp { context, op: LendBlockOp::Success { .. }, }), performer, }) =>
                 match script.pop() {

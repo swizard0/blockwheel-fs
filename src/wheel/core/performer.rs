@@ -1,6 +1,4 @@
-use std::{
-    mem,
-};
+use std::mem;
 
 use super::{
     super::{
@@ -133,21 +131,6 @@ pub struct PollRequestAndInterpreterNext<C> where C: Context {
 pub struct PollRequestNext<C> where C: Context {
     inner: Inner<C>,
 }
-
-// impl<C> fmt::Debug for PollRequestAndInterpreter<C> where C: Context {
-//     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         fmt.debug_struct("PollRequestAndInterpreter")
-//             .field("interpreter_context", &"<..>")
-//             .field("next", &"PollRequestAndInterpreterNext { inner: <inner>, }")
-//             .finish()
-//     }
-// }
-
-// impl<C> fmt::Debug for Inner<C> where C: Context {
-//     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         fmt.write_str("<inner>")
-//     }
-// }
 
 #[derive(Debug)]
 pub struct DefragConfig<C> {
@@ -405,6 +388,9 @@ impl<C> Inner<C> where C: Context {
                     let tasks_head = self.schema.block_tasks_head(&block_id).unwrap();
                     let task_kind = self.tasks_queue.pop_task(tasks_head).unwrap();
                     self.bg_task.state = BackgroundTaskState::Await { block_id: block_id.clone(), };
+
+                    println!(" // popped for {:?} offset = {}", block_id, offset);
+
                     Op::Query(QueryOp::InterpretTask(InterpretTask {
                         offset,
                         task: task::Task { block_id, kind: task_kind, },
@@ -680,13 +666,18 @@ impl<C> Inner<C> where C: Context {
                                 tasks_queue_push(
                                     &mut self.tasks_queue,
                                     &self.bg_task,
-                                    task_op.block_offset,
+                                    { println!(" // task_op.block_offset = {}", task_op.block_offset); task_op.block_offset },
                                     task::Task {
                                         block_id: block_id.clone(),
                                         kind: task::TaskKind::WriteBlock(
                                             task::WriteBlock {
                                                 block_bytes: task_op.block_bytes.clone(),
-                                                commit_type: task::CommitType::CommitOnly,
+                                                commit_type: match task_op.commit_type {
+                                                    schema::WriteBlockTaskCommitType::CommitOnly =>
+                                                        task::CommitType::CommitOnly,
+                                                    schema::WriteBlockTaskCommitType::CommitAndEof =>
+                                                        task::CommitType::CommitAndEof,
+                                                },
                                                 context: task::WriteBlockContext::Defrag,
                                             },
                                         ),

@@ -112,6 +112,7 @@ pub struct DeleteBlockTaskDoneDefragPerform<'a> {
     pub block_bytes: block::Bytes,
     pub tasks_head: &'a mut TasksHead,
     pub defrag_op: DefragOp,
+    pub commit_type: WriteBlockTaskCommitType,
 }
 
 impl Schema {
@@ -737,6 +738,7 @@ impl Schema {
         let start_offset = self.storage_layout.wheel_header_size as u64;
         let data_size_block_min = self.storage_layout.data_size_block_min() as u64;
         let mut defrag_op = DefragOp::None;
+        let mut commit_type = WriteBlockTaskCommitType::CommitOnly;
 
         match block_entry.environs.clone() {
 
@@ -751,6 +753,7 @@ impl Schema {
                     // before: ^| ... | R |$
                     // after:  ^| R | ....|$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
+                        println!(" // ima matching bp 0");
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -761,10 +764,12 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Start;
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
+                        commit_type = WriteBlockTaskCommitType::CommitAndEof;
                     },
                     // before: ^| ... | A | ... | R |$
                     // after:  ^| ... | A | R | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
+                        println!(" // ima matching bp 1");
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -781,6 +786,7 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Block { block_id: left_block.clone(), };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
+                        commit_type = WriteBlockTaskCommitType::CommitAndEof;
                     },
                 },
 
@@ -802,6 +808,7 @@ impl Schema {
                         Some(gaps::GapBetween::StartAndBlock { right_block: right_block_left, }),
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
+                        println!(" // ima matching bp 2, start offset = {}", start_offset);
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -813,6 +820,7 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Start;
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
+                        commit_type = WriteBlockTaskCommitType::CommitAndEof;
                     },
                     // before: ^| ... | R | ... | A | ... |$
                     // after:  ^| R | ......... | A | ... |$
@@ -820,6 +828,7 @@ impl Schema {
                         Some(gaps::GapBetween::StartAndBlock { right_block: right_block_left, }),
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
+                        println!(" // ima matching bp 3");
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -843,6 +852,7 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_left, right_block: right_block_left, }),
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
+                        println!(" // ima matching bp 4");
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -860,6 +870,7 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Block { block_id: right_block_left, };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
+                        commit_type = WriteBlockTaskCommitType::CommitAndEof;
                     },
                     // before: ^| ... | A | ... | R | ... | B | ... |$
                     // after:  ^| ... | A | R | ......... | B | ... |$
@@ -867,6 +878,7 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_left, right_block: right_block_left, }),
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
+                        println!(" // ima matching bp 5");
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -905,6 +917,7 @@ impl Schema {
                     // before: ^| ... | R | B | ... |$
                     // after:  ^| R | ... | B | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
+                        println!(" // ima matching bp 6");
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -924,6 +937,7 @@ impl Schema {
                     // before: ^| ... | A | ... | R | B | ... |$
                     // after:  ^| ... | A | R | ... | B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
+                        println!(" // ima matching bp 7");
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -956,6 +970,9 @@ impl Schema {
         }
 
         let block_entry = self.blocks_index.get_mut(&removed_block_id).unwrap();
+
+        println!(" // returning from process_delete_block_task_done_defrag -> block_offset = {}", block_entry.offset);
+
         DeleteBlockTaskDoneDefragOp::Perform(DeleteBlockTaskDoneDefragPerform {
             block_offset: block_entry.offset,
             block_bytes: block_entry
@@ -965,6 +982,7 @@ impl Schema {
                 .unwrap(),
             tasks_head: &mut block_entry.tasks_head,
             defrag_op,
+            commit_type,
         })
     }
 

@@ -41,6 +41,14 @@ impl<C> Queue<C> where C: Context {
         tasks_head: &mut TasksHead,
     )
     {
+        let tt = match task.kind {
+            TaskKind::WriteBlock(..) => "[ write block ]",
+            TaskKind::ReadBlock(..) => "[ read block ]",
+            TaskKind::DeleteBlock(..) => "[ delete block ]",
+        };
+
+        println!(" // push task {:?} @ offset = {}, maybe_current_offset = {:?}", tt, offset, maybe_current_offset);
+
         let block_id = task.block_id.clone();
         match (self.tasks.push(tasks_head, task), maybe_current_offset) {
             (store::PushStatus::New, Some(current_offset)) => {
@@ -60,6 +68,7 @@ impl<C> Queue<C> where C: Context {
         loop {
             if let Some(queued_task) = self.queue_right.pop() {
                 if queued_task.offset >= current_offset {
+                    println!(" -- R current_offset = {}, popping ({}, {:?})", current_offset, queued_task.offset, queued_task.block_id);
                     return Some((queued_task.offset, queued_task.block_id));
                 } else {
                     self.queue_left.push(queued_task);
@@ -67,6 +76,7 @@ impl<C> Queue<C> where C: Context {
             } else if let Some(QueuedTask { offset, block_id, }) = self.queue_left.pop() {
                 // rotate
                 mem::swap(&mut self.queue_left, &mut self.queue_right);
+                println!(" -- L current_offset = {}, popping ({}, {:?})", current_offset, offset, block_id);
                 return Some((offset, block_id));
             } else {
                 return None;
