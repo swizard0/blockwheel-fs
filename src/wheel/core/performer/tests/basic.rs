@@ -180,10 +180,9 @@ fn script_basic() {
         ScriptOp::Expect(ExpectOp::DeleteBlockNotFound {
             expect_context: "ectx07",
         }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
 
 
-//         ScriptOp::PerformerNext,
-//         ScriptOp::ExpectPollRequest,
 //         ScriptOp::RequestIncomingRequest {
 //             request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ctx0f", }),
 //         },

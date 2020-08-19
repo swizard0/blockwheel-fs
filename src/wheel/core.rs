@@ -67,3 +67,11 @@ pub struct TasksHead {
     head_read: Option<Ref>,
     head_delete: Option<Ref>,
 }
+
+impl TasksHead {
+    pub fn is_empty(&self) -> bool {
+        self.head_write.is_none()
+            && self.head_read.is_none()
+            && self.head_delete.is_none()
+    }
+}

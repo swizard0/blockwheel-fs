@@ -36,13 +36,11 @@ impl<C> Tasks<C> where C: Context {
     }
 
     pub fn push(&mut self, tasks_head: &mut TasksHead, task: Task<C>) -> PushStatus {
-        let status = if tasks_head.head_write.is_some()
-            || tasks_head.head_read.is_some()
-            || tasks_head.head_delete.is_some() {
-                PushStatus::Queued
-            } else {
-                PushStatus::New
-            };
+        let status = if tasks_head.is_empty() {
+            PushStatus::New
+        } else {
+            PushStatus::Queued
+        };
 
         match task.kind {
             TaskKind::WriteBlock(write_block) => {

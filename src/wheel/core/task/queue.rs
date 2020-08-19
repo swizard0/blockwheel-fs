@@ -35,7 +35,7 @@ impl<C> Queue<C> where C: Context {
 
     pub fn push(
         &mut self,
-        current_offset: u64,
+        maybe_current_offset: Option<u64>,
         offset: u64,
         task: Task<C>,
         tasks_head: &mut TasksHead,
@@ -52,8 +52,8 @@ impl<C> Queue<C> where C: Context {
                 format!("[delete block id = {:?}]", block_id),
         };
 
-        match self.tasks.push(tasks_head, task) {
-            store::PushStatus::New => {
+        match (self.tasks.push(tasks_head, task), maybe_current_offset) {
+            (store::PushStatus::New, Some(current_offset)) => {
                 println!(" ;; Queue::push NEW @ current_offset = {}, offset = {}, task = {:?}", current_offset, offset, tt);
 
                 let queue = if offset >= current_offset {
@@ -63,7 +63,7 @@ impl<C> Queue<C> where C: Context {
                 };
                 queue.push(QueuedTask { offset, block_id, });
             },
-            store::PushStatus::Queued =>
+            (_, None) | (store::PushStatus::Queued, _)  =>
                 (),
         }
     }

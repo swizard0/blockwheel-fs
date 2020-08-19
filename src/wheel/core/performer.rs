@@ -265,7 +265,13 @@ impl<C> Inner<C> where C: Context {
                 if let Some((block_offset, tasks_head)) = self.schema.block_offset_tasks_head(&block_id) {
                     if let Some(kind) = self.tasks_queue.pop_task(tasks_head) {
                         println!(" -- reenqueue");
-                        tasks_queue_push(&mut self.tasks_queue, &self.bg_task, block_offset, task::Task { block_id, kind, }, tasks_head);
+                        tasks_queue_push(
+                            &mut self.tasks_queue,
+                            &self.bg_task,
+                            block_offset,
+                            task::Task { block_id, kind, },
+                            tasks_head,
+                        );
                     }
                 },
             DoneTask::ReadBlock { block_id, block_bytes, } => {
@@ -757,13 +763,15 @@ fn tasks_queue_push<C>(
 )
     where C: Context
 {
-    match &bg_task.state {
+    let maybe_current_offset = match &bg_task.state {
         BackgroundTaskState::Await { block_id, } | BackgroundTaskState::InProgress { block_id, .. } if block_id != &task.block_id =>
-            tasks_queue.push(bg_task.current_offset, block_offset, task, tasks_head),
+            Some(bg_task.current_offset),
         BackgroundTaskState::Idle =>
-            tasks_queue.push(bg_task.current_offset, block_offset, task, tasks_head),
+            Some(bg_task.current_offset),
         BackgroundTaskState::Await { .. } |
         BackgroundTaskState::InProgress { .. } =>
-            (),
-    }
+            None,
+    };
+
+    tasks_queue.push(maybe_current_offset, block_offset, task, tasks_head);
 }
