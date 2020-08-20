@@ -753,7 +753,6 @@ impl Schema {
                     // before: ^| ... | R |$
                     // after:  ^| R | ....|$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
-                        println!(" // ima matching bp 0");
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -769,7 +768,6 @@ impl Schema {
                     // before: ^| ... | A | ... | R |$
                     // after:  ^| ... | A | R | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
-                        println!(" // ima matching bp 1");
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -808,7 +806,6 @@ impl Schema {
                         Some(gaps::GapBetween::StartAndBlock { right_block: right_block_left, }),
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
-                        println!(" // ima matching bp 2, start offset = {}", start_offset);
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -828,7 +825,6 @@ impl Schema {
                         Some(gaps::GapBetween::StartAndBlock { right_block: right_block_left, }),
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
-                        println!(" // ima matching bp 3");
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -852,7 +848,6 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_left, right_block: right_block_left, }),
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
-                        println!(" // ima matching bp 4");
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -878,7 +873,6 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_left, right_block: right_block_left, }),
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
-                        println!(" // ima matching bp 5");
                         assert_eq!(right_block_left, removed_block_id);
                         assert_eq!(left_block_right, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -917,7 +911,6 @@ impl Schema {
                     // before: ^| ... | R | B | ... |$
                     // after:  ^| R | ... | B | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
-                        println!(" // ima matching bp 6");
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -937,7 +930,6 @@ impl Schema {
                     // before: ^| ... | A | ... | R | B | ... |$
                     // after:  ^| ... | A | R | ... | B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
-                        println!(" // ima matching bp 7");
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -970,9 +962,6 @@ impl Schema {
         }
 
         let block_entry = self.blocks_index.get_mut(&removed_block_id).unwrap();
-
-        println!(" // returning from process_delete_block_task_done_defrag -> block_offset = {}", block_entry.offset);
-
         DeleteBlockTaskDoneDefragOp::Perform(DeleteBlockTaskDoneDefragPerform {
             block_offset: block_entry.offset,
             block_bytes: block_entry

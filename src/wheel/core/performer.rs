@@ -387,9 +387,8 @@ impl<C> Inner<C> where C: Context {
                 if let Some((offset, block_id)) = self.tasks_queue.pop_block_id(self.bg_task.current_offset) {
                     let tasks_head = self.schema.block_tasks_head(&block_id).unwrap();
                     let task_kind = self.tasks_queue.pop_task(tasks_head).unwrap();
+                    tasks_head.is_queued = false;
                     self.bg_task.state = BackgroundTaskState::Await { block_id: block_id.clone(), };
-
-                    println!(" // popped for {:?} offset = {}", block_id, offset);
 
                     Op::Query(QueryOp::InterpretTask(InterpretTask {
                         offset,
@@ -666,7 +665,7 @@ impl<C> Inner<C> where C: Context {
                                 tasks_queue_push(
                                     &mut self.tasks_queue,
                                     &self.bg_task,
-                                    { println!(" // task_op.block_offset = {}", task_op.block_offset); task_op.block_offset },
+                                    task_op.block_offset,
                                     task::Task {
                                         block_id: block_id.clone(),
                                         kind: task::TaskKind::WriteBlock(

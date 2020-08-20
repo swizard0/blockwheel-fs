@@ -66,6 +66,7 @@ pub struct TasksHead {
     head_write: Option<Ref>,
     head_read: Option<Ref>,
     head_delete: Option<Ref>,
+    is_queued: bool,
 }
 
 impl TasksHead {

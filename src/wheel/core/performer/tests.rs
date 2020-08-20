@@ -185,10 +185,7 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         panic!("expecting exact ExpectOp::PollRequest for PollRequest but got {:?} @ {}", other_op, script_len - script.len()),
                 },
 
-            Op::Query(QueryOp::InterpretTask(InterpretTask { offset, task, next, })) => {
-
-                println!(" ;; offset = {}, task = {:?}", offset, task);
-
+            Op::Query(QueryOp::InterpretTask(InterpretTask { offset, task, next, })) =>
                 match script.pop() {
                     None =>
                         panic!("unexpected script end on InterpretTask, expecting ExpectOp::InterpretTask @ {}", script_len - script.len()),
@@ -206,8 +203,7 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         },
                     Some(other_op) =>
                         panic!("expecting exact ExpectOp::InterpretTask for InterpretTask but got {:?} @ {}", other_op, script_len - script.len()),
-                }
-            },
+                },
 
             Op::Event(Event { op: EventOp::LendBlock(TaskDoneOp { context, op: LendBlockOp::Success { .. }, }), performer, }) =>
                 match script.pop() {
