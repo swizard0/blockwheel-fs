@@ -24,6 +24,7 @@ use super::{
 
 mod basic;
 mod defrag;
+mod defrag_disturb;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Context;
