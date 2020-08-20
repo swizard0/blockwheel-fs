@@ -207,7 +207,58 @@ fn script_simple_defrag() {
                 }),
             },
         }),
-
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx06", }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx06",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 77,
+                task: task::TaskDone {
+                    block_id: block::Id::init().next(),
+                    kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                        context: task::WriteBlockContext::Defrag,
+                    }),
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ectx03", }),
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::InterpretTask {
+            expect_offset: 77,
+            expect_task: ExpectTask {
+                block_id: block::Id::init().next().next(),
+                kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    commit_type: task::CommitType::CommitAndEof,
+                    context: task::WriteBlockContext::External("ectx03"),
+                }),
+            },
+        }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx07", }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx07",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 130,
+                task: task::TaskDone {
+                    block_id: block::Id::init().next().next(),
+                    kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                        context: task::WriteBlockContext::External("ectx03"),
+                    }),
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::WriteBlockDone {
+            expect_block_id: block::Id::init().next().next(),
+            expect_context: "ectx03",
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
     ];
 
     interpret(performer, script)
