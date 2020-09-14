@@ -143,6 +143,7 @@ impl Schema {
     pub fn process_write_block_request<'a>(
         &'a mut self,
         block_bytes: &block::Bytes,
+        defrag_pending_bytes: Option<usize>,
     )
         -> WriteBlockOp<'a>
     {
@@ -156,7 +157,7 @@ impl Schema {
             + self.storage_layout.data_size_block_min();
 
         let blocks_index = &self.blocks_index;
-        let block_offset = match self.gaps_index.allocate(space_required, |block_id| blocks_index.get(block_id)) {
+        let block_offset = match self.gaps_index.allocate(space_required, defrag_pending_bytes, |block_id| blocks_index.get(block_id)) {
 
             // before: ^| ....... | A | ... |$
             // after:  ^| R | ... | A | ... |$
@@ -1048,7 +1049,7 @@ mod tests {
         let mut schema = init();
         assert_eq!(schema.gaps_index.space_total(), 112);
 
-        let op = schema.process_write_block_request(&sample_hello_world());
+        let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(WriteBlockPerform {
             defrag_op: DefragOp::None,
             task_op: WriteBlockTaskOp {
@@ -1079,7 +1080,7 @@ mod tests {
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
         assert_eq!(schema.gaps_index.space_total(), 59);
 
-        let op = schema.process_write_block_request(&sample_hello_world());
+        let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(
             WriteBlockPerform {
                 defrag_op: DefragOp::None,
@@ -1128,7 +1129,7 @@ mod tests {
         assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
         assert_eq!(schema.gaps_index.space_total(), 6);
 
-        let op = schema.process_write_block_request(&sample_hello_world());
+        let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::ReplyNoSpaceLeft));
     }
 
@@ -1140,7 +1141,7 @@ mod tests {
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::NotFound));
 
-        let op = schema.process_write_block_request(&sample_hello_world());
+        let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(
             WriteBlockPerform {
                 defrag_op: DefragOp::None,
@@ -1187,8 +1188,8 @@ mod tests {
         let mut schema = init();
         assert_eq!(schema.gaps_index.space_total(), 112);
 
-        schema.process_write_block_request(&sample_hello_world());
-        schema.process_write_block_request(&sample_hello_world());
+        schema.process_write_block_request(&sample_hello_world(), None);
+        schema.process_write_block_request(&sample_hello_world(), None);
 
         let op = schema.process_delete_block_request(&block::Id::init());
         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));
@@ -1238,7 +1239,7 @@ mod tests {
         ));
         assert_eq!(schema.gaps_index.space_total(), 59);
 
-        schema.process_write_block_request(&sample_hello_world());
+        schema.process_write_block_request(&sample_hello_world(), None);
 
         let op = schema.process_delete_block_request(&block::Id::init().next());
         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 77, .. })));
@@ -1288,8 +1289,8 @@ mod tests {
         let mut schema = init();
         assert_eq!(schema.gaps_index.space_total(), 112);
 
-        schema.process_write_block_request(&sample_hello_world());
-        schema.process_write_block_request(&sample_hello_world());
+        schema.process_write_block_request(&sample_hello_world(), Some(0));
+        schema.process_write_block_request(&sample_hello_world(), Some(0));
 
         let op = schema.process_delete_block_request(&block::Id::init());
         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));

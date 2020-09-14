@@ -20,7 +20,7 @@ use super::{
 use crate::wheel::core::SpaceKey;
 
 #[test]
-fn script_simple_defrag() {
+fn script_defrag_disturb() {
     let performer = with_defrag_config(Some(DefragConfig::new(1)));
     let script = vec![
         ScriptOp::Expect(ExpectOp::PollRequest),

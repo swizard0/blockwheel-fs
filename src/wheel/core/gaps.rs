@@ -90,6 +90,7 @@ impl Index {
     pub fn allocate<'a, G>(
         &mut self,
         space_required: usize,
+        defrag_pending_bytes: Option<usize>,
         block_get: G,
     )
         -> Result<Allocated<'a>, Error>
@@ -177,12 +178,16 @@ impl Index {
         }
 
         if let Some(result) = maybe_result {
-            Ok(result)
-        } else if space_required <= self.space_total {
-            Ok(Allocated::PendingDefragmentation)
-        } else {
-            Err(Error::NoSpaceLeft)
+            return Ok(result);
         }
+
+        if let Some(pending_bytes) = defrag_pending_bytes {
+            if space_required + pending_bytes <= self.space_total {
+                return Ok(Allocated::PendingDefragmentation);
+            }
+        }
+
+        Err(Error::NoSpaceLeft)
     }
 
     pub fn lock_defrag(&mut self, key: &SpaceKey) {
@@ -231,7 +236,7 @@ mod tests {
         let Init { block_a_id, block_b_id, blocks_index, mut gaps_index, .. } = Init::new();
 
         assert_eq!(
-            gaps_index.allocate(3, |key| blocks_index.get(key)),
+            gaps_index.allocate(3, None, |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 4,
                 between: GapBetween::TwoBlocks {
@@ -279,7 +284,7 @@ mod tests {
         let Init { block_b_id, blocks_index, mut gaps_index, .. } = Init::new();
 
         assert_eq!(
-            gaps_index.allocate(33, |key| blocks_index.get(key)),
+            gaps_index.allocate(33, None, |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 60,
                 between: GapBetween::BlockAndEnd {
@@ -310,7 +315,7 @@ mod tests {
         let Init { blocks_index, mut gaps_index, .. } = Init::new();
 
         assert_eq!(
-            gaps_index.allocate(61, |key| blocks_index.get(key)),
+            gaps_index.allocate(61, Some(0), |key| blocks_index.get(key)),
             Ok(Allocated::PendingDefragmentation),
         );
     }
@@ -320,7 +325,7 @@ mod tests {
         let Init { blocks_index, mut gaps_index, .. } = Init::new();
 
         assert_eq!(
-            gaps_index.allocate(65, |key| blocks_index.get(key)),
+            gaps_index.allocate(65, None, |key| blocks_index.get(key)),
             Err(Error::NoSpaceLeft),
         );
     }
@@ -330,7 +335,7 @@ mod tests {
         let Init { block_a_id, block_b_id, blocks_index, mut gaps_index, .. } = Init::new();
 
         assert_eq!(
-            gaps_index.allocate(3, |key| blocks_index.get(key)),
+            gaps_index.allocate(3, None, |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 4,
                 between: GapBetween::TwoBlocks {
@@ -372,7 +377,7 @@ mod tests {
             }),
         );
         assert_eq!(
-            gaps_index.allocate(3, |key| blocks_index.get(key)),
+            gaps_index.allocate(3, None, |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 60,
                 between: GapBetween::BlockAndEnd {
@@ -397,7 +402,7 @@ mod tests {
             }),
         );
         assert_eq!(
-            gaps_index.allocate(3, |key| blocks_index.get(key)),
+            gaps_index.allocate(3, None, |key| blocks_index.get(key)),
             Err(Error::NoSpaceLeft),
         );
     }
@@ -408,7 +413,7 @@ mod tests {
 
         gaps_index.lock_defrag(&space_key_a);
         assert_eq!(
-            gaps_index.allocate(3, |key| blocks_index.get(key)),
+            gaps_index.allocate(3, Some(0), |key| blocks_index.get(key)),
             Ok(Allocated::Success {
                 space_available: 60,
                 between: GapBetween::BlockAndEnd {
@@ -434,7 +439,7 @@ mod tests {
         );
 
         assert_eq!(
-            gaps_index.allocate(3, |key| blocks_index.get(key)),
+            gaps_index.allocate(3, Some(0), |key| blocks_index.get(key)),
             Ok(Allocated::PendingDefragmentation),
         );
     }

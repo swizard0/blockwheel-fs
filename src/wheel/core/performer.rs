@@ -435,7 +435,10 @@ impl<C> Inner<C> where C: Context {
             },
 
             proto::Request::WriteBlock(request_write_block) => {
-                match self.schema.process_write_block_request(&request_write_block.block_bytes) {
+                let defrag_pending_bytes = self.defrag
+                    .as_ref()
+                    .map(|defrag| defrag.queues.pending.pending_bytes());
+                match self.schema.process_write_block_request(&request_write_block.block_bytes, defrag_pending_bytes) {
 
                     schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, tasks_head, }) => {
                         match (defrag_op, self.defrag.as_mut()) {
