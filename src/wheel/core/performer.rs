@@ -321,6 +321,7 @@ impl<C> Inner<C> where C: Context {
                             (),
                     }
                 }
+                self.flush_defrag_pending_queue(block_entry.header.block_size);
             },
             DoneTask::DeleteBlockDefrag { block_id, block_bytes, } => {
                 if let Some(tasks_head) = self.schema.block_tasks_head(&block_id) {
@@ -346,6 +347,7 @@ impl<C> Inner<C> where C: Context {
                     }
                 }
 
+                self.flush_defrag_pending_queue(block_bytes.len());
                 self.done_task = DoneTask::Reenqueue { block_id, };
                 return Op::Idle(Performer { inner: self, });
             },
@@ -455,7 +457,7 @@ impl<C> Inner<C> where C: Context {
                 incoming_request_write_block_perform(
                     &mut self.tasks_queue,
                     &self.bg_task,
-                    &mut self.defrag,
+                    self.defrag.as_mut(),
                     request_write_block,
                     write_block_perform,
                 );
@@ -724,49 +726,27 @@ impl<C> Inner<C> where C: Context {
         }
     }
 
-    fn flush_defrag_pending_queue(&mut self) {
+    fn flush_defrag_pending_queue(&mut self, bytes_available: usize) {
         if let Some(defrag) = self.defrag.as_mut() {
-
-
-            unimplemented!();
-
-            // let defrag_pending_bytes = self.defrag
-            //     .as_ref()
-            //     .map(|defrag| defrag.queues.pending.pending_bytes());
-            // match self.schema.process_write_block_request(&request_write_block.block_bytes, defrag_pending_bytes) {
-
-            //     schema::WriteBlockOp::Perform(write_block_perform) => {
-            //         incoming_request_write_block_perform(
-            //             &mut self.tasks_queue,
-            //             &self.bg_task,
-            //             &mut self.defrag,
-            //             request_write_block,
-            //             write_block_perform,
-            //         );
-            //         Op::Idle(Performer { inner: self, })
-            //     },
-
-            //     schema::WriteBlockOp::QueuePendingDefrag => {
-            //         log::debug!(
-            //             "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
-            //             request_write_block.block_bytes.len(),
-            //         );
-            //         if let Some(Defrag { queues: defrag::Queues { pending, .. }, .. }) = self.defrag.as_mut() {
-            //             pending.push(request_write_block);
-            //         }
-            //         Op::Idle(Performer { inner: self, })
-            //     },
-
-            //     schema::WriteBlockOp::ReplyNoSpaceLeft =>
-            //         Op::Event(Event {
-            //             op: EventOp::WriteBlock(TaskDoneOp {
-            //                 context: request_write_block.context,
-            //                 op: WriteBlockOp::NoSpaceLeft,
-            //             }),
-            //             performer: Performer { inner: self, },
-            //         }),
-
-            // }
+            while let Some(request_write_block) = defrag.queues.pending.pop_at_most(bytes_available) {
+                match self.schema.process_write_block_request(&request_write_block.block_bytes, Some(defrag.queues.pending.pending_bytes())) {
+                    schema::WriteBlockOp::Perform(write_block_perform) => {
+                        incoming_request_write_block_perform(
+                            &mut self.tasks_queue,
+                            &self.bg_task,
+                            Some(defrag),
+                            request_write_block,
+                            write_block_perform,
+                        );
+                    },
+                    schema::WriteBlockOp::QueuePendingDefrag => {
+                        defrag.queues.pending.push(request_write_block);
+                        break;
+                    },
+                    schema::WriteBlockOp::ReplyNoSpaceLeft =>
+                        unreachable!(),
+                }
+            }
         }
     }
 }
@@ -774,7 +754,7 @@ impl<C> Inner<C> where C: Context {
 fn incoming_request_write_block_perform<'a, C>(
     tasks_queue: &mut task::queue::Queue<C>,
     bg_task: &BackgroundTask<C::Interpreter>,
-    defrag: &mut Option<Defrag<C::WriteBlock>>,
+    mut defrag: Option<&mut Defrag<C::WriteBlock>>,
     request_write_block: proto::RequestWriteBlock<C::WriteBlock>,
     write_block_perform: schema::WriteBlockPerform<'a>,
 )

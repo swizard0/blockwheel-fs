@@ -63,8 +63,21 @@ impl<C> PendingQueue<C> {
     }
 
     pub fn pop_at_most(&mut self, bytes_available: usize) -> Option<proto::RequestWriteBlock<C>> {
-
-        unimplemented!()
+        let mut candidates = self.queue.range(..= bytes_available).rev();
+        let (&block_bytes_len, &node_ref) = candidates.next()?;
+        let node = self.requests.remove(node_ref).unwrap();
+        assert_eq!(block_bytes_len, node.item.block_bytes.len());
+        assert!(self.bytes >= block_bytes_len);
+        match node.parent {
+            None => {
+                self.queue.remove(&block_bytes_len);
+            },
+            Some(parent_ref) => {
+                *self.queue.get_mut(&block_bytes_len).unwrap() = parent_ref;
+            },
+        }
+        self.bytes -= block_bytes_len;
+        Some(node.item)
     }
 
     pub fn pending_bytes(&self) -> usize {
