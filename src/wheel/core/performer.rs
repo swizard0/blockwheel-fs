@@ -418,173 +418,185 @@ impl<C> Inner<C> where C: Context {
         }
     }
 
-    fn incoming_request(mut self, incoming: proto::Request<C>) -> Op<C> {
+    fn incoming_request(self, incoming: proto::Request<C>) -> Op<C> {
         match incoming {
+            proto::Request::LendBlock(request_lend_block) =>
+                self.incoming_request_lend_block(request_lend_block),
+            proto::Request::RepayBlock(request_repay_block) =>
+                self.incoming_request_repay_block(request_repay_block),
+            proto::Request::WriteBlock(request_write_block) =>
+                self.incoming_request_write_block(request_write_block),
+            proto::Request::ReadBlock(request_read_block) =>
+                self.incoming_request_read_block(request_read_block),
+            proto::Request::DeleteBlock(request_delete_block) =>
+                self.incoming_request_delete_block(request_delete_block),
+        }
+    }
 
-            proto::Request::LendBlock(proto::RequestLendBlock { context, }) => {
-                let block_bytes = self.blocks_pool.lend();
-                Op::Event(Event {
-                    op: EventOp::LendBlock(TaskDoneOp { context, op: LendBlockOp::Success { block_bytes, }, }),
-                    performer: Performer { inner: self, },
-                })
-            },
+    fn incoming_request_lend_block(mut self, proto::RequestLendBlock { context, }: proto::RequestLendBlock<C::LendBlock>) -> Op<C> {
+        let block_bytes = self.blocks_pool.lend();
+        Op::Event(Event {
+            op: EventOp::LendBlock(TaskDoneOp { context, op: LendBlockOp::Success { block_bytes, }, }),
+            performer: Performer { inner: self, },
+        })
+    }
 
-            proto::Request::RepayBlock(proto::RequestRepayBlock { block_bytes, }) => {
-                self.blocks_pool.repay(block_bytes);
+    fn incoming_request_repay_block(mut self, proto::RequestRepayBlock { block_bytes, }: proto::RequestRepayBlock) -> Op<C> {
+        self.blocks_pool.repay(block_bytes);
+        Op::Idle(Performer { inner: self, })
+    }
+
+    fn incoming_request_write_block(mut self, request_write_block: proto::RequestWriteBlock<C::WriteBlock>) -> Op<C> {
+        let defrag_pending_bytes = self.defrag
+            .as_ref()
+            .map(|defrag| defrag.queues.pending.pending_bytes());
+        match self.schema.process_write_block_request(&request_write_block.block_bytes, defrag_pending_bytes) {
+
+            schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, tasks_head, }) => {
+                match (defrag_op, self.defrag.as_mut()) {
+                    (
+                        schema::DefragOp::Queue { free_space_offset, space_key, },
+                        Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }),
+                    ) =>
+                        tasks.push(free_space_offset, space_key),
+                    (schema::DefragOp::None, _) | (_, None) =>
+                        (),
+                }
+                tasks_queue_push(
+                    &mut self.tasks_queue,
+                    &self.bg_task,
+                    task_op.block_offset,
+                    task::Task {
+                        block_id: task_op.block_id,
+                        kind: task::TaskKind::WriteBlock(
+                            task::WriteBlock {
+                                block_bytes: request_write_block.block_bytes,
+                                commit_type: match task_op.commit_type {
+                                    schema::WriteBlockTaskCommitType::CommitOnly =>
+                                        task::CommitType::CommitOnly,
+                                    schema::WriteBlockTaskCommitType::CommitAndEof =>
+                                        task::CommitType::CommitAndEof,
+                                },
+                                context: task::WriteBlockContext::External(
+                                    request_write_block.context,
+                                ),
+                            },
+                        ),
+                    },
+                    tasks_head,
+                );
                 Op::Idle(Performer { inner: self, })
             },
 
-            proto::Request::WriteBlock(request_write_block) => {
-                let defrag_pending_bytes = self.defrag
-                    .as_ref()
-                    .map(|defrag| defrag.queues.pending.pending_bytes());
-                match self.schema.process_write_block_request(&request_write_block.block_bytes, defrag_pending_bytes) {
-
-                    schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, tasks_head, }) => {
-                        match (defrag_op, self.defrag.as_mut()) {
-                            (
-                                schema::DefragOp::Queue { free_space_offset, space_key, },
-                                Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }),
-                            ) =>
-                                tasks.push(free_space_offset, space_key),
-                            (schema::DefragOp::None, _) | (_, None) =>
-                                (),
-                        }
-                        tasks_queue_push(
-                            &mut self.tasks_queue,
-                            &self.bg_task,
-                            task_op.block_offset,
-                            task::Task {
-                                block_id: task_op.block_id,
-                                kind: task::TaskKind::WriteBlock(
-                                    task::WriteBlock {
-                                        block_bytes: request_write_block.block_bytes,
-                                        commit_type: match task_op.commit_type {
-                                            schema::WriteBlockTaskCommitType::CommitOnly =>
-                                                task::CommitType::CommitOnly,
-                                            schema::WriteBlockTaskCommitType::CommitAndEof =>
-                                                task::CommitType::CommitAndEof,
-                                        },
-                                        context: task::WriteBlockContext::External(
-                                            request_write_block.context,
-                                        ),
-                                    },
-                                ),
-                            },
-                            tasks_head,
-                        );
-                        Op::Idle(Performer { inner: self, })
-                    },
-
-                    schema::WriteBlockOp::QueuePendingDefrag => {
-                        log::debug!(
-                            "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
-                            request_write_block.block_bytes.len(),
-                        );
-                        if let Some(Defrag { queues: defrag::Queues { pending, .. }, .. }) = self.defrag.as_mut() {
-                            pending.push(request_write_block);
-                        }
-                        Op::Idle(Performer { inner: self, })
-                    },
-
-                    schema::WriteBlockOp::ReplyNoSpaceLeft =>
-                        Op::Event(Event {
-                            op: EventOp::WriteBlock(TaskDoneOp {
-                                context: request_write_block.context,
-                                op: WriteBlockOp::NoSpaceLeft,
-                            }),
-                            performer: Performer { inner: self, },
-                        }),
-
+            schema::WriteBlockOp::QueuePendingDefrag => {
+                log::debug!(
+                    "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
+                    request_write_block.block_bytes.len(),
+                );
+                if let Some(Defrag { queues: defrag::Queues { pending, .. }, .. }) = self.defrag.as_mut() {
+                    pending.push(request_write_block);
                 }
+                Op::Idle(Performer { inner: self, })
             },
 
-            proto::Request::ReadBlock(request_read_block) =>
-                match self.schema.process_read_block_request(&request_read_block.block_id) {
+            schema::WriteBlockOp::ReplyNoSpaceLeft =>
+                Op::Event(Event {
+                    op: EventOp::WriteBlock(TaskDoneOp {
+                        context: request_write_block.context,
+                        op: WriteBlockOp::NoSpaceLeft,
+                    }),
+                    performer: Performer { inner: self, },
+                }),
 
-                    schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, tasks_head, }) =>
-                        if let Some(block_bytes) = self.lru_cache.get(&request_read_block.block_id) {
-                            Op::Event(Event {
-                                op: EventOp::ReadBlock(TaskDoneOp {
-                                    context: request_read_block.context,
-                                    op: ReadBlockOp::Done {
-                                        block_bytes: block_bytes.clone(),
-                                    },
-                                }),
-                                performer: Performer { inner: self, },
-                            })
-                        } else {
-                            let block_bytes = self.blocks_pool.lend();
-                            tasks_queue_push(
-                                &mut self.tasks_queue,
-                                &self.bg_task,
-                                block_offset,
-                                task::Task {
-                                    block_id: request_read_block.block_id.clone(),
-                                    kind: task::TaskKind::ReadBlock(task::ReadBlock {
-                                        block_header: block_header.clone(),
-                                        block_bytes,
-                                        context: task::ReadBlockContext::External(
-                                            request_read_block.context,
-                                        ),
-                                    }),
-                                },
-                                tasks_head,
-                            );
-                            Op::Idle(Performer { inner: self, })
-                        },
+        }
+    }
 
-                    schema::ReadBlockOp::Cached { block_bytes, } =>
-                        Op::Event(Event {
-                            op: EventOp::ReadBlock(TaskDoneOp {
-                                context: request_read_block.context,
-                                op: ReadBlockOp::Done { block_bytes, },
-                            }),
-                            performer: Performer { inner: self, },
-                        }),
+    fn incoming_request_read_block(mut self, request_read_block: proto::RequestReadBlock<C::ReadBlock>) -> Op<C> {
+        match self.schema.process_read_block_request(&request_read_block.block_id) {
 
-                    schema::ReadBlockOp::NotFound =>
-                        Op::Event(Event {
-                            op: EventOp::ReadBlock(TaskDoneOp {
-                                context: request_read_block.context,
-                                op: ReadBlockOp::NotFound,
-                            }),
-                            performer: Performer { inner: self, },
-                        }),
-
-                },
-
-            proto::Request::DeleteBlock(request_delete_block) =>
-                match self.schema.process_delete_block_request(&request_delete_block.block_id) {
-
-                    schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, tasks_head, }) => {
-                        tasks_queue_push(
-                            &mut self.tasks_queue,
-                            &self.bg_task,
-                            block_offset,
-                            task::Task {
-                                block_id: request_delete_block.block_id,
-                                kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
-                                    context: task::DeleteBlockContext::External(
-                                        request_delete_block.context,
-                                    ),
-                                }),
+            schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, tasks_head, }) =>
+                if let Some(block_bytes) = self.lru_cache.get(&request_read_block.block_id) {
+                    Op::Event(Event {
+                        op: EventOp::ReadBlock(TaskDoneOp {
+                            context: request_read_block.context,
+                            op: ReadBlockOp::Done {
+                                block_bytes: block_bytes.clone(),
                             },
-                            tasks_head,
-                        );
-                        Op::Idle(Performer { inner: self, })
-                    },
-
-                    schema::DeleteBlockOp::NotFound =>
-                        Op::Event(Event {
-                            op: EventOp::DeleteBlock(TaskDoneOp {
-                                context: request_delete_block.context,
-                                op: DeleteBlockOp::NotFound,
-                            }),
-                            performer: Performer { inner: self, },
                         }),
-
+                        performer: Performer { inner: self, },
+                    })
+                } else {
+                    let block_bytes = self.blocks_pool.lend();
+                    tasks_queue_push(
+                        &mut self.tasks_queue,
+                        &self.bg_task,
+                        block_offset,
+                        task::Task {
+                            block_id: request_read_block.block_id.clone(),
+                            kind: task::TaskKind::ReadBlock(task::ReadBlock {
+                                block_header: block_header.clone(),
+                                block_bytes,
+                                context: task::ReadBlockContext::External(
+                                    request_read_block.context,
+                                ),
+                            }),
+                        },
+                        tasks_head,
+                    );
+                    Op::Idle(Performer { inner: self, })
                 },
+
+            schema::ReadBlockOp::Cached { block_bytes, } =>
+                Op::Event(Event {
+                    op: EventOp::ReadBlock(TaskDoneOp {
+                        context: request_read_block.context,
+                        op: ReadBlockOp::Done { block_bytes, },
+                    }),
+                    performer: Performer { inner: self, },
+                }),
+
+            schema::ReadBlockOp::NotFound =>
+                Op::Event(Event {
+                    op: EventOp::ReadBlock(TaskDoneOp {
+                        context: request_read_block.context,
+                        op: ReadBlockOp::NotFound,
+                    }),
+                    performer: Performer { inner: self, },
+                }),
+
+        }
+    }
+
+    fn incoming_request_delete_block(mut self, request_delete_block: proto::RequestDeleteBlock<C::DeleteBlock>) -> Op<C> {
+        match self.schema.process_delete_block_request(&request_delete_block.block_id) {
+
+            schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, tasks_head, }) => {
+                tasks_queue_push(
+                    &mut self.tasks_queue,
+                    &self.bg_task,
+                    block_offset,
+                    task::Task {
+                        block_id: request_delete_block.block_id,
+                        kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                            context: task::DeleteBlockContext::External(
+                                request_delete_block.context,
+                            ),
+                        }),
+                    },
+                    tasks_head,
+                );
+                Op::Idle(Performer { inner: self, })
+            },
+
+            schema::DeleteBlockOp::NotFound =>
+                Op::Event(Event {
+                    op: EventOp::DeleteBlock(TaskDoneOp {
+                        context: request_delete_block.context,
+                        op: DeleteBlockOp::NotFound,
+                    }),
+                    performer: Performer { inner: self, },
+                }),
+
         }
     }
 

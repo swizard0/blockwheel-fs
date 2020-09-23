@@ -1,7 +1,7 @@
 use std::{
     cmp,
     collections::{
-        VecDeque,
+        BTreeMap,
         BinaryHeap,
     },
 };
@@ -28,21 +28,24 @@ impl<C> Queues<C> {
 
 #[derive(Debug)]
 pub struct PendingQueue<C> {
-    queue: VecDeque<proto::RequestWriteBlock<C>>,
+    queue: BTreeMap<usize, proto::RequestWriteBlock<C>>,
     bytes: usize,
 }
 
 impl<C> PendingQueue<C> {
     pub fn new() -> PendingQueue<C> {
         PendingQueue {
-            queue: VecDeque::new(),
+            queue: BTreeMap::new(),
             bytes: 0,
         }
     }
 
     pub fn push(&mut self, request_write_block: proto::RequestWriteBlock<C>) {
         self.bytes += request_write_block.block_bytes.len();
-        self.queue.push_back(request_write_block);
+        self.queue.insert(
+            request_write_block.block_bytes.len(),
+            request_write_block,
+        );
     }
 
     pub fn pending_bytes(&self) -> usize {
