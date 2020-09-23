@@ -132,7 +132,6 @@ pub struct PollRequestNext<C> where C: Context {
     inner: Inner<C>,
 }
 
-#[derive(Debug)]
 pub struct DefragConfig<C> {
     queues: defrag::Queues<C>,
     in_progress_tasks_limit: usize,
@@ -722,6 +721,52 @@ impl<C> Inner<C> where C: Context {
                         Op::Idle(Performer { inner: self, })
                     },
                 },
+        }
+    }
+
+    fn flush_defrag_pending_queue(&mut self) {
+        if let Some(defrag) = self.defrag.as_mut() {
+
+
+            unimplemented!();
+
+            // let defrag_pending_bytes = self.defrag
+            //     .as_ref()
+            //     .map(|defrag| defrag.queues.pending.pending_bytes());
+            // match self.schema.process_write_block_request(&request_write_block.block_bytes, defrag_pending_bytes) {
+
+            //     schema::WriteBlockOp::Perform(write_block_perform) => {
+            //         incoming_request_write_block_perform(
+            //             &mut self.tasks_queue,
+            //             &self.bg_task,
+            //             &mut self.defrag,
+            //             request_write_block,
+            //             write_block_perform,
+            //         );
+            //         Op::Idle(Performer { inner: self, })
+            //     },
+
+            //     schema::WriteBlockOp::QueuePendingDefrag => {
+            //         log::debug!(
+            //             "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
+            //             request_write_block.block_bytes.len(),
+            //         );
+            //         if let Some(Defrag { queues: defrag::Queues { pending, .. }, .. }) = self.defrag.as_mut() {
+            //             pending.push(request_write_block);
+            //         }
+            //         Op::Idle(Performer { inner: self, })
+            //     },
+
+            //     schema::WriteBlockOp::ReplyNoSpaceLeft =>
+            //         Op::Event(Event {
+            //             op: EventOp::WriteBlock(TaskDoneOp {
+            //                 context: request_write_block.context,
+            //                 op: WriteBlockOp::NoSpaceLeft,
+            //             }),
+            //             performer: Performer { inner: self, },
+            //         }),
+
+            // }
         }
     }
 }

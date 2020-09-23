@@ -3,7 +3,13 @@ use std::{
     collections::{
         BTreeMap,
         BinaryHeap,
+        btree_map,
     },
+};
+
+use o1::{
+    set::Ref,
+    forest::Forest1,
 };
 
 use super::{
@@ -11,7 +17,6 @@ use super::{
     SpaceKey,
 };
 
-#[derive(Debug)]
 pub struct Queues<C> {
     pub pending: PendingQueue<C>,
     pub tasks: TaskQueue,
@@ -26,9 +31,9 @@ impl<C> Queues<C> {
     }
 }
 
-#[derive(Debug)]
 pub struct PendingQueue<C> {
-    queue: BTreeMap<usize, proto::RequestWriteBlock<C>>,
+    queue: BTreeMap<usize, Ref>,
+    requests: Forest1<proto::RequestWriteBlock<C>>,
     bytes: usize,
 }
 
@@ -36,16 +41,30 @@ impl<C> PendingQueue<C> {
     pub fn new() -> PendingQueue<C> {
         PendingQueue {
             queue: BTreeMap::new(),
+            requests: Forest1::new(),
             bytes: 0,
         }
     }
 
     pub fn push(&mut self, request_write_block: proto::RequestWriteBlock<C>) {
-        self.bytes += request_write_block.block_bytes.len();
-        self.queue.insert(
-            request_write_block.block_bytes.len(),
-            request_write_block,
-        );
+        let block_bytes_len = request_write_block.block_bytes.len();
+        self.bytes += block_bytes_len;
+        match self.queue.entry(block_bytes_len) {
+            btree_map::Entry::Vacant(ve) => {
+                let node_ref = self.requests.make_root(request_write_block);
+                ve.insert(node_ref);
+            },
+            btree_map::Entry::Occupied(mut oe) => {
+                let value = oe.get_mut();
+                let node_ref = self.requests.make_node(*value, request_write_block);
+                *value = node_ref;
+            },
+        }
+    }
+
+    pub fn pop_at_most(&mut self, bytes_available: usize) -> Option<proto::RequestWriteBlock<C>> {
+
+        unimplemented!()
     }
 
     pub fn pending_bytes(&self) -> usize {
