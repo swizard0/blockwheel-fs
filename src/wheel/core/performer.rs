@@ -452,38 +452,13 @@ impl<C> Inner<C> where C: Context {
             .map(|defrag| defrag.queues.pending.pending_bytes());
         match self.schema.process_write_block_request(&request_write_block.block_bytes, defrag_pending_bytes) {
 
-            schema::WriteBlockOp::Perform(schema::WriteBlockPerform { defrag_op, task_op, tasks_head, }) => {
-                match (defrag_op, self.defrag.as_mut()) {
-                    (
-                        schema::DefragOp::Queue { free_space_offset, space_key, },
-                        Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }),
-                    ) =>
-                        tasks.push(free_space_offset, space_key),
-                    (schema::DefragOp::None, _) | (_, None) =>
-                        (),
-                }
-                tasks_queue_push(
+            schema::WriteBlockOp::Perform(write_block_perform) => {
+                incoming_request_write_block_perform(
                     &mut self.tasks_queue,
                     &self.bg_task,
-                    task_op.block_offset,
-                    task::Task {
-                        block_id: task_op.block_id,
-                        kind: task::TaskKind::WriteBlock(
-                            task::WriteBlock {
-                                block_bytes: request_write_block.block_bytes,
-                                commit_type: match task_op.commit_type {
-                                    schema::WriteBlockTaskCommitType::CommitOnly =>
-                                        task::CommitType::CommitOnly,
-                                    schema::WriteBlockTaskCommitType::CommitAndEof =>
-                                        task::CommitType::CommitAndEof,
-                                },
-                                context: task::WriteBlockContext::External(
-                                    request_write_block.context,
-                                ),
-                            },
-                        ),
-                    },
-                    tasks_head,
+                    &mut self.defrag,
+                    request_write_block,
+                    write_block_perform,
                 );
                 Op::Idle(Performer { inner: self, })
             },
@@ -749,6 +724,50 @@ impl<C> Inner<C> where C: Context {
                 },
         }
     }
+}
+
+fn incoming_request_write_block_perform<'a, C>(
+    tasks_queue: &mut task::queue::Queue<C>,
+    bg_task: &BackgroundTask<C::Interpreter>,
+    defrag: &mut Option<Defrag<C::WriteBlock>>,
+    request_write_block: proto::RequestWriteBlock<C::WriteBlock>,
+    write_block_perform: schema::WriteBlockPerform<'a>,
+)
+    where C: Context
+{
+    let schema::WriteBlockPerform { defrag_op, task_op, tasks_head, } = write_block_perform;
+    match (defrag_op, defrag.as_mut()) {
+        (
+            schema::DefragOp::Queue { free_space_offset, space_key, },
+            Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }),
+        ) =>
+            tasks.push(free_space_offset, space_key),
+        (schema::DefragOp::None, _) | (_, None) =>
+            (),
+    }
+    tasks_queue_push(
+        tasks_queue,
+        &bg_task,
+        task_op.block_offset,
+        task::Task {
+            block_id: task_op.block_id,
+            kind: task::TaskKind::WriteBlock(
+                task::WriteBlock {
+                    block_bytes: request_write_block.block_bytes,
+                    commit_type: match task_op.commit_type {
+                        schema::WriteBlockTaskCommitType::CommitOnly =>
+                            task::CommitType::CommitOnly,
+                        schema::WriteBlockTaskCommitType::CommitAndEof =>
+                            task::CommitType::CommitAndEof,
+                    },
+                    context: task::WriteBlockContext::External(
+                        request_write_block.context,
+                    ),
+                },
+            ),
+        },
+        tasks_head,
+    );
 }
 
 fn tasks_queue_push<C>(
