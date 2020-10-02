@@ -64,8 +64,7 @@ pub enum Error {
     },
     StorageLayoutCalculate(storage::LayoutError),
     WheelHeaderSerialize(bincode::Error),
-    EofTagSerialize(bincode::Error),
-    WheelHeaderAndEofTagWrite(io::Error),
+    WheelHeaderTagWrite(io::Error),
     ZeroChunkWrite(io::Error),
     WheelCreateFlush(io::Error),
 }
@@ -346,15 +345,12 @@ async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, E
     bincode::serialize_into(&mut work_block, &wheel_header)
         .map_err(Error::WheelHeaderSerialize)
         .map_err(ErrorSeverity::Fatal)?;
-    bincode::serialize_into(&mut work_block, &storage::EofTag::default())
-        .map_err(Error::EofTagSerialize)
-        .map_err(ErrorSeverity::Fatal)?;
 
     let mut cursor = work_block.len();
-    let min_wheel_file_size = storage_layout.wheel_header_size + storage_layout.eof_tag_size;
+    let min_wheel_file_size = storage_layout.wheel_header_size;
     assert_eq!(cursor, min_wheel_file_size);
     wheel_file.write_all(&work_block).await
-        .map_err(Error::WheelHeaderAndEofTagWrite)
+        .map_err(Error::WheelHeaderTagWrite)
         .map_err(ErrorSeverity::Fatal)?;
 
     let size_bytes_total = state.params.init_wheel_size_bytes;

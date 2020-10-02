@@ -25,14 +25,7 @@ pub enum TaskKind<C> where C: Context {
 #[derive(Debug)]
 pub struct WriteBlock<C> {
     pub block_bytes: block::Bytes,
-    pub commit_type: CommitType,
     pub context: WriteBlockContext<C>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum CommitType {
-    CommitOnly,
-    CommitAndEof,
 }
 
 #[derive(Clone, PartialEq, Debug)]

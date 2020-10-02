@@ -35,7 +35,6 @@ pub enum Error {
     BlockHeaderSerialize(bincode::Error),
     CommitTagSerialize(bincode::Error),
     TombstoneTagSerialize(bincode::Error),
-    EofTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockFlush(io::Error),
     BlockRead(io::Error),
@@ -61,6 +60,11 @@ pub enum CorruptedDataError {
         offset: u64,
         block_id_expected: block::Id,
         block_id_actual: block::Id,
+    },
+    CommitTagCrcMismatch {
+        offset: u64,
+        crc_expected: u64,
+        crc_actual: u64,
     },
 }
 
@@ -101,19 +105,11 @@ pub async fn busyloop(
                 work_block.extend(write_block.block_bytes.iter());
                 let commit_tag = storage::CommitTag {
                     block_id: task.block_id.clone(),
+                    crc: write_block.block_bytes.crc(),
                     ..Default::default()
                 };
                 bincode::serialize_into(&mut work_block, &commit_tag)
                     .map_err(Error::CommitTagSerialize)?;
-
-                match write_block.commit_type {
-                    task::CommitType::CommitOnly =>
-                        (),
-                    task::CommitType::CommitAndEof => {
-                        bincode::serialize_into(&mut work_block, &storage::EofTag::default())
-                            .map_err(Error::EofTagSerialize)?;
-                    },
-                }
 
                 wheel_file.write_all(&work_block).await
                     .map_err(Error::BlockWrite)?;
@@ -174,6 +170,13 @@ pub async fn busyloop(
                         offset,
                         block_id_expected: read_block.block_header.block_id,
                         block_id_actual: commit_tag.block_id,
+                    }));
+                }
+                if commit_tag.crc != read_block.block_bytes.crc() {
+                    return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
+                        offset,
+                        crc_expected: read_block.block_bytes.crc(),
+                        crc_actual: commit_tag.crc,
                     }));
                 }
 

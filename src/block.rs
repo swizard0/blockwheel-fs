@@ -83,6 +83,10 @@ impl Bytes {
                 }),
         }
     }
+
+    pub fn crc(&self) -> u64 {
+        crc::crc64::checksum_ecma(&self.bytes)
+    }
 }
 
 impl Drop for Release {
@@ -166,6 +170,10 @@ impl BytesMut {
                 head: self.release_head,
             },
         }
+    }
+
+    pub fn crc(&self) -> u64 {
+        crc::crc64::checksum_ecma(&self.bytes)
     }
 }
 

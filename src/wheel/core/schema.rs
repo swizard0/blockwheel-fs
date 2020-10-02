@@ -43,13 +43,6 @@ pub enum DefragOp {
 pub struct WriteBlockTaskOp {
     pub block_id: block::Id,
     pub block_offset: u64,
-    pub commit_type: WriteBlockTaskCommitType,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum WriteBlockTaskCommitType {
-    CommitOnly,
-    CommitAndEof,
 }
 
 #[derive(Debug)]
@@ -112,7 +105,6 @@ pub struct DeleteBlockTaskDoneDefragPerform<'a> {
     pub block_bytes: block::Bytes,
     pub tasks_head: &'a mut TasksHead,
     pub defrag_op: DefragOp,
-    pub commit_type: WriteBlockTaskCommitType,
 }
 
 impl Schema {
@@ -151,7 +143,6 @@ impl Schema {
         self.next_block_id = self.next_block_id.next();
 
         let mut defrag_op = DefragOp::None;
-        let mut commit_type = WriteBlockTaskCommitType::CommitOnly;
 
         let space_required = block_bytes.len()
             + self.storage_layout.data_size_block_min();
@@ -307,8 +298,6 @@ impl Schema {
                     },
                 );
                 self.blocks_index.update_env_right(&left_block_id, left_env);
-
-                commit_type = WriteBlockTaskCommitType::CommitAndEof;
                 block_offset
             },
 
@@ -349,8 +338,6 @@ impl Schema {
                         tasks_head: Default::default(),
                     },
                 );
-
-                commit_type = WriteBlockTaskCommitType::CommitAndEof;
                 block_offset
             },
 
@@ -369,7 +356,6 @@ impl Schema {
                 task_op: WriteBlockTaskOp {
                     block_id,
                     block_offset,
-                    commit_type,
                 },
             },
         )
@@ -739,7 +725,6 @@ impl Schema {
         let start_offset = self.storage_layout.wheel_header_size as u64;
         let data_size_block_min = self.storage_layout.data_size_block_min() as u64;
         let mut defrag_op = DefragOp::None;
-        let mut commit_type = WriteBlockTaskCommitType::CommitOnly;
 
         match block_entry.environs.clone() {
 
@@ -764,7 +749,6 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Start;
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
-                        commit_type = WriteBlockTaskCommitType::CommitAndEof;
                     },
                     // before: ^| ... | A | ... | R |$
                     // after:  ^| ... | A | R | ... |$
@@ -785,7 +769,6 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Block { block_id: left_block.clone(), };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
-                        commit_type = WriteBlockTaskCommitType::CommitAndEof;
                     },
                 },
 
@@ -818,7 +801,6 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Start;
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
-                        commit_type = WriteBlockTaskCommitType::CommitAndEof;
                     },
                     // before: ^| ... | R | ... | A | ... |$
                     // after:  ^| R | ......... | A | ... |$
@@ -866,7 +848,6 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Block { block_id: right_block_left, };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
-                        commit_type = WriteBlockTaskCommitType::CommitAndEof;
                     },
                     // before: ^| ... | A | ... | R | ... | B | ... |$
                     // after:  ^| ... | A | R | ......... | B | ... |$
@@ -972,7 +953,6 @@ impl Schema {
                 .unwrap(),
             tasks_head: &mut block_entry.tasks_head,
             defrag_op,
-            commit_type,
         })
     }
 
@@ -1015,7 +995,6 @@ mod tests {
         WriteBlockPerform,
         DefragOp,
         WriteBlockTaskOp,
-        WriteBlockTaskCommitType,
         ReadBlockOp,
         ReadBlockPerform,
         DeleteBlockOp,
@@ -1027,14 +1006,9 @@ mod tests {
     };
 
     fn init() -> Schema {
-        let storage_layout = storage::Layout {
-            wheel_header_size: 24,
-            block_header_size: 24,
-            commit_tag_size: 16,
-            eof_tag_size: 8,
-        };
+        let storage_layout = storage::Layout::calculate(&mut Vec::new()).unwrap();
         let mut schema = Schema::new(storage_layout);
-        schema.initialize_empty(144);
+        schema.initialize_empty(160);
         schema
     }
 
@@ -1047,7 +1021,7 @@ mod tests {
     #[test]
     fn process_write_block_request() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 112);
+        assert_eq!(schema.gaps_index.space_total(), 136);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(WriteBlockPerform {
@@ -1055,7 +1029,6 @@ mod tests {
             task_op: WriteBlockTaskOp {
                 block_id,
                 block_offset: 24,
-                commit_type: WriteBlockTaskCommitType::CommitAndEof,
             },
             ..
         }) if block_id == block::Id::init()));
@@ -1072,13 +1045,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 59, serial: 2, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 75, serial: 2, }, },
                 },
                 ..
             }) if block_id == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 59);
+        assert_eq!(schema.gaps_index.space_total(), 75);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(
@@ -1086,8 +1059,7 @@ mod tests {
                 defrag_op: DefragOp::None,
                 task_op: WriteBlockTaskOp {
                     block_id,
-                    block_offset: 77,
-                    commit_type: WriteBlockTaskCommitType::CommitAndEof,
+                    block_offset: 85,
                 },
                 ..
             },
@@ -1113,7 +1085,7 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&BlockEntry {
-                offset: 77,
+                offset: 85,
                 header: storage::BlockHeader {
                     block_id: ref block_id_a,
                     block_size: 13,
@@ -1121,13 +1093,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Block { block_id: ref block_id_b, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 14, serial: 3, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 6);
+        assert_eq!(schema.gaps_index.space_total(), 14);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::ReplyNoSpaceLeft));
@@ -1136,7 +1108,7 @@ mod tests {
     #[test]
     fn process_write_read_block_requests() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 112);
+        assert_eq!(schema.gaps_index.space_total(), 136);
 
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::NotFound));
@@ -1148,7 +1120,6 @@ mod tests {
                 task_op: WriteBlockTaskOp {
                     ref block_id,
                     block_offset: 24,
-                    commit_type: WriteBlockTaskCommitType::CommitAndEof,
                 },
                 ..
             },
@@ -1166,13 +1137,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 59, serial: 2, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 75, serial: 2, }, },
                 },
                 ..
             }) if block_id == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 59);
+        assert_eq!(schema.gaps_index.space_total(), 75);
 
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::Cached { ref block_bytes, } if block_bytes == &sample_hello_world()));
@@ -1186,10 +1157,12 @@ mod tests {
     #[test]
     fn process_delete_block_request() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 112);
+        assert_eq!(schema.gaps_index.space_total(), 136);
 
-        schema.process_write_block_request(&sample_hello_world(), None);
-        schema.process_write_block_request(&sample_hello_world(), None);
+        let op = schema.process_write_block_request(&sample_hello_world(), None);
+        assert!(matches!(op, WriteBlockOp::Perform(..)));
+        let op = schema.process_write_block_request(&sample_hello_world(), None);
+        assert!(matches!(op, WriteBlockOp::Perform(..)));
 
         let op = schema.process_delete_block_request(&block::Id::init());
         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));
@@ -1215,7 +1188,7 @@ mod tests {
         assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
             defrag_op: DefragOp::Queue {
                 free_space_offset: 24,
-                space_key: SpaceKey { space_available: 53, serial: 4, },
+                space_key: SpaceKey { space_available: 61, serial: 4, },
             },
             ..
         })));
@@ -1224,30 +1197,31 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&BlockEntry {
-                offset: 77,
+                offset: 85,
                 header: storage::BlockHeader {
                     ref block_id,
                     block_size: 13,
                     ..
                 },
                 environs: Environs {
-                    left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 53, serial: 4, }, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                    left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 61, serial: 4, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 14, serial: 3, }, },
                 },
                 ..
             }) if block_id == &block::Id::init().next()
         ));
-        assert_eq!(schema.gaps_index.space_total(), 59);
+        assert_eq!(schema.gaps_index.space_total(), 75);
 
-        schema.process_write_block_request(&sample_hello_world(), None);
+        let op = schema.process_write_block_request(&sample_hello_world(), None);
+        assert!(matches!(op, WriteBlockOp::Perform(..)));
 
         let op = schema.process_delete_block_request(&block::Id::init().next());
-        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 77, .. })));
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 85, .. })));
 
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&BlockEntry {
-                offset: 77,
+                offset: 85,
                 header: storage::BlockHeader {
                     block_id: ref block_id_a,
                     block_size: 13,
@@ -1255,7 +1229,7 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Block { block_id: ref block_id_b, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 14, serial: 3, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init().next().next()
@@ -1276,21 +1250,23 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 59, serial: 5, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 75, serial: 5, }, },
                 },
                 ..
             }) if block_id == &block::Id::init().next().next()
         ));
-        assert_eq!(schema.gaps_index.space_total(), 59);
+        assert_eq!(schema.gaps_index.space_total(), 75);
     }
 
     #[test]
     fn process_delete_block_task_done_defrag() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 112);
+        assert_eq!(schema.gaps_index.space_total(), 136);
 
-        schema.process_write_block_request(&sample_hello_world(), Some(0));
-        schema.process_write_block_request(&sample_hello_world(), Some(0));
+        let op = schema.process_write_block_request(&sample_hello_world(), Some(0));
+        assert!(matches!(op, WriteBlockOp::Perform(..)));
+        let op = schema.process_write_block_request(&sample_hello_world(), Some(0));
+        assert!(matches!(op, WriteBlockOp::Perform(..)));
 
         let op = schema.process_delete_block_request(&block::Id::init());
         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));
@@ -1299,20 +1275,20 @@ mod tests {
         assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
             defrag_op: DefragOp::Queue {
                 free_space_offset: 24,
-                space_key: SpaceKey { space_available: 53, serial: 4, },
+                space_key: SpaceKey { space_available: 61, serial: 4, },
             },
             ..
         })));
 
         // defrag delete
-        assert_eq!(schema.gaps_index.space_total(), 59);
+        assert_eq!(schema.gaps_index.space_total(), 75);
 
         let op = schema.process_delete_block_request(&block::Id::init().next());
-        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 77, .. })));
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 85, .. })));
 
         let op = schema.process_delete_block_task_done_defrag(
             block::Id::init().next(),
-            SpaceKey { space_available: 53, serial: 4, },
+            SpaceKey { space_available: 61, serial: 4, },
         );
         assert!(matches!(op, DeleteBlockTaskDoneDefragOp::Perform(DeleteBlockTaskDoneDefragPerform {
             block_offset: 24,
@@ -1330,12 +1306,12 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 59, serial: 5, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 75, serial: 5, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next()
         ));
 
-        assert_eq!(schema.gaps_index.space_total(), 59);
+        assert_eq!(schema.gaps_index.space_total(), 75);
     }
 }

@@ -44,14 +44,9 @@ fn init() -> Performer<Context> {
 }
 
 fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Context> {
-    let storage_layout = storage::Layout {
-        wheel_header_size: 24,
-        block_header_size: 24,
-        commit_tag_size: 16,
-        eof_tag_size: 8,
-    };
+    let storage_layout = storage::Layout::calculate(&mut Vec::new()).unwrap();
     let mut schema = schema::Schema::new(storage_layout);
-    schema.initialize_empty(144);
+    schema.initialize_empty(160);
     Performer::new(
         schema,
         lru::Cache::new(16),
@@ -110,7 +105,6 @@ enum ExpectTaskKind {
 #[derive(Debug)]
 struct ExpectTaskWriteBlock {
     block_bytes: block::Bytes,
-    commit_type: task::CommitType,
     context: task::WriteBlockContext<C>,
 }
 
@@ -189,7 +183,10 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
             Op::Query(QueryOp::InterpretTask(InterpretTask { offset, task, next, })) =>
                 match script.pop() {
                     None =>
-                        panic!("unexpected script end on InterpretTask, expecting ExpectOp::InterpretTask @ {}", script_len - script.len()),
+                        panic!(
+                            "unexpected script end on InterpretTask, expecting ExpectOp::InterpretTask {{ offset: {}, task: {:?}, }} @ {}",
+                            offset, task, script_len - script.len(),
+                        ),
                     Some(ScriptOp::Expect(ExpectOp::InterpretTask { expect_offset, expect_task, }))
                         if expect_offset == offset && expect_task == task =>
                         match script.pop() {
@@ -346,7 +343,6 @@ impl PartialEq<task::TaskKind<Context>> for ExpectTaskKind {
 impl PartialEq<task::WriteBlock<C>> for ExpectTaskWriteBlock {
     fn eq(&self, task: &task::WriteBlock<C>) -> bool {
         self.block_bytes == task.block_bytes
-            && self.commit_type == task.commit_type
             && self.context == task.context
     }
 }

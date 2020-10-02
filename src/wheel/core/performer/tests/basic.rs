@@ -50,7 +50,6 @@ fn script_basic() {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
                     block_bytes: hello_world_bytes(),
-                    commit_type: task::CommitType::CommitAndEof,
                     context: task::WriteBlockContext::External("ectx02"),
                 }),
             },
@@ -88,7 +87,7 @@ fn script_basic() {
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 77,
+                current_offset: 85,
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -102,12 +101,11 @@ fn script_basic() {
             expect_context: "ectx02",
         }),
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 77,
+            expect_offset: 85,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
                     block_bytes: hello_world_bytes(),
-                    commit_type: task::CommitType::CommitAndEof,
                     context: task::WriteBlockContext::External("ectx05"),
                 }),
             },
@@ -192,7 +190,6 @@ fn script_basic() {
                 block_id: block::Id::init().next().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
                     block_bytes: hello_world_bytes(),
-                    commit_type: task::CommitType::CommitOnly,
                     context: task::WriteBlockContext::External("ectx08"),
                 }),
             },
@@ -235,7 +232,7 @@ fn script_basic() {
             expect_context: "ectx08",
         }),
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 77,
+            expect_offset: 85,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {
@@ -254,7 +251,7 @@ fn script_basic() {
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 77,
+                current_offset: 85,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {

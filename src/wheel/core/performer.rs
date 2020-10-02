@@ -662,12 +662,6 @@ impl<C> Inner<C> where C: Context {
                                         kind: task::TaskKind::WriteBlock(
                                             task::WriteBlock {
                                                 block_bytes: task_op.block_bytes.clone(),
-                                                commit_type: match task_op.commit_type {
-                                                    schema::WriteBlockTaskCommitType::CommitOnly =>
-                                                        task::CommitType::CommitOnly,
-                                                    schema::WriteBlockTaskCommitType::CommitAndEof =>
-                                                        task::CommitType::CommitAndEof,
-                                                },
                                                 context: task::WriteBlockContext::Defrag,
                                             },
                                         ),
@@ -779,12 +773,6 @@ fn incoming_request_write_block_perform<'a, C>(
             kind: task::TaskKind::WriteBlock(
                 task::WriteBlock {
                     block_bytes: request_write_block.block_bytes,
-                    commit_type: match task_op.commit_type {
-                        schema::WriteBlockTaskCommitType::CommitOnly =>
-                            task::CommitType::CommitOnly,
-                        schema::WriteBlockTaskCommitType::CommitAndEof =>
-                            task::CommitType::CommitAndEof,
-                    },
                     context: task::WriteBlockContext::External(
                         request_write_block.context,
                     ),
