@@ -275,20 +275,19 @@ fn script_defrag_disturb() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
             expect_context: "ictx0a",
         }),
-        // ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
-        //     task_done: task::Done {
-        //         current_offset: 85,
-        //         task: task::TaskDone {
-        //             block_id: block::Id::init().next(),
-        //             kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
-        //                 context: task::WriteBlockContext::Defrag,
-        //             }),
-        //         },
-        //     },
-        // }),
-        // ScriptOp::Expect(ExpectOp::Idle),
-        // ScriptOp::Expect(ExpectOp::PollRequest),
-        // // TODO: where is user write block ectx04 ??
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 85,
+                task: task::TaskDone {
+                    block_id: block::Id::init().next(),
+                    kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                        context: task::WriteBlockContext::Defrag,
+                    }),
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::PollRequest),
     ];
 
     interpret(performer, script)
