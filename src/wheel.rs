@@ -49,7 +49,7 @@ mod interpret;
 
 #[derive(Debug)]
 pub enum Error {
-    Interpret(interpret::Error),
+    Interpret(interpret::fixed_file::Error),
     InitWheelSizeIsTooSmall {
         provided: usize,
         required_min: usize,
@@ -99,7 +99,7 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
     let storage_layout = schema.storage_layout().clone();
     supervisor_pid.spawn_link_permanent(
         async move {
-            let interpret_task = interpret::busyloop(
+            let interpret_task = interpret::fixed_file::busyloop(
                 interpret_rx,
                 wheel_file,
                 work_block,
