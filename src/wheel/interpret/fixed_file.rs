@@ -1,7 +1,14 @@
-use std::io;
+use std::{
+    io,
+    path::{
+        Path,
+        PathBuf,
+    },
+};
 
 use futures::{
     channel::mpsc,
+    Future,
     StreamExt,
 };
 
@@ -14,7 +21,10 @@ use tokio::{
 };
 
 use crate::wheel::{
-    core::task,
+    core::{
+        task,
+        schema,
+    },
     block,
     storage,
 };
@@ -65,8 +75,177 @@ pub enum CorruptedDataError {
     },
 }
 
-pub async fn busyloop(
-    mut interpret_rx: mpsc::Receiver<Request>,
+#[derive(Debug)]
+pub enum WheelCreateError {
+    FileCreate {
+        wheel_filename: PathBuf,
+        error: io::Error,
+    },
+    StorageLayoutCalculate(storage::LayoutError),
+
+    InitWheelSizeIsTooSmall {
+        provided: usize,
+        required_min: usize,
+    },
+    HeaderSerialize(bincode::Error),
+    HeaderTagWrite(io::Error),
+    ZeroChunkWrite(io::Error),
+    Flush(io::Error),
+}
+
+#[derive(Debug)]
+pub enum WheelOpenError {
+    FileWrongType,
+    FileNotFound,
+    FileMetadata {
+        wheel_filename: PathBuf,
+        error: io::Error,
+    },
+    FileOpen {
+        wheel_filename: PathBuf,
+        error: io::Error,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateParams<P> {
+    pub wheel_filename: P,
+    pub work_block_size_bytes: usize,
+    pub init_wheel_size_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct OpenParams<P> {
+    pub wheel_filename: P,
+    pub work_block_size_bytes: usize,
+}
+
+pub struct GenServer {
+    wheel_file: fs::File,
+    work_block: Vec<u8>,
+    schema: schema::Schema,
+    request_tx: mpsc::Sender<Request>,
+    request_rx: mpsc::Receiver<Request>,
+}
+
+impl GenServer {
+    pub async fn create<P>(params: CreateParams<P>) -> Result<Self, WheelCreateError> where P: AsRef<Path> {
+        log::debug!("creating new wheel file [ {:?} ]", params.wheel_filename.as_ref());
+
+        let mut wheel_file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(params.wheel_filename.as_ref())
+            .await
+            .map_err(|error| WheelCreateError::FileCreate {
+                wheel_filename: params.wheel_filename.as_ref().to_owned(),
+                error,
+            })?;
+
+        let mut work_block: Vec<u8> = Vec::with_capacity(params.work_block_size_bytes);
+
+        let storage_layout = storage::Layout::calculate(&mut work_block)
+            .map_err(WheelCreateError::StorageLayoutCalculate)?;
+
+        let wheel_header = storage::WheelHeader {
+            size_bytes: params.init_wheel_size_bytes,
+            ..storage::WheelHeader::default()
+        };
+        bincode::serialize_into(&mut work_block, &wheel_header)
+            .map_err(WheelCreateError::HeaderSerialize)?;
+
+        let mut cursor = work_block.len();
+        let min_wheel_file_size = storage_layout.wheel_header_size;
+        assert_eq!(cursor, min_wheel_file_size);
+        wheel_file.write_all(&work_block).await
+            .map_err(WheelCreateError::HeaderTagWrite)?;
+
+        let size_bytes_total = params.init_wheel_size_bytes;
+        if size_bytes_total < min_wheel_file_size {
+            return Err(WheelCreateError::InitWheelSizeIsTooSmall {
+                provided: size_bytes_total,
+                required_min: min_wheel_file_size,
+            });
+        }
+
+        work_block.clear();
+        work_block.extend((0 .. params.work_block_size_bytes).map(|_| 0));
+
+        while cursor < size_bytes_total {
+            let bytes_remain = size_bytes_total - cursor;
+            let write_amount = if bytes_remain < params.work_block_size_bytes {
+                bytes_remain
+            } else {
+                params.work_block_size_bytes
+            };
+            wheel_file.write_all(&work_block[.. write_amount]).await
+                .map_err(WheelCreateError::ZeroChunkWrite)?;
+            cursor += write_amount;
+        }
+        wheel_file.flush().await
+            .map_err(WheelCreateError::Flush)?;
+
+        let mut schema = schema::Schema::new(storage_layout);
+        schema.initialize_empty(size_bytes_total);
+
+        log::debug!("initialized wheel schema: {:?}", schema);
+
+        let (request_tx, request_rx) = mpsc::channel(0);
+
+        Ok(GenServer {
+            wheel_file,
+            work_block,
+            schema,
+            request_tx,
+            request_rx,
+        })
+    }
+
+    pub async fn open<P>(params: OpenParams<P>) -> Result<Self, WheelOpenError> where P: AsRef<Path> {
+        log::debug!("opening existing wheel file [ {:?} ]", params.wheel_filename.as_ref());
+
+        match fs::metadata(&params.wheel_filename).await {
+            Ok(ref metadata) if metadata.file_type().is_file() =>
+                (),
+            Ok(..) =>
+                return Err(WheelOpenError::FileWrongType),
+            Err(ref error) if error.kind() == io::ErrorKind::NotFound =>
+                return Err(WheelOpenError::FileNotFound),
+            Err(error) =>
+                return Err(WheelOpenError::FileMetadata {
+                    wheel_filename: params.wheel_filename.as_ref().to_owned(),
+                    error,
+                }),
+        }
+
+        unimplemented!()
+    }
+
+    pub fn run(self) -> (Pid, impl Future<Output = Result<(), Error>>) {
+        let storage_layout = self.schema.storage_layout().clone();
+        (
+            Pid {
+                request_tx: self.request_tx,
+                schema: self.schema,
+            },
+            busyloop(
+                self.request_rx,
+                self.wheel_file,
+                self.work_block,
+                storage_layout,
+            ),
+        )
+    }
+}
+
+pub struct Pid {
+    pub request_tx: mpsc::Sender<Request>,
+    pub schema: schema::Schema,
+}
+
+async fn busyloop(
+    mut request_rx: mpsc::Receiver<Request>,
     mut wheel_file: fs::File,
     mut work_block: Vec<u8>,
     storage_layout: storage::Layout,
@@ -77,7 +256,7 @@ pub async fn busyloop(
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
 
-    while let Some(Request { offset, task, reply_tx, }) = interpret_rx.next().await {
+    while let Some(Request { offset, task, reply_tx, }) = request_rx.next().await {
         if cursor != offset {
             wheel_file.seek(io::SeekFrom::Start(offset)).await
                 .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;

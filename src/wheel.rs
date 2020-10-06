@@ -1,8 +1,3 @@
-use std::{
-    io,
-    path::PathBuf,
-};
-
 use futures::{
     future,
     select,
@@ -14,14 +9,6 @@ use futures::{
     SinkExt,
     StreamExt,
     FutureExt,
-};
-
-use tokio::{
-    fs,
-    io::{
-        // AsyncReadExt,
-        AsyncWriteExt,
-    },
 };
 
 use ero::{
@@ -49,24 +36,9 @@ mod interpret;
 
 #[derive(Debug)]
 pub enum Error {
-    Interpret(interpret::fixed_file::Error),
-    InitWheelSizeIsTooSmall {
-        provided: usize,
-        required_min: usize,
-    },
-    WheelFileMetadata {
-        wheel_filename: PathBuf,
-        error: io::Error,
-    },
-    WheelFileOpen {
-        wheel_filename: PathBuf,
-        error: io::Error,
-    },
-    StorageLayoutCalculate(storage::LayoutError),
-    WheelHeaderSerialize(bincode::Error),
-    WheelHeaderTagWrite(io::Error),
-    ZeroChunkWrite(io::Error),
-    WheelCreateFlush(io::Error),
+    InterpreterOpen(interpret::fixed_file::WheelOpenError),
+    InterpreterCreate(interpret::fixed_file::WheelCreateError),
+    InterpreterRun(interpret::fixed_file::Error),
 }
 
 type Request = proto::Request<super::blockwheel_context::Context>;
@@ -78,40 +50,42 @@ pub struct State {
 }
 
 pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> Result<(), ErrorSeverity<State, Error>> {
-    let WheelState { wheel_file, work_block, schema, state, } = match fs::metadata(&state.params.wheel_filename).await {
-        Ok(ref metadata) if metadata.file_type().is_file() =>
-            wheel_open(state).await?,
-        Ok(_metadata) => {
+    let open_async = interpret::fixed_file::GenServer::open(interpret::fixed_file::OpenParams {
+        wheel_filename: &state.params.wheel_filename,
+        work_block_size_bytes: state.params.work_block_size_bytes,
+    });
+    let interpreter_gen_server = match open_async.await {
+        Ok(gen_server) =>
+            gen_server,
+        Err(interpret::fixed_file::WheelOpenError::FileWrongType) => {
             log::error!("[ {:?} ] is not a file", state.params.wheel_filename);
             return Err(ErrorSeverity::Recoverable { state, });
         },
-        Err(ref error) if error.kind() == io::ErrorKind::NotFound =>
-            wheel_create(state).await?,
+        Err(interpret::fixed_file::WheelOpenError::FileNotFound) => {
+            let create_async = interpret::fixed_file::GenServer::create(interpret::fixed_file::CreateParams {
+                wheel_filename: &state.params.wheel_filename,
+                work_block_size_bytes: state.params.work_block_size_bytes,
+                init_wheel_size_bytes: state.params.init_wheel_size_bytes,
+            });
+            create_async.await
+                .map_err(Error::InterpreterCreate)
+                .map_err(ErrorSeverity::Fatal)?
+        },
         Err(error) =>
-            return Err(ErrorSeverity::Fatal(Error::WheelFileMetadata {
-                wheel_filename: state.params.wheel_filename,
-                error,
-            })),
+            return Err(ErrorSeverity::Fatal(Error::InterpreterOpen(error))),
     };
 
-    let (interpret_tx, interpret_rx) = mpsc::channel(0);
+    let (interpreter_pid, interpreter_task) = interpreter_gen_server.run();
     let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
-    let storage_layout = schema.storage_layout().clone();
     supervisor_pid.spawn_link_permanent(
         async move {
-            let interpret_task = interpret::fixed_file::busyloop(
-                interpret_rx,
-                wheel_file,
-                work_block,
-                storage_layout,
-            );
-            if let Err(interpret_error) = interpret_task.await {
-                interpret_error_tx.send(ErrorSeverity::Fatal(Error::Interpret(interpret_error))).ok();
+            if let Err(interpret_error) = interpreter_task.await {
+                interpret_error_tx.send(ErrorSeverity::Fatal(Error::InterpreterRun(interpret_error))).ok();
             }
         },
     );
 
-    busyloop(supervisor_pid, interpret_tx, interpret_error_rx.fuse(), state, schema).await
+    busyloop(supervisor_pid, interpreter_pid.request_tx, interpret_error_rx.fuse(), state, interpreter_pid.schema).await
 }
 
 async fn busyloop(
@@ -305,91 +279,4 @@ async fn busyloop(
 
         };
     }
-}
-
-struct WheelState {
-    wheel_file: fs::File,
-    work_block: Vec<u8>,
-    schema: schema::Schema,
-    state: State,
-}
-
-async fn wheel_create(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {
-    log::debug!("creating new wheel file [ {:?} ]", state.params.wheel_filename);
-
-    let maybe_file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(&state.params.wheel_filename)
-        .await;
-    let mut wheel_file = match maybe_file {
-        Ok(file) =>
-            file,
-        Err(error) =>
-            return Err(ErrorSeverity::Fatal(Error::WheelFileOpen {
-                wheel_filename: state.params.wheel_filename,
-                error,
-            })),
-    };
-    let mut work_block: Vec<u8> = Vec::with_capacity(state.params.work_block_size_bytes);
-
-    let storage_layout = storage::Layout::calculate(&mut work_block)
-        .map_err(Error::StorageLayoutCalculate)
-        .map_err(ErrorSeverity::Fatal)?;
-
-    let wheel_header = storage::WheelHeader {
-        size_bytes: state.params.init_wheel_size_bytes,
-        ..storage::WheelHeader::default()
-    };
-    bincode::serialize_into(&mut work_block, &wheel_header)
-        .map_err(Error::WheelHeaderSerialize)
-        .map_err(ErrorSeverity::Fatal)?;
-
-    let mut cursor = work_block.len();
-    let min_wheel_file_size = storage_layout.wheel_header_size;
-    assert_eq!(cursor, min_wheel_file_size);
-    wheel_file.write_all(&work_block).await
-        .map_err(Error::WheelHeaderTagWrite)
-        .map_err(ErrorSeverity::Fatal)?;
-
-    let size_bytes_total = state.params.init_wheel_size_bytes;
-    if size_bytes_total < min_wheel_file_size {
-        return Err(ErrorSeverity::Fatal(Error::InitWheelSizeIsTooSmall {
-            provided: size_bytes_total,
-            required_min: min_wheel_file_size,
-        }));
-    }
-
-    work_block.clear();
-    work_block.extend((0 .. state.params.work_block_size_bytes).map(|_| 0));
-
-    while cursor < size_bytes_total {
-        let bytes_remain = size_bytes_total - cursor;
-        let write_amount = if bytes_remain < state.params.work_block_size_bytes {
-            bytes_remain
-        } else {
-            state.params.work_block_size_bytes
-        };
-        wheel_file.write_all(&work_block[.. write_amount]).await
-            .map_err(Error::ZeroChunkWrite)
-            .map_err(ErrorSeverity::Fatal)?;
-        cursor += write_amount;
-    }
-    wheel_file.flush().await
-        .map_err(Error::WheelCreateFlush)
-        .map_err(ErrorSeverity::Fatal)?;
-
-    let mut schema = schema::Schema::new(storage_layout);
-    schema.initialize_empty(size_bytes_total);
-
-    log::debug!("initialized wheel schema: {:?}", schema);
-
-    Ok(WheelState { wheel_file, work_block, schema, state, })
-}
-
-async fn wheel_open(state: State) -> Result<WheelState, ErrorSeverity<State, Error>> {
-    log::debug!("opening existing wheel file [ {:?} ]", state.params.wheel_filename);
-
-    unimplemented!()
 }
