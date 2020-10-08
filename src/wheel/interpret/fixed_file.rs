@@ -82,7 +82,6 @@ pub enum WheelCreateError {
         error: io::Error,
     },
     StorageLayoutCalculate(storage::LayoutError),
-
     InitWheelSizeIsTooSmall {
         provided: usize,
         required_min: usize,
@@ -105,6 +104,37 @@ pub enum WheelOpenError {
         wheel_filename: PathBuf,
         error: io::Error,
     },
+    StorageLayoutCalculate(storage::LayoutError),
+    HeaderRead(io::Error),
+    HeaderDeserialize(bincode::Error),
+    HeaderInvalidMagic {
+        provided: u64,
+        expected: u64,
+    },
+    HeaderVersionMismatch {
+        provided: usize,
+        expected: usize,
+    },
+    WheelSizeMismatch {
+        header: u64,
+        actual: u64,
+    },
+    LocateBlock(io::Error),
+    BlockSizeTooLarge {
+        work_block_size_bytes: usize,
+        block_size: usize,
+    },
+    BlockSeekCommitTag(io::Error),
+    BlockRewindCommitTag(io::Error),
+    BlockReadCommitTag(io::Error),
+    CommitTagDeserialize(bincode::Error),
+    BlockSeekContents(io::Error),
+    BlockReadContents(io::Error),
+    BlockCrcMismatch {
+        commit_tag_crc: u64,
+        block_crc: u64,
+    },
+    BlockSeekEnd(io::Error),
 }
 
 #[derive(Clone, Debug)]
@@ -149,7 +179,7 @@ impl GenServer {
             .map_err(WheelCreateError::StorageLayoutCalculate)?;
 
         let wheel_header = storage::WheelHeader {
-            size_bytes: params.init_wheel_size_bytes,
+            size_bytes: params.init_wheel_size_bytes as u64,
             ..storage::WheelHeader::default()
         };
         bincode::serialize_into(&mut work_block, &wheel_header)
@@ -205,9 +235,9 @@ impl GenServer {
     pub async fn open<P>(params: OpenParams<P>) -> Result<Self, WheelOpenError> where P: AsRef<Path> {
         log::debug!("opening existing wheel file [ {:?} ]", params.wheel_filename.as_ref());
 
-        match fs::metadata(&params.wheel_filename).await {
+        let file_size = match fs::metadata(&params.wheel_filename).await {
             Ok(ref metadata) if metadata.file_type().is_file() =>
-                (),
+                metadata.len(),
             Ok(..) =>
                 return Err(WheelOpenError::FileWrongType),
             Err(ref error) if error.kind() == io::ErrorKind::NotFound =>
@@ -217,7 +247,105 @@ impl GenServer {
                     wheel_filename: params.wheel_filename.as_ref().to_owned(),
                     error,
                 }),
+        };
+
+        let mut wheel_file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(params.wheel_filename.as_ref())
+            .await
+            .map_err(|error| WheelOpenError::FileOpen {
+                wheel_filename: params.wheel_filename.as_ref().to_owned(),
+                error,
+            })?;
+
+        let mut work_block: Vec<u8> = Vec::with_capacity(params.work_block_size_bytes);
+
+        let storage_layout = storage::Layout::calculate(&mut work_block)
+            .map_err(WheelOpenError::StorageLayoutCalculate)?;
+
+        // read wheel header
+        work_block.extend((0 .. storage_layout.wheel_header_size).map(|_| 0));
+        wheel_file.read_exact(&mut work_block).await
+            .map_err(WheelOpenError::HeaderRead)?;
+        let wheel_header: storage::WheelHeader = bincode::deserialize_from(&work_block[..])
+            .map_err(WheelOpenError::HeaderDeserialize)?;
+        if wheel_header.magic != storage::WHEEL_MAGIC {
+            return Err(WheelOpenError::HeaderInvalidMagic {
+                provided: wheel_header.magic,
+                expected: storage::WHEEL_MAGIC,
+            });
         }
+        if wheel_header.version != storage::WHEEL_VERSION {
+            return Err(WheelOpenError::HeaderVersionMismatch {
+                provided: wheel_header.version,
+                expected: storage::WHEEL_VERSION,
+            });
+        }
+        if wheel_header.size_bytes != file_size {
+            return Err(WheelOpenError::WheelSizeMismatch {
+                header: wheel_header.size_bytes,
+                actual: file_size,
+            });
+        }
+
+        // read blocks and gaps
+        let mut cursor = work_block.len() as u64;
+        assert_eq!(cursor, storage_layout.wheel_header_size as u64);
+
+        work_block.clear();
+        work_block.extend((0 .. params.work_block_size_bytes).map(|_| 0));
+        let mut offset = 0;
+
+        loop {
+            let bytes_read = match wheel_file.read(&mut work_block[offset ..]).await {
+                Ok(0) =>
+                    break,
+                Ok(bytes_read) =>
+                    bytes_read,
+                Err(ref error) if error.kind() == io::ErrorKind::Interrupted =>
+                    continue,
+                Err(error) =>
+                    return Err(WheelOpenError::LocateBlock(error)),
+            };
+            offset += bytes_read;
+            let mut start = 0;
+            while offset - start >= storage_layout.block_header_size {
+                enum Outcome { Success, Failure, }
+
+                let area = &work_block[start .. start + storage_layout.block_header_size];
+                let outcome = match bincode::deserialize_from::<_, storage::BlockHeader>(area) {
+                    Ok(block_header) if block_header.magic == storage::BLOCK_MAGIC => {
+                        let try_read_block_async =
+                            try_read_block(&mut wheel_file, &mut work_block, cursor, &block_header, &storage_layout, &params);
+                        match try_read_block_async.await? {
+                            ReadBlockStatus::NotABlock =>
+                                Outcome::Failure,
+                            ReadBlockStatus::BlockFound { next_cursor, } => {
+                                cursor = next_cursor;
+                                Outcome::Success
+                            },
+                        }
+                    },
+                    Ok(..) | Err(..) =>
+                        Outcome::Failure,
+                };
+                match outcome {
+                    Outcome::Success =>
+                        unimplemented!(),
+                    Outcome::Failure => {
+                        start += 1;
+                        cursor += 1;
+                    },
+                }
+            }
+            if start > 0 {
+                work_block.copy_within(start .. offset, 0);
+                offset -= start;
+            }
+        }
+        assert_eq!(cursor, file_size);
 
         unimplemented!()
     }
@@ -242,6 +370,68 @@ impl GenServer {
 pub struct Pid {
     pub request_tx: mpsc::Sender<Request>,
     pub schema: schema::Schema,
+}
+
+enum ReadBlockStatus {
+    NotABlock,
+    BlockFound { next_cursor: u64, },
+}
+
+async fn try_read_block<P>(
+    wheel_file: &mut fs::File,
+    work_block: &mut Vec<u8>,
+    cursor: u64,
+    block_header: &storage::BlockHeader,
+    storage_layout: &storage::Layout,
+    params: &OpenParams<P>,
+)
+    -> Result<ReadBlockStatus, WheelOpenError>
+{
+    // seek to commit tag position
+    wheel_file.seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64 + block_header.block_size as u64)).await
+        .map_err(WheelOpenError::BlockSeekCommitTag)?;
+    // read commit tag
+    work_block.resize(storage_layout.commit_tag_size, 0);
+    wheel_file.read_exact(work_block).await
+        .map_err(WheelOpenError::BlockReadCommitTag)?;
+    let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[..])
+        .map_err(WheelOpenError::CommitTagDeserialize)?;
+    if commit_tag.magic != storage::COMMIT_TAG_MAGIC {
+        // not a block: rewind
+        wheel_file.seek(io::SeekFrom::Start(cursor)).await
+            .map_err(WheelOpenError::BlockRewindCommitTag)?;
+        return Ok(ReadBlockStatus::NotABlock);
+    }
+    if commit_tag.block_id != block_header.block_id {
+        // some other block terminator: rewind
+        wheel_file.seek(io::SeekFrom::Start(cursor)).await
+            .map_err(WheelOpenError::BlockRewindCommitTag)?;
+        return Ok(ReadBlockStatus::NotABlock);
+    }
+    if block_header.block_size > params.work_block_size_bytes {
+        return Err(WheelOpenError::BlockSizeTooLarge {
+            work_block_size_bytes: params.work_block_size_bytes,
+            block_size: block_header.block_size,
+        });
+    }
+    // seek to block contents
+    wheel_file.seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64)).await
+        .map_err(WheelOpenError::BlockSeekContents)?;
+    // read block contents
+    work_block.resize(block_header.block_size, 0);
+    wheel_file.read_exact(work_block).await
+        .map_err(WheelOpenError::BlockReadContents)?;
+    let crc = block::crc(work_block);
+    if crc != commit_tag.crc {
+        return Err(WheelOpenError::BlockCrcMismatch {
+            commit_tag_crc: commit_tag.crc,
+            block_crc: crc,
+        });
+    }
+    // seek to the end of commit tag
+    let next_cursor = wheel_file.seek(io::SeekFrom::Current(storage_layout.commit_tag_size as i64)).await
+        .map_err(WheelOpenError::BlockSeekEnd)?;
+    Ok(ReadBlockStatus::BlockFound { next_cursor, })
 }
 
 async fn busyloop(
@@ -275,7 +465,7 @@ async fn busyloop(
                 work_block.extend(write_block.block_bytes.iter());
                 let commit_tag = storage::CommitTag {
                     block_id: task.block_id.clone(),
-                    crc: write_block.block_bytes.crc(),
+                    crc: block::crc(&write_block.block_bytes),
                     ..Default::default()
                 };
                 bincode::serialize_into(&mut work_block, &commit_tag)
@@ -342,10 +532,10 @@ async fn busyloop(
                         block_id_actual: commit_tag.block_id,
                     }));
                 }
-                if commit_tag.crc != read_block.block_bytes.crc() {
+                if commit_tag.crc != block::crc(&read_block.block_bytes) {
                     return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
                         offset,
-                        crc_expected: read_block.block_bytes.crc(),
+                        crc_expected: block::crc(&read_block.block_bytes),
                         crc_actual: commit_tag.crc,
                     }));
                 }

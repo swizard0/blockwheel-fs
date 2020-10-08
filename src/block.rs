@@ -83,10 +83,6 @@ impl Bytes {
                 }),
         }
     }
-
-    pub fn crc(&self) -> u64 {
-        crc::crc64::checksum_ecma(&self.bytes)
-    }
 }
 
 impl Drop for Release {
@@ -171,10 +167,6 @@ impl BytesMut {
             },
         }
     }
-
-    pub fn crc(&self) -> u64 {
-        crc::crc64::checksum_ecma(&self.bytes)
-    }
 }
 
 impl AsRef<[u8]> for BytesMut {
@@ -204,4 +196,8 @@ impl DerefMut for BytesMut {
     fn deref_mut(&mut self) -> &mut Vec<u8> {
         &mut self.bytes
     }
+}
+
+pub fn crc(bytes: &[u8]) -> u64 {
+    crc::crc64::checksum_ecma(bytes)
 }

@@ -14,7 +14,7 @@ pub const WHEEL_VERSION: usize = 1;
 pub struct WheelHeader {
     pub magic: u64,
     pub version: usize,
-    pub size_bytes: usize,
+    pub size_bytes: u64,
 }
 
 impl Default for WheelHeader {
