@@ -980,6 +980,150 @@ impl Schema {
     }
 }
 
+pub struct Builder {
+    storage_layout: storage::Layout,
+    blocks_index: blocks::Index,
+    gaps_index: gaps::Index,
+    tracker: Option<BlocksTracker>,
+}
+
+struct BlocksTracker {
+    prev_block_id: block::Id,
+    prev_block_offset: u64,
+    prev_block_size: usize,
+    max_block_id: block::Id,
+}
+
+impl Builder {
+    pub fn new(storage_layout: storage::Layout) -> Builder {
+        Builder {
+            storage_layout,
+            blocks_index: blocks::Index::new(),
+            gaps_index: gaps::Index::new(),
+            tracker: None,
+        }
+    }
+
+    pub fn storage_layout(&self) -> &storage::Layout {
+        &self.storage_layout
+    }
+
+    pub fn push_block(&mut self, offset: u64, block_header: storage::BlockHeader) -> &mut Self {
+        let (left, max_block_id) = match self.tracker.take() {
+            None => {
+                assert!(offset >= self.storage_layout.wheel_header_size as u64);
+                match (offset - self.storage_layout.wheel_header_size as u64) as usize {
+                    0 =>
+                        (LeftEnvirons::Start, block_header.block_id.clone()),
+                    space_available => {
+                        let space_key = self.gaps_index.insert(
+                            space_available,
+                            gaps::GapBetween::StartAndBlock {
+                                right_block: block_header.block_id.clone(),
+                            },
+                        );
+                        (LeftEnvirons::Space { space_key, }, block_header.block_id.clone())
+                    },
+                }
+            },
+            Some(tracker) => {
+                let prev_block_end_offset = tracker.prev_block_offset + tracker.prev_block_size as u64;
+                assert!(offset >= prev_block_end_offset);
+                match (offset - prev_block_end_offset) as usize {
+                    0 => {
+                        self.blocks_index.with_mut(&tracker.prev_block_id, |block_entry| {
+                            block_entry.environs.right =
+                                RightEnvirons::Block { block_id: block_header.block_id.clone(), };
+                        }).unwrap();
+                        (
+                            LeftEnvirons::Block { block_id: tracker.prev_block_id.clone(), },
+                            block_header.block_id.clone().max(tracker.prev_block_id),
+                        )
+                    },
+                    space_available => {
+                        let space_key = self.gaps_index.insert(
+                            space_available,
+                            gaps::GapBetween::TwoBlocks {
+                                left_block: tracker.prev_block_id.clone(),
+                                right_block: block_header.block_id.clone(),
+                            },
+                        );
+                        self.blocks_index.with_mut(&tracker.prev_block_id, |block_entry| {
+                            block_entry.environs.right = RightEnvirons::Space { space_key, };
+                        }).unwrap();
+                        (
+                            LeftEnvirons::Space { space_key, },
+                            block_header.block_id.clone().max(tracker.prev_block_id),
+                        )
+                    },
+                }
+            },
+        };
+        self.tracker = Some(BlocksTracker {
+            prev_block_id: block_header.block_id.clone(),
+            prev_block_offset: offset,
+            prev_block_size: self.storage_layout.block_header_size
+                + block_header.block_size
+                + self.storage_layout.commit_tag_size,
+            max_block_id,
+        });
+        self.blocks_index.insert(
+            block_header.block_id.clone(),
+            BlockEntry {
+                offset,
+                header: block_header,
+                block_bytes: None,
+                environs: Environs { left, right: RightEnvirons::End, },
+                tasks_head: Default::default(),
+            },
+        );
+        self
+    }
+
+    pub fn finish(mut self, wheel_header: &storage::WheelHeader) -> Schema {
+        let next_block_id = match self.tracker {
+            None => {
+                let space_available = wheel_header.size_bytes
+                    - self.storage_layout.wheel_header_size as u64;
+                self.gaps_index.insert(space_available as usize, gaps::GapBetween::StartAndEnd);
+                block::Id::init()
+            },
+            Some(tracker) => {
+                let space_total = wheel_header.size_bytes
+                    - self.storage_layout.wheel_header_size as u64;
+                let prev_block_end_offset = tracker.prev_block_offset + tracker.prev_block_size as u64;
+                assert!(space_total >= prev_block_end_offset);
+                match space_total - prev_block_end_offset {
+                    0 =>
+                    // do nothing: there should be already RightEnvirons::End set
+                        (),
+                    space_available => {
+                        let space_key = self.gaps_index.insert(
+                            space_available as usize,
+                            gaps::GapBetween::BlockAndEnd {
+                                left_block: tracker.prev_block_id.clone(),
+                            },
+                        );
+                        self.blocks_index.with_mut(&tracker.prev_block_id, |block_entry| {
+                            block_entry.environs.right = RightEnvirons::Space {
+                                space_key,
+                            };
+                        }).unwrap();
+                    },
+                }
+                tracker.max_block_id.next()
+            },
+        };
+
+        Schema {
+            next_block_id,
+            storage_layout: self.storage_layout,
+            blocks_index: self.blocks_index,
+            gaps_index: self.gaps_index,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

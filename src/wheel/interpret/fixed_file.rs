@@ -291,8 +291,10 @@ impl GenServer {
         }
 
         // read blocks and gaps
+        let mut builder = schema::Builder::new(storage_layout);
+
         let mut cursor = work_block.len() as u64;
-        assert_eq!(cursor, storage_layout.wheel_header_size as u64);
+        assert_eq!(cursor, builder.storage_layout().wheel_header_size as u64);
 
         work_block.clear();
         work_block.extend((0 .. params.work_block_size_bytes).map(|_| 0));
@@ -311,18 +313,25 @@ impl GenServer {
             };
             offset += bytes_read;
             let mut start = 0;
-            while offset - start >= storage_layout.block_header_size {
+            while offset - start >= builder.storage_layout().block_header_size {
                 enum Outcome { Success, Failure, }
 
-                let area = &work_block[start .. start + storage_layout.block_header_size];
+                let area = &work_block[start .. start + builder.storage_layout().block_header_size];
                 let outcome = match bincode::deserialize_from::<_, storage::BlockHeader>(area) {
                     Ok(block_header) if block_header.magic == storage::BLOCK_MAGIC => {
-                        let try_read_block_async =
-                            try_read_block(&mut wheel_file, &mut work_block, cursor, &block_header, &storage_layout, &params);
+                        let try_read_block_async = try_read_block(
+                            &mut wheel_file,
+                            &mut work_block,
+                            cursor,
+                            &block_header,
+                            builder.storage_layout(),
+                            &params,
+                        );
                         match try_read_block_async.await? {
                             ReadBlockStatus::NotABlock =>
                                 Outcome::Failure,
                             ReadBlockStatus::BlockFound { next_cursor, } => {
+                                builder.push_block(cursor, block_header);
                                 cursor = next_cursor;
                                 Outcome::Success
                             },
@@ -332,8 +341,12 @@ impl GenServer {
                         Outcome::Failure,
                 };
                 match outcome {
-                    Outcome::Success =>
-                        unimplemented!(),
+                    Outcome::Success => {
+                        work_block.clear();
+                        offset = 0;
+                        start = 0;
+                        break;
+                    },
                     Outcome::Failure => {
                         start += 1;
                         cursor += 1;
@@ -346,8 +359,19 @@ impl GenServer {
             }
         }
         assert_eq!(cursor, file_size);
+        let schema = builder.finish(&wheel_header);
 
-        unimplemented!()
+        log::debug!("loaded wheel schema");
+
+        let (request_tx, request_rx) = mpsc::channel(0);
+
+        Ok(GenServer {
+            wheel_file,
+            work_block,
+            schema,
+            request_tx,
+            request_rx,
+        })
     }
 
     pub fn run(self) -> (Pid, impl Future<Output = Result<(), Error>>) {
