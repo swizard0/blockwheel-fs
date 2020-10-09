@@ -369,7 +369,7 @@ impl GenServer {
                 offset -= start;
             }
         }
-        assert_eq!(cursor, file_size);
+        assert!(cursor + builder.storage_layout().block_header_size as u64 >= file_size);
         let schema = builder.finish(&wheel_header);
 
         log::debug!("loaded wheel schema");
