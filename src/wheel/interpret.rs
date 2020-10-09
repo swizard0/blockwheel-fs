@@ -11,8 +11,11 @@ use crate::{
 
 pub mod fixed_file;
 
-pub struct Request {
-    pub offset: u64,
-    pub task: task::Task<Context>,
-    pub reply_tx: oneshot::Sender<task::Done<Context>>,
+struct Request {
+    offset: u64,
+    task: task::Task<Context>,
+    reply_tx: oneshot::Sender<task::Done<Context>>,
 }
+
+pub type RequestTask = task::Task<Context>;
+pub type RequestReplyRx = oneshot::Receiver<task::Done<Context>>;

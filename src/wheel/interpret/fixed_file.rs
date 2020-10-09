@@ -7,8 +7,12 @@ use std::{
 };
 
 use futures::{
-    channel::mpsc,
+    channel::{
+        mpsc,
+        oneshot,
+    },
     Future,
+    SinkExt,
     StreamExt,
 };
 
@@ -29,7 +33,14 @@ use crate::wheel::{
     storage,
 };
 
-use super::Request;
+use super::{
+    Request,
+    RequestTask,
+    RequestReplyRx,
+};
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug)]
 pub enum Error {
@@ -374,13 +385,16 @@ impl GenServer {
         })
     }
 
-    pub fn run(self) -> (Pid, impl Future<Output = Result<(), Error>>) {
+    pub fn pid(&self) -> Pid {
+        Pid {
+            request_tx: self.request_tx.clone(),
+        }
+    }
+
+    pub fn run(self) -> (schema::Schema, impl Future<Output = Result<(), Error>>) {
         let storage_layout = self.schema.storage_layout().clone();
         (
-            Pid {
-                request_tx: self.request_tx,
-                schema: self.schema,
-            },
+            self.schema,
             busyloop(
                 self.request_rx,
                 self.wheel_file,
@@ -391,9 +405,20 @@ impl GenServer {
     }
 }
 
+#[derive(Clone)]
 pub struct Pid {
-    pub request_tx: mpsc::Sender<Request>,
-    pub schema: schema::Schema,
+    request_tx: mpsc::Sender<Request>,
+}
+
+impl Pid {
+    pub async fn push_request(&mut self, offset: u64, task: RequestTask) -> Result<RequestReplyRx, ero::NoProcError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.request_tx
+            .send(Request { offset, task, reply_tx, })
+            .await
+            .map_err(|_send_error| ero::NoProcError)?;
+        Ok(reply_rx)
+    }
 }
 
 enum ReadBlockStatus {

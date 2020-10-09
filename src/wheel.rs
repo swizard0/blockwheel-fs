@@ -6,7 +6,6 @@ use futures::{
         mpsc,
         oneshot,
     },
-    SinkExt,
     StreamExt,
     FutureExt,
 };
@@ -39,6 +38,7 @@ pub enum Error {
     InterpreterOpen(interpret::fixed_file::WheelOpenError),
     InterpreterCreate(interpret::fixed_file::WheelCreateError),
     InterpreterRun(interpret::fixed_file::Error),
+    InterpreterCrash,
 }
 
 type Request = proto::Request<super::blockwheel_context::Context>;
@@ -75,7 +75,8 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
             return Err(ErrorSeverity::Fatal(Error::InterpreterOpen(error))),
     };
 
-    let (interpreter_pid, interpreter_task) = interpreter_gen_server.run();
+    let interpreter_pid = interpreter_gen_server.pid();
+    let (schema, interpreter_task) = interpreter_gen_server.run();
     let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
     supervisor_pid.spawn_link_permanent(
         async move {
@@ -85,12 +86,12 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
         },
     );
 
-    busyloop(supervisor_pid, interpreter_pid.request_tx, interpret_error_rx.fuse(), state, interpreter_pid.schema).await
+    busyloop(supervisor_pid, interpreter_pid, interpret_error_rx.fuse(), state, schema).await
 }
 
 async fn busyloop(
     _supervisor_pid: SupervisorPid,
-    mut interpret_tx: mpsc::Sender<interpret::Request>,
+    mut interpreter_pid: interpret::fixed_file::Pid,
     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
     mut state: State,
     schema: schema::Schema,
@@ -185,10 +186,8 @@ async fn busyloop(
             },
 
             performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
-                let (reply_tx, reply_rx) = oneshot::channel();
-                if let Err(_send_error) = interpret_tx.send(interpret::Request { offset, task, reply_tx, }).await {
-                    log::warn!("interpreter request channel closed");
-                }
+                let reply_rx = interpreter_pid.push_request(offset, task).await
+                    .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
                 let performer = next.task_accepted(reply_rx.fuse());
                 performer.next()
             },
