@@ -5,17 +5,17 @@ use futures::{
 };
 
 use crate::{
-    blockwheel_context::Context,
+    context::Context,
     wheel::core::task,
 };
 
 pub mod fixed_file;
 
-struct Request {
+struct Request<C> where C: Context {
     offset: u64,
-    task: task::Task<Context>,
-    reply_tx: oneshot::Sender<task::Done<Context>>,
+    task: task::Task<C>,
+    reply_tx: oneshot::Sender<task::Done<C>>,
 }
 
-pub type RequestTask = task::Task<Context>;
-pub type RequestReplyRx = oneshot::Receiver<task::Done<Context>>;
+pub type RequestTask<C> = task::Task<C>;
+pub type RequestReplyRx<C> = oneshot::Receiver<task::Done<C>>;

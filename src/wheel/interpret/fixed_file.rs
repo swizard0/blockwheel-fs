@@ -24,13 +24,16 @@ use tokio::{
     },
 };
 
-use crate::wheel::{
-    core::{
-        task,
-        schema,
+use crate::{
+    context::Context,
+    wheel::{
+        block,
+        storage,
+        core::{
+            task,
+            schema,
+        },
     },
-    block,
-    storage,
 };
 
 use super::{
@@ -161,15 +164,15 @@ pub struct OpenParams<P> {
     pub work_block_size_bytes: usize,
 }
 
-pub struct GenServer {
+pub struct GenServer<C> where C: Context {
     wheel_file: fs::File,
     work_block: Vec<u8>,
     schema: schema::Schema,
-    request_tx: mpsc::Sender<Request>,
-    request_rx: mpsc::Receiver<Request>,
+    request_tx: mpsc::Sender<Request<C>>,
+    request_rx: mpsc::Receiver<Request<C>>,
 }
 
-impl GenServer {
+impl<C> GenServer<C> where C: Context {
     pub async fn create<P>(params: CreateParams<P>) -> Result<Self, WheelCreateError> where P: AsRef<Path> {
         log::debug!("creating new wheel file [ {:?} ]", params.wheel_filename.as_ref());
 
@@ -385,13 +388,13 @@ impl GenServer {
         })
     }
 
-    pub fn pid(&self) -> Pid {
+    pub fn pid(&self) -> Pid<C> {
         Pid {
             request_tx: self.request_tx.clone(),
         }
     }
 
-    pub fn run(self) -> (schema::Schema, impl Future<Output = Result<(), Error>>) {
+    pub fn run(self) -> (schema::Schema, impl Future<Output = Result<(), Error>>) where C: Send {
         let storage_layout = self.schema.storage_layout().clone();
         (
             self.schema,
@@ -406,12 +409,12 @@ impl GenServer {
 }
 
 #[derive(Clone)]
-pub struct Pid {
-    request_tx: mpsc::Sender<Request>,
+pub struct Pid<C> where C: Context {
+    request_tx: mpsc::Sender<Request<C>>,
 }
 
-impl Pid {
-    pub async fn push_request(&mut self, offset: u64, task: RequestTask) -> Result<RequestReplyRx, ero::NoProcError> {
+impl<C> Pid<C> where C: Context {
+    pub async fn push_request(&mut self, offset: u64, task: RequestTask<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.request_tx
             .send(Request { offset, task, reply_tx, })
@@ -483,13 +486,14 @@ async fn try_read_block<P>(
     Ok(ReadBlockStatus::BlockFound { next_cursor, })
 }
 
-async fn busyloop(
-    mut request_rx: mpsc::Receiver<Request>,
+async fn busyloop<C>(
+    mut request_rx: mpsc::Receiver<Request<C>>,
     mut wheel_file: fs::File,
     mut work_block: Vec<u8>,
     storage_layout: storage::Layout,
 )
     -> Result<(), Error>
+where C: Context + Send,
 {
     let mut cursor = 0;
     wheel_file.seek(io::SeekFrom::Start(cursor)).await

@@ -21,6 +21,7 @@ use super::{
     storage,
     Params,
     Deleted,
+    blockwheel_context::Context,
 };
 
 pub mod core;
@@ -41,7 +42,7 @@ pub enum Error {
     InterpreterCrash,
 }
 
-type Request = proto::Request<super::blockwheel_context::Context>;
+type Request = proto::Request<Context>;
 
 pub struct State {
     pub parent_supervisor: SupervisorPid,
@@ -91,7 +92,7 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
 
 async fn busyloop(
     _supervisor_pid: SupervisorPid,
-    mut interpreter_pid: interpret::fixed_file::Pid,
+    mut interpreter_pid: interpret::fixed_file::Pid<Context>,
     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
     mut state: State,
     schema: schema::Schema,
