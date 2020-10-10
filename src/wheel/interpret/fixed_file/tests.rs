@@ -11,6 +11,7 @@ use tokio::runtime;
 
 use crate::{
     block,
+    storage,
     context::Context,
     wheel::core::{
         task,
@@ -53,6 +54,7 @@ fn create_read_one() {
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_create_read_one";
     let context = "ectx00";
+    let storage_layout = storage::Layout::calculate(&mut Vec::new()).unwrap();
     runtime.block_on(async {
         let gen_server = GenServer::create(CreateParams {
             wheel_filename,
@@ -60,15 +62,16 @@ fn create_read_one() {
             init_wheel_size_bytes: 256 * 1024,
         }).await.map_err(Error::Create)?;
         with_gen_server(gen_server, |mut pid, _schema| async move {
-            let reply_rx = pid.push_request(0, task::Task {
-                block_id: block::Id::init(),
-                kind: task::TaskKind::WriteBlock(
-                    task::WriteBlock {
+            let reply_rx = pid.push_request(
+                storage_layout.wheel_header_size as u64,
+                task::Task {
+                    block_id: block::Id::init(),
+                    kind: task::TaskKind::WriteBlock(task::WriteBlock {
                         block_bytes: hello_world_bytes(),
                         context: task::WriteBlockContext::External(context),
-                    },
-                ),
-            }).await.map_err(|ero::NoProcError| Error::InterpreterDetach)?;
+                    }),
+                },
+            ).await.map_err(|ero::NoProcError| Error::InterpreterDetach)?;
             match reply_rx.await {
                 Ok(task::Done {
                     task: task::TaskDone {
@@ -79,7 +82,7 @@ fn create_read_one() {
                 }) if block_id == block::Id::init() && ctx == context =>
                     Ok(()),
                 Ok(other_done_task) =>
-                    Err(Error::Unexpected(UnexpectedError::DoneTask {
+                    Err(Error::Unexpected(UnexpectedError::WriteDoneTask {
                         expected: format!("task done write block {:?} with {:?} context", block::Id::init(), context),
                         received: other_done_task,
                     })),
@@ -91,14 +94,52 @@ fn create_read_one() {
             wheel_filename,
             work_block_size_bytes: 64 * 1024,
         }).await.map_err(Error::Open)?;
-        with_gen_server(gen_server, |_pid, mut schema| async move {
+        with_gen_server(gen_server, |mut pid, mut schema| async move {
             match schema.process_read_block_request(&block::Id::init()) {
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) =>
-                    unimplemented!(),
+                    if block_offset != 24 {
+                        Err(Error::Unexpected(UnexpectedError::ReadBlockOffset {
+                            block_id: block::Id::init(),
+                            expected_offset: 24,
+                            provided_offset: block_offset,
+                        }))
+                    } else {
+                        let reply_rx = pid.push_request(
+                            block_offset,
+                            task::Task {
+                                block_id: block_header.block_id.clone(),
+                                kind: task::TaskKind::ReadBlock(task::ReadBlock {
+                                    block_header: block_header.clone(),
+                                    block_bytes: block::BytesMut::new_detached(),
+                                    context: task::ReadBlockContext::External(context),
+                                }),
+                            },
+                        ).await.map_err(|ero::NoProcError| Error::InterpreterDetach)?;
+                        match reply_rx.await {
+                            Ok(task::Done {
+                                task: task::TaskDone {
+                                    block_id,
+                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                        block_bytes,
+                                        context: task::ReadBlockContext::External(ctx),
+                                    }),
+                                },
+                                ..
+                            }) if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                                Ok(()),
+                            Ok(other_done_task) =>
+                                Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
+                                    expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
+                                    received: other_done_task,
+                                })),
+                            Err(..) =>
+                                Err(Error::InterpreterDetach),
+                        }
+                    },
                 schema::ReadBlockOp::Cached { .. } =>
-                    unimplemented!(),
+                    Err(Error::Unexpected(UnexpectedError::ReadCached { block_id: block::Id::init(), })),
                 schema::ReadBlockOp::NotFound =>
-                    unimplemented!(),
+                    Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id: block::Id::init(), })),
             }
         }).await?;
         Ok::<_, Error>(())
@@ -117,9 +158,24 @@ enum Error {
 
 #[derive(Debug)]
 enum UnexpectedError {
-    DoneTask {
+    WriteDoneTask {
         expected: String,
         received: task::Done<LocalContext>,
+    },
+    ReadDoneTask {
+        expected: String,
+        received: task::Done<LocalContext>,
+    },
+    ReadCached {
+        block_id: block::Id,
+    },
+    ReadNotFound {
+        block_id: block::Id,
+    },
+    ReadBlockOffset {
+        block_id: block::Id,
+        expected_offset: u64,
+        provided_offset: u64,
     },
 }
 

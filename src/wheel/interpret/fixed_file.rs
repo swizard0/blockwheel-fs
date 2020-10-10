@@ -310,8 +310,7 @@ impl<C> GenServer<C> where C: Context {
         let mut cursor = work_block.len() as u64;
         assert_eq!(cursor, builder.storage_layout().wheel_header_size as u64);
 
-        work_block.clear();
-        work_block.extend((0 .. params.work_block_size_bytes).map(|_| 0));
+        work_block.resize(params.work_block_size_bytes, 0);
         let mut offset = 0;
 
         loop {
@@ -356,7 +355,7 @@ impl<C> GenServer<C> where C: Context {
                 };
                 match outcome {
                     Outcome::Success => {
-                        work_block.clear();
+                        work_block.resize(params.work_block_size_bytes, 0);
                         offset = 0;
                         start = 0;
                         break;
@@ -372,7 +371,13 @@ impl<C> GenServer<C> where C: Context {
                 offset -= start;
             }
         }
-        assert!(cursor + builder.storage_layout().block_header_size as u64 >= file_size);
+        assert!(
+            cursor + builder.storage_layout().block_header_size as u64 >= file_size,
+            "assertion failed: cursor = {} + block_header_size = {} >= file_size = {}",
+            cursor,
+            builder.storage_layout().block_header_size,
+            file_size,
+        );
         let schema = builder.finish(&wheel_header);
 
         log::debug!("loaded wheel schema");
@@ -495,7 +500,7 @@ async fn busyloop<C>(
     -> Result<(), Error>
 where C: Context + Send,
 {
-    let mut cursor = 0;
+    let mut cursor = storage_layout.wheel_header_size as u64;
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
 
@@ -513,6 +518,7 @@ where C: Context + Send,
                     block_size: write_block.block_bytes.len(),
                     ..Default::default()
                 };
+                work_block.clear();
                 bincode::serialize_into(&mut work_block, &block_header)
                     .map_err(Error::BlockHeaderSerialize)?;
                 work_block.extend(write_block.block_bytes.iter());
@@ -530,7 +536,6 @@ where C: Context + Send,
                     .map_err(Error::BlockFlush)?;
 
                 cursor += work_block.len() as u64;
-                work_block.clear();
 
                 let task_done = task::Done {
                     current_offset: cursor,
@@ -549,7 +554,7 @@ where C: Context + Send,
             task::TaskKind::ReadBlock(mut read_block) => {
                 let total_chunk_size = storage_layout.data_size_block_min()
                     + read_block.block_header.block_size;
-                work_block.extend((0 .. total_chunk_size).map(|_| 0));
+                work_block.resize(total_chunk_size, 0);
                 wheel_file.read_exact(&mut work_block).await
                     .map_err(Error::BlockRead)?;
 
@@ -594,7 +599,6 @@ where C: Context + Send,
                 }
 
                 cursor += work_block.len() as u64;
-                work_block.clear();
 
                 let task_done = task::Done {
                     current_offset: cursor,
@@ -613,6 +617,7 @@ where C: Context + Send,
 
             task::TaskKind::DeleteBlock(delete_block) => {
                 let tombstone_tag = storage::TombstoneTag::default();
+                work_block.clear();
                 bincode::serialize_into(&mut work_block, &tombstone_tag)
                     .map_err(Error::TombstoneTagSerialize)?;
 
@@ -622,7 +627,6 @@ where C: Context + Send,
                     .map_err(Error::BlockFlush)?;
 
                 cursor += work_block.len() as u64;
-                work_block.clear();
 
                 let task_done = task::Done {
                     current_offset: cursor,
