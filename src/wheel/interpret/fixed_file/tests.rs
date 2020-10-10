@@ -11,7 +11,6 @@ use tokio::runtime;
 
 use crate::{
     block,
-    storage,
     context::Context,
     wheel::core::{
         task,
@@ -54,17 +53,16 @@ fn create_read_one() {
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_create_read_one";
     let context = "ectx00";
-    let storage_layout = storage::Layout::calculate(&mut Vec::new()).unwrap();
     runtime.block_on(async {
         let gen_server = GenServer::create(CreateParams {
             wheel_filename,
             work_block_size_bytes: 64 * 1024,
             init_wheel_size_bytes: 256 * 1024,
         }).await.map_err(Error::Create)?;
-        with_gen_server(gen_server, |mut pid, _schema| async move {
+        with_gen_server(gen_server, |mut pid, schema| async move {
             let task_done = request_reply(
                 &mut pid,
-                storage_layout.wheel_header_size as u64,
+                schema.storage_layout().wheel_header_size as u64,
                 block::Id::init(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
@@ -92,12 +90,120 @@ fn create_read_one() {
             work_block_size_bytes: 64 * 1024,
         }).await.map_err(Error::Open)?;
         with_gen_server(gen_server, |mut pid, mut schema| async move {
-            match schema.process_read_block_request(&block::Id::init()) {
-                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) =>
-                    if block_offset != 24 {
+            let block_id = block::Id::init();
+            let wheel_header_size = schema.storage_layout().wheel_header_size;
+            match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) => {
+                    let expected_offset = wheel_header_size as u64;
+                    if block_offset != expected_offset {
                         Err(Error::Unexpected(UnexpectedError::ReadBlockOffset {
-                            block_id: block::Id::init(),
-                            expected_offset: 24,
+                            block_id: block_header.block_id.clone(),
+                            expected_offset,
+                            provided_offset: block_offset,
+                        }))
+                    } else {
+                        let task_done = request_reply(
+                            &mut pid,
+                            block_offset,
+                            block_header.block_id.clone(),
+                            task::TaskKind::ReadBlock(task::ReadBlock {
+                                block_header: block_header.clone(),
+                                block_bytes: block::BytesMut::new_detached(),
+                                context: task::ReadBlockContext::External(context),
+                            }),
+                        ).await?;
+                        match task_done {
+                            task::Done {
+                                task: task::TaskDone {
+                                    block_id,
+                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                        block_bytes,
+                                        context: task::ReadBlockContext::External(ctx),
+                                    }),
+                                },
+                                ..
+                            } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                                Ok(()),
+                            other_done_task =>
+                                Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
+                                    expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
+                                    received: other_done_task,
+                                })),
+                        }
+                    }
+                },
+                schema::ReadBlockOp::Cached { .. } =>
+                    Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
+                schema::ReadBlockOp::NotFound =>
+                    Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id, })),
+            }
+        }).await?;
+        Ok::<_, Error>(())
+    }).unwrap();
+    fs::remove_file(wheel_filename).unwrap();
+}
+
+#[test]
+fn create_write_overlap_delete_read_one() {
+    let mut runtime = runtime::Builder::new()
+        .basic_scheduler()
+        .build()
+        .unwrap();
+    let wheel_filename = "/tmp/create_write_overlap_delete_read_one";
+    let context = "ectx01";
+    runtime.block_on(async {
+        let gen_server = GenServer::create(CreateParams {
+            wheel_filename,
+            work_block_size_bytes: 64 * 1024,
+            init_wheel_size_bytes: 256 * 1024,
+        }).await.map_err(Error::Create)?;
+        with_gen_server(gen_server, |mut pid, schema| async move {
+            // write first block
+            let task::Done { task: task::TaskDone { .. }, .. } = request_reply(
+                &mut pid,
+                schema.storage_layout().wheel_header_size as u64,
+                block::Id::init(),
+                task::TaskKind::WriteBlock(task::WriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    context: task::WriteBlockContext::External(context),
+                }),
+            ).await?;
+            // partially overwrite first block with second
+            let task::Done { task: task::TaskDone { .. }, .. } = request_reply(
+                &mut pid,
+                schema.storage_layout().wheel_header_size as u64
+                    + schema.storage_layout().block_header_size as u64,
+                block::Id::init().next(),
+                task::TaskKind::WriteBlock(task::WriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    context: task::WriteBlockContext::External(context),
+                }),
+            ).await?;
+            Ok(())
+        }).await?;
+        let gen_server = GenServer::open(OpenParams {
+            wheel_filename,
+            work_block_size_bytes: 64 * 1024,
+        }).await.map_err(Error::Open)?;
+        with_gen_server(gen_server, |mut pid, mut schema| async move {
+            let block_id = block::Id::init();
+            match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { .. }) =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadPerform { block_id, })),
+                schema::ReadBlockOp::Cached { .. } =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
+                schema::ReadBlockOp::NotFound =>
+                    (),
+            }
+            let block_id = block_id.next();
+            let expected_offset = schema.storage_layout().wheel_header_size as u64
+                + schema.storage_layout().block_header_size as u64;
+            match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) =>
+                    if block_offset != expected_offset {
+                        Err(Error::Unexpected(UnexpectedError::ReadBlockOffset {
+                            block_id: block_header.block_id.clone(),
+                            expected_offset,
                             provided_offset: block_offset,
                         }))
                     } else {
@@ -131,9 +237,9 @@ fn create_read_one() {
                         }
                     },
                 schema::ReadBlockOp::Cached { .. } =>
-                    Err(Error::Unexpected(UnexpectedError::ReadCached { block_id: block::Id::init(), })),
+                    Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
                 schema::ReadBlockOp::NotFound =>
-                    Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id: block::Id::init(), })),
+                    Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id, })),
             }
         }).await?;
         Ok::<_, Error>(())
@@ -159,6 +265,9 @@ enum UnexpectedError {
     ReadDoneTask {
         expected: String,
         received: task::Done<LocalContext>,
+    },
+    ReadPerform {
+        block_id: block::Id,
     },
     ReadCached {
         block_id: block::Id,

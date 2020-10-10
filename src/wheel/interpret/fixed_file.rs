@@ -327,44 +327,36 @@ impl<C> GenServer<C> where C: Context {
             offset += bytes_read;
             let mut start = 0;
             while offset - start >= builder.storage_layout().block_header_size {
-                enum Outcome { Success, Failure, }
-
                 let area = &work_block[start .. start + builder.storage_layout().block_header_size];
-                let outcome = match bincode::deserialize_from::<_, storage::BlockHeader>(area) {
+                match bincode::deserialize_from::<_, storage::BlockHeader>(area) {
                     Ok(block_header) if block_header.magic == storage::BLOCK_MAGIC => {
-                        let try_read_block_async = try_read_block(
+                        let try_read_block_status = try_read_block(
                             &mut wheel_file,
                             &mut work_block,
                             cursor,
                             &block_header,
                             builder.storage_layout(),
                             &params,
-                        );
-                        match try_read_block_async.await? {
-                            ReadBlockStatus::NotABlock =>
-                                Outcome::Failure,
-                            ReadBlockStatus::BlockFound { next_cursor, } => {
-                                builder.push_block(cursor, block_header);
-                                cursor = next_cursor;
-                                Outcome::Success
-                            },
-                        }
-                    },
-                    Ok(..) | Err(..) =>
-                        Outcome::Failure,
-                };
-                match outcome {
-                    Outcome::Success => {
+                        ).await?;
                         work_block.resize(params.work_block_size_bytes, 0);
                         offset = 0;
                         start = 0;
+
+                        match try_read_block_status {
+                            ReadBlockStatus::NotABlock { next_cursor, } =>
+                                cursor = next_cursor,
+                            ReadBlockStatus::BlockFound { next_cursor, } => {
+                                builder.push_block(cursor, block_header);
+                                cursor = next_cursor;
+                            },
+                        }
                         break;
                     },
-                    Outcome::Failure => {
-                        start += 1;
-                        cursor += 1;
-                    },
-                }
+                    Ok(..) | Err(..) =>
+                        (),
+                };
+                start += 1;
+                cursor += 1;
             }
             if start > 0 {
                 work_block.copy_within(start .. offset, 0);
@@ -430,7 +422,7 @@ impl<C> Pid<C> where C: Context {
 }
 
 enum ReadBlockStatus {
-    NotABlock,
+    NotABlock { next_cursor: u64, },
     BlockFound { next_cursor: u64, },
 }
 
@@ -454,16 +446,18 @@ async fn try_read_block<P>(
     let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[..])
         .map_err(WheelOpenError::CommitTagDeserialize)?;
     if commit_tag.magic != storage::COMMIT_TAG_MAGIC {
-        // not a block: rewind
-        wheel_file.seek(io::SeekFrom::Start(cursor)).await
+        // not a block: rewind and step
+        let next_cursor = cursor + 1;
+        wheel_file.seek(io::SeekFrom::Start(next_cursor)).await
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
-        return Ok(ReadBlockStatus::NotABlock);
+        return Ok(ReadBlockStatus::NotABlock { next_cursor, });
     }
     if commit_tag.block_id != block_header.block_id {
         // some other block terminator: rewind
-        wheel_file.seek(io::SeekFrom::Start(cursor)).await
+        let next_cursor = cursor + 1;
+        wheel_file.seek(io::SeekFrom::Start(next_cursor)).await
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
-        return Ok(ReadBlockStatus::NotABlock);
+        return Ok(ReadBlockStatus::NotABlock { next_cursor, });
     }
     if block_header.block_size > params.work_block_size_bytes {
         return Err(WheelOpenError::BlockSizeTooLarge {
