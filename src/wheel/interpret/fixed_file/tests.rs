@@ -7,8 +7,6 @@ use futures::{
     FutureExt,
 };
 
-use tokio::runtime;
-
 use crate::{
     block,
     context::Context,
@@ -25,7 +23,7 @@ use super::{
 
 #[test]
 fn create_read_empty() {
-    let mut runtime = runtime::Builder::new()
+    let mut runtime = tokio::runtime::Builder::new()
         .basic_scheduler()
         .build()
         .unwrap();
@@ -47,7 +45,7 @@ fn create_read_empty() {
 
 #[test]
 fn create_read_one() {
-    let mut runtime = runtime::Builder::new()
+    let mut runtime = tokio::runtime::Builder::new()
         .basic_scheduler()
         .build()
         .unwrap();
@@ -144,7 +142,7 @@ fn create_read_one() {
 
 #[test]
 fn create_write_overlap_read_one() {
-    let mut runtime = runtime::Builder::new()
+    let mut runtime = tokio::runtime::Builder::new()
         .basic_scheduler()
         .build()
         .unwrap();
@@ -248,7 +246,7 @@ fn create_write_overlap_read_one() {
 
 #[test]
 fn create_write_delete_read_one() {
-    let mut runtime = runtime::Builder::new()
+    let mut runtime = tokio::runtime::Builder::new()
         .basic_scheduler()
         .build()
         .unwrap();
