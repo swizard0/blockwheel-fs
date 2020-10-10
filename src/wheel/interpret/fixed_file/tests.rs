@@ -62,32 +62,29 @@ fn create_read_one() {
             init_wheel_size_bytes: 256 * 1024,
         }).await.map_err(Error::Create)?;
         with_gen_server(gen_server, |mut pid, _schema| async move {
-            let reply_rx = pid.push_request(
+            let task_done = request_reply(
+                &mut pid,
                 storage_layout.wheel_header_size as u64,
-                task::Task {
-                    block_id: block::Id::init(),
-                    kind: task::TaskKind::WriteBlock(task::WriteBlock {
-                        block_bytes: hello_world_bytes(),
-                        context: task::WriteBlockContext::External(context),
-                    }),
-                },
-            ).await.map_err(|ero::NoProcError| Error::InterpreterDetach)?;
-            match reply_rx.await {
-                Ok(task::Done {
+                block::Id::init(),
+                task::TaskKind::WriteBlock(task::WriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    context: task::WriteBlockContext::External(context),
+                }),
+            ).await?;
+            match task_done {
+                task::Done {
                     task: task::TaskDone {
                         block_id,
                         kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(ctx), }),
                     },
                     ..
-                }) if block_id == block::Id::init() && ctx == context =>
+                } if block_id == block::Id::init() && ctx == context =>
                     Ok(()),
-                Ok(other_done_task) =>
+                other_done_task =>
                     Err(Error::Unexpected(UnexpectedError::WriteDoneTask {
                         expected: format!("task done write block {:?} with {:?} context", block::Id::init(), context),
                         received: other_done_task,
                     })),
-                Err(..) =>
-                    Err(Error::InterpreterDetach),
             }
         }).await?;
         let gen_server = GenServer::open(OpenParams {
@@ -104,19 +101,18 @@ fn create_read_one() {
                             provided_offset: block_offset,
                         }))
                     } else {
-                        let reply_rx = pid.push_request(
+                        let task_done = request_reply(
+                            &mut pid,
                             block_offset,
-                            task::Task {
-                                block_id: block_header.block_id.clone(),
-                                kind: task::TaskKind::ReadBlock(task::ReadBlock {
-                                    block_header: block_header.clone(),
-                                    block_bytes: block::BytesMut::new_detached(),
-                                    context: task::ReadBlockContext::External(context),
-                                }),
-                            },
-                        ).await.map_err(|ero::NoProcError| Error::InterpreterDetach)?;
-                        match reply_rx.await {
-                            Ok(task::Done {
+                            block_header.block_id.clone(),
+                            task::TaskKind::ReadBlock(task::ReadBlock {
+                                block_header: block_header.clone(),
+                                block_bytes: block::BytesMut::new_detached(),
+                                context: task::ReadBlockContext::External(context),
+                            }),
+                        ).await?;
+                        match task_done {
+                            task::Done {
                                 task: task::TaskDone {
                                     block_id,
                                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
@@ -125,15 +121,13 @@ fn create_read_one() {
                                     }),
                                 },
                                 ..
-                            }) if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                            } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
                                 Ok(()),
-                            Ok(other_done_task) =>
+                            other_done_task =>
                                 Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
                                     expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
                                     received: other_done_task,
                                 })),
-                            Err(..) =>
-                                Err(Error::InterpreterDetach),
                         }
                     },
                 schema::ReadBlockOp::Cached { .. } =>
@@ -226,6 +220,19 @@ where F: FnOnce(Pid, schema::Schema) -> FF,
                 },
         }
     }
+}
+
+async fn request_reply(
+    pid: &mut Pid,
+    offset: u64,
+    block_id: block::Id,
+    kind: task::TaskKind<LocalContext>,
+)
+    -> Result<task::Done<LocalContext>, Error>
+{
+    let reply_rx = pid.push_request(offset, task::Task { block_id, kind, }).await
+        .map_err(|ero::NoProcError| Error::InterpreterDetach)?;
+    reply_rx.await.map_err(|_| Error::InterpreterDetach)
 }
 
 fn hello_world_bytes() -> block::Bytes {
