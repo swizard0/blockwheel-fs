@@ -91,10 +91,9 @@ fn create_read_one() {
         }).await.map_err(Error::Open)?;
         with_gen_server(gen_server, |mut pid, mut schema| async move {
             let block_id = block::Id::init();
-            let wheel_header_size = schema.storage_layout().wheel_header_size;
+            let expected_offset = schema.storage_layout().wheel_header_size as u64;
             match schema.process_read_block_request(&block_id) {
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) => {
-                    let expected_offset = wheel_header_size as u64;
                     if block_offset != expected_offset {
                         Err(Error::Unexpected(UnexpectedError::ReadBlockOffset {
                             block_id: block_header.block_id.clone(),
@@ -144,12 +143,12 @@ fn create_read_one() {
 }
 
 #[test]
-fn create_write_overlap_delete_read_one() {
+fn create_write_overlap_read_one() {
     let mut runtime = runtime::Builder::new()
         .basic_scheduler()
         .build()
         .unwrap();
-    let wheel_filename = "/tmp/create_write_overlap_delete_read_one";
+    let wheel_filename = "/tmp/create_write_overlap_read_one";
     let context = "ectx01";
     runtime.block_on(async {
         let gen_server = GenServer::create(CreateParams {
@@ -247,6 +246,133 @@ fn create_write_overlap_delete_read_one() {
     fs::remove_file(wheel_filename).unwrap();
 }
 
+#[test]
+fn create_write_delete_read_one() {
+    let mut runtime = runtime::Builder::new()
+        .basic_scheduler()
+        .build()
+        .unwrap();
+    let wheel_filename = "/tmp/create_write_delete_read_one";
+    let context = "ectx02";
+    runtime.block_on(async {
+        let gen_server = GenServer::create(CreateParams {
+            wheel_filename,
+            work_block_size_bytes: 64 * 1024,
+            init_wheel_size_bytes: 256 * 1024,
+        }).await.map_err(Error::Create)?;
+        with_gen_server(gen_server, |mut pid, schema| async move {
+            // write first block
+            let task::Done { current_offset, task: task::TaskDone { .. }, } = request_reply(
+                &mut pid,
+                schema.storage_layout().wheel_header_size as u64,
+                block::Id::init(),
+                task::TaskKind::WriteBlock(task::WriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    context: task::WriteBlockContext::External(context),
+                }),
+            ).await?;
+            // write second block
+            let task::Done { task: task::TaskDone { .. }, .. } = request_reply(
+                &mut pid,
+                current_offset,
+                block::Id::init().next(),
+                task::TaskKind::WriteBlock(task::WriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    context: task::WriteBlockContext::External(context),
+                }),
+            ).await?;
+            // delete first block
+            let task_done = request_reply(
+                &mut pid,
+                schema.storage_layout().wheel_header_size as u64,
+                block::Id::init(),
+                task::TaskKind::DeleteBlock(task::DeleteBlock {
+                    context: task::DeleteBlockContext::External(context),
+                }),
+            ).await?;
+            match task_done {
+                task::Done {
+                    task: task::TaskDone {
+                        block_id,
+                        kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock { context: task::DeleteBlockContext::External(ctx), }),
+                    },
+                    ..
+                } if block_id == block::Id::init() && ctx == context =>
+                    Ok(()),
+                other_done_task =>
+                    Err(Error::Unexpected(UnexpectedError::DeleteDoneTask {
+                        expected: format!("task done delete block {:?} with {:?} context", block::Id::init(), context),
+                        received: other_done_task,
+                    })),
+            }
+        }).await?;
+        let gen_server = GenServer::open(OpenParams {
+            wheel_filename,
+            work_block_size_bytes: 64 * 1024,
+        }).await.map_err(Error::Open)?;
+        with_gen_server(gen_server, |mut pid, mut schema| async move {
+            let block_id = block::Id::init();
+            match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { .. }) =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadPerform { block_id, })),
+                schema::ReadBlockOp::Cached { .. } =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
+                schema::ReadBlockOp::NotFound =>
+                    (),
+            }
+            let block_id = block_id.next();
+            let expected_offset = schema.storage_layout().wheel_header_size as u64
+                + schema.storage_layout().data_size_block_min() as u64
+                + hello_world_bytes().len() as u64;
+            match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) =>
+                    if block_offset != expected_offset {
+                        Err(Error::Unexpected(UnexpectedError::ReadBlockOffset {
+                            block_id: block_header.block_id.clone(),
+                            expected_offset,
+                            provided_offset: block_offset,
+                        }))
+                    } else {
+                        let task_done = request_reply(
+                            &mut pid,
+                            block_offset,
+                            block_header.block_id.clone(),
+                            task::TaskKind::ReadBlock(task::ReadBlock {
+                                block_header: block_header.clone(),
+                                block_bytes: block::BytesMut::new_detached(),
+                                context: task::ReadBlockContext::External(context),
+                            }),
+                        ).await?;
+                        match task_done {
+                            task::Done {
+                                task: task::TaskDone {
+                                    block_id,
+                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                        block_bytes,
+                                        context: task::ReadBlockContext::External(ctx),
+                                    }),
+                                },
+                                ..
+                            } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                                Ok(()),
+                            other_done_task =>
+                                Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
+                                    expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
+                                    received: other_done_task,
+                                })),
+                        }
+                    },
+                schema::ReadBlockOp::Cached { .. } =>
+                    Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
+                schema::ReadBlockOp::NotFound =>
+                    Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id, })),
+            }
+        }).await?;
+        Ok::<_, Error>(())
+    }).unwrap();
+    fs::remove_file(wheel_filename).unwrap();
+}
+
 #[derive(Debug)]
 enum Error {
     Create(super::WheelCreateError),
@@ -263,6 +389,10 @@ enum UnexpectedError {
         received: task::Done<LocalContext>,
     },
     ReadDoneTask {
+        expected: String,
+        received: task::Done<LocalContext>,
+    },
+    DeleteDoneTask {
         expected: String,
         received: task::Done<LocalContext>,
     },
