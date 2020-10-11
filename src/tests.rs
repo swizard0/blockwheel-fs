@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs,
+    collections::HashMap,
+};
 
 use ero::{
     supervisor,
@@ -35,6 +38,9 @@ fn stress() {
                 },
             ),
         );
+
+        // let mut blocks = HashMap::new();
+        let mut rng = rand::thread_rng();
 
         let block = pid.lend_block().await
             .map_err(|ero::NoProcError| Error::WheelGoneDuringLendBlock)?;

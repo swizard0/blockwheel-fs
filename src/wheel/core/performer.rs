@@ -3,6 +3,7 @@ use std::mem;
 use super::{
     super::{
         super::{
+            Info,
             context::Context,
         },
         lru,
@@ -84,6 +85,7 @@ pub struct Event<C> where C: Context {
 }
 
 pub enum EventOp<C> where C: Context {
+    Info(TaskDoneOp<C::Info, InfoOp>),
     LendBlock(TaskDoneOp<C::LendBlock, LendBlockOp>),
     WriteBlock(TaskDoneOp<C::WriteBlock, WriteBlockOp>),
     ReadBlock(TaskDoneOp<C::ReadBlock, ReadBlockOp>),
@@ -93,6 +95,10 @@ pub enum EventOp<C> where C: Context {
 pub struct TaskDoneOp<C, O> {
     pub context: C,
     pub op: O,
+}
+
+pub enum InfoOp {
+    Success { info: Info, },
 }
 
 pub enum LendBlockOp {
@@ -421,6 +427,8 @@ impl<C> Inner<C> where C: Context {
 
     fn incoming_request(self, incoming: proto::Request<C>) -> Op<C> {
         match incoming {
+            proto::Request::Info(request_info) =>
+                self.incoming_request_info(request_info),
             proto::Request::LendBlock(request_lend_block) =>
                 self.incoming_request_lend_block(request_lend_block),
             proto::Request::RepayBlock(request_repay_block) =>
@@ -432,6 +440,14 @@ impl<C> Inner<C> where C: Context {
             proto::Request::DeleteBlock(request_delete_block) =>
                 self.incoming_request_delete_block(request_delete_block),
         }
+    }
+
+    fn incoming_request_info(self, proto::RequestInfo { context, }: proto::RequestInfo<C::Info>) -> Op<C> {
+        let info = self.schema.info();
+        Op::Event(Event {
+            op: EventOp::Info(TaskDoneOp { context, op: InfoOp::Success { info, }, }),
+            performer: Performer { inner: self, },
+        })
     }
 
     fn incoming_request_lend_block(mut self, proto::RequestLendBlock { context, }: proto::RequestLendBlock<C::LendBlock>) -> Op<C> {

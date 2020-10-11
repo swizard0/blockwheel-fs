@@ -132,7 +132,30 @@ pub enum DeleteBlockError {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Deleted;
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
+pub struct Info {
+    pub blocks_count: usize,
+    pub wheel_size_bytes: usize,
+    pub service_bytes_used: usize,
+    pub data_bytes_used: usize,
+    pub bytes_free: usize,
+}
+
 impl Pid {
+    pub async fn info(&mut self) -> Result<Info, ero::NoProcError> {
+        loop {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            self.request_tx.send(proto::Request::Info(proto::RequestInfo { context: reply_tx, })).await
+                .map_err(|_send_error| ero::NoProcError)?;
+            match reply_rx.await {
+                Ok(info) =>
+                    return Ok(info),
+                Err(oneshot::Canceled) =>
+                    (),
+            }
+        }
+    }
+
     pub async fn lend_block(&mut self) -> Result<block::BytesMut, ero::NoProcError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
@@ -233,11 +256,13 @@ mod blockwheel_context {
         context,
         wheel::core::task,
         Deleted,
+        Info,
     };
 
     pub struct Context;
 
     impl context::Context for Context {
+        type Info = oneshot::Sender<Info>;
         type LendBlock = oneshot::Sender<block::BytesMut>;
         type WriteBlock = oneshot::Sender<Result<block::Id, RequestWriteBlockError>>;
         type ReadBlock = oneshot::Sender<Result<block::Bytes, RequestReadBlockError>>;

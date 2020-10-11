@@ -6,6 +6,7 @@ use super::{
     init,
     interpret,
     hello_world_bytes,
+    Info,
     ScriptOp,
     ExpectOp,
     DoOp,
@@ -266,6 +267,20 @@ fn script_basic() {
             expect_context: "ectx0a",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::Info(proto::RequestInfo { context: "ectx0b", }),
+        }),
+        ScriptOp::Expect(ExpectOp::InfoSuccess {
+            expect_info: Info {
+                blocks_count: 2,
+                wheel_size_bytes: 160,
+                service_bytes_used: 120,
+                data_bytes_used: 26,
+                bytes_free: 14,
+            },
+            expect_context: "ectx0b",
+        }),
         ScriptOp::Expect(ExpectOp::PollRequest),
     ];
 

@@ -14,16 +14,27 @@ use super::{
 #[derive(Debug)]
 pub struct Index {
     index: HashMap<block::Id, BlockEntry>,
+    blocks_total_size: usize,
 }
 
 impl Index {
     pub fn new() -> Index {
         Index {
             index: HashMap::new(),
+            blocks_total_size: 0,
         }
     }
 
+    pub fn count(&self) -> usize {
+        self.index.len()
+    }
+
+    pub fn blocks_total_size(&self) -> usize {
+        self.blocks_total_size
+    }
+
     pub fn insert(&mut self, block_id: block::Id, block_entry: BlockEntry) {
+        self.blocks_total_size += block_entry.header.block_size;
         self.index.insert(block_id, block_entry);
     }
 
@@ -52,6 +63,9 @@ impl Index {
     }
 
     pub fn remove(&mut self, block_id: &block::Id) -> Option<BlockEntry> {
-        self.index.remove(block_id)
+        let block_entry = self.index.remove(block_id)?;
+        assert!(self.blocks_total_size >= block_entry.header.block_size);
+        self.blocks_total_size -= block_entry.header.block_size;
+        Some(block_entry)
     }
 }

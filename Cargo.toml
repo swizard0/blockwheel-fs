@@ -1,6 +1,6 @@
 [package]
 name = "ero-blockwheel"
-version = "0.5.6"
+version = "0.6.0"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Persistent binary blocks with rotating wheel like access."
 edition = "2018"
@@ -17,3 +17,6 @@ bincode = "^1.2"
 serde_derive = "^1.0"
 
 tokio = { version = "^0.2", features = ["full"] }
+
+[dev-dependencies]
+rand = "^0.7"

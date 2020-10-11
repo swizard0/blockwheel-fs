@@ -5,11 +5,17 @@ use super::{
 
 #[derive(Debug)]
 pub enum Request<C> where C: Context {
+    Info(RequestInfo<C::Info>),
     LendBlock(RequestLendBlock<C::LendBlock>),
     RepayBlock(RequestRepayBlock),
     WriteBlock(RequestWriteBlock<C::WriteBlock>),
     ReadBlock(RequestReadBlock<C::ReadBlock>),
     DeleteBlock(RequestDeleteBlock<C::DeleteBlock>),
+}
+
+#[derive(Debug)]
+pub struct RequestInfo<C> {
+    pub context: C,
 }
 
 #[derive(Debug)]

@@ -416,6 +416,7 @@ struct LocalContext;
 type C = &'static str;
 
 impl Context for LocalContext {
+    type Info = C;
     type LendBlock = C;
     type WriteBlock = C;
     type ReadBlock = C;

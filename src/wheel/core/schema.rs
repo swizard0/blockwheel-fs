@@ -11,6 +11,8 @@ use super::{
     RightEnvirons,
 };
 
+use crate::Info;
+
 #[derive(Debug)]
 pub struct Schema {
     next_block_id: block::Id,
@@ -130,6 +132,23 @@ impl Schema {
 
     pub fn storage_layout(&self) -> &storage::Layout {
         &self.storage_layout
+    }
+
+    pub fn info(&self) -> Info {
+        let blocks_count = self.blocks_index.count();
+        let service_bytes_used = self.storage_layout.service_size_min()
+            + (blocks_count * self.storage_layout.data_size_block_min());
+        let data_bytes_used = self.blocks_index.blocks_total_size();
+        let bytes_free = self.gaps_index.space_total();
+        Info {
+            blocks_count,
+            service_bytes_used,
+            data_bytes_used,
+            bytes_free,
+            wheel_size_bytes: service_bytes_used
+                + data_bytes_used
+                + bytes_free,
+        }
     }
 
     pub fn process_write_block_request<'a>(

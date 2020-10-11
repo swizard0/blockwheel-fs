@@ -6,6 +6,7 @@ use super::{
     schema,
     Op,
     Event,
+    InfoOp,
     QueryOp,
     EventOp,
     Performer,
@@ -22,6 +23,8 @@ use super::{
     },
 };
 
+use crate::Info;
+
 mod basic;
 mod defrag;
 mod defrag_disturb;
@@ -32,6 +35,7 @@ struct Context;
 type C = &'static str;
 
 impl BaseContext for Context {
+    type Info = C;
     type LendBlock = C;
     type WriteBlock = C;
     type ReadBlock = C;
@@ -72,6 +76,7 @@ enum ExpectOp {
     PollRequest,
     PollRequestAndInterpreter { expect_context: C, },
     InterpretTask { expect_offset: u64, expect_task: ExpectTask, },
+    InfoSuccess { expect_info: Info, expect_context: C, },
     LendBlockSuccess { expect_context: C, },
     WriteBlockNoSpaceLeft { expect_context: C, },
     WriteBlockDone { expect_block_id: block::Id, expect_context: C, },
@@ -201,6 +206,20 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         },
                     Some(other_op) =>
                         panic!("expecting exact ExpectOp::InterpretTask for InterpretTask but got {:?} @ {}", other_op, script_len - script.len()),
+                },
+
+            Op::Event(Event { op: EventOp::Info(TaskDoneOp { context, op: InfoOp::Success { info, }, }), performer, }) =>
+                match script.pop() {
+                    None =>
+                        panic!("unexpected script end on InfoOp::Success, expecting ExpectOp::InfoSuccess @ {}", script_len - script.len()),
+                    Some(ScriptOp::Expect(ExpectOp::InfoSuccess { expect_info, expect_context, }))
+                        if expect_info == info && expect_context == context =>
+                        performer.next(),
+                    Some(other_op) =>
+                        panic!(
+                            "expecting exact ExpectOp::InfoSuccess {{ info: {:?}, }} for InfoOp::Success but got {:?} @ {}",
+                            info, other_op, script_len - script.len(),
+                        ),
                 },
 
             Op::Event(Event { op: EventOp::LendBlock(TaskDoneOp { context, op: LendBlockOp::Success { .. }, }), performer, }) =>
