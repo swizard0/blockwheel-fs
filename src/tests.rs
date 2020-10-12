@@ -148,12 +148,18 @@ fn stress() {
                             counter_writes += 1;
                             active_write_tasks_count -= 1;
                         },
-                        TaskDone::WriteBlockNoSpace =>
-                            counter_writes += 1,
-                        TaskDone::ReadBlock =>
-                            counter_reads += 1,
-                        TaskDone::DeleteBlock =>
-                            counter_deletes += 1,
+                        TaskDone::WriteBlockNoSpace => {
+                            counter_writes += 1;
+                            active_write_tasks_count -= 1;
+                        },
+                        TaskDone::ReadBlock => {
+                            counter_reads += 1;
+                            active_read_tasks_count -= 1;
+                        }
+                        TaskDone::DeleteBlock => {
+                            counter_deletes += 1;
+                            active_delete_tasks_count -= 1;
+                        },
                     }
                     active_tasks_count -= 1;
                     continue;
