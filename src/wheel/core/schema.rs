@@ -147,6 +147,7 @@ impl Schema {
             blocks_count,
             service_bytes_used,
             data_bytes_used,
+            defrag_write_pending_bytes: 0,
             bytes_free,
             wheel_size_bytes: service_bytes_used
                 + data_bytes_used
@@ -443,6 +444,7 @@ impl Schema {
             // after:  ^| ............. |$
             Environs { left: LeftEnvirons::Start, right: RightEnvirons::End, } => {
                 assert_eq!(self.gaps_index.space_total(), 0);
+                assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
                 let space_available = block_entry.header.block_size
                     + self.storage_layout.data_size_block_min();
                 self.gaps_index.insert(space_available, gaps::GapBetween::StartAndEnd)

@@ -449,7 +449,18 @@ impl<C> Inner<C> where C: Context {
     }
 
     fn incoming_request_info(self, proto::RequestInfo { context, }: proto::RequestInfo<C::Info>) -> Op<C> {
-        let info = self.schema.info();
+        let mut info = self.schema.info();
+        if let Some(defrag) = self.defrag.as_ref() {
+            info.defrag_write_pending_bytes = defrag.queues.pending.pending_bytes();
+            assert!(
+                info.bytes_free >= info.defrag_write_pending_bytes,
+                "assertion failed: info.bytes_free = {} >= info.defrag_write_pending_bytes = {}",
+                info.bytes_free,
+                info.defrag_write_pending_bytes,
+            );
+            info.bytes_free -= info.defrag_write_pending_bytes;
+        }
+
         Op::Event(Event {
             op: EventOp::Info(TaskDoneOp { context, op: InfoOp::Success { info, }, }),
             performer: Performer { inner: self, },

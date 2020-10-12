@@ -277,6 +277,7 @@ fn script_basic() {
                 wheel_size_bytes: 160,
                 service_bytes_used: 120,
                 data_bytes_used: 26,
+                defrag_write_pending_bytes: 0,
                 bytes_free: 14,
             },
             expect_context: "ectx0b",

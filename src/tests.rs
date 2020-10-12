@@ -33,7 +33,7 @@ fn stress() {
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
     let active_tasks_limit = 256;
-    let actions_limit = 4096;
+    let actions_limit = 3072;
     let work_block_size_bytes = 128 * 1024;
     let block_size_bytes_limit = work_block_size_bytes - 256;
 
@@ -142,12 +142,13 @@ fn stress() {
             if blocks.is_empty() || rng.gen_range(0.0, 1.0) < 0.5 {
                 // write or delete task
                 let write_prob = info.bytes_free as f64 / info.wheel_size_bytes as f64;
-                if blocks.is_empty() || rng.gen_range(0.0, 1.0) < write_prob {
+                let dice = rng.gen_range(0.0, 1.0);
+                if blocks.is_empty() || dice < write_prob {
                     // write task
                     let mut blockwheel_pid = pid.clone();
                     let amount = rng.gen_range(1, block_size_bytes_limit);
 
-                    println!(" // write task of {} bytes when {:?}", amount, info);
+                    println!(" // write task {} prob = {}/{} of {} bytes when {:?}", actions_counter, write_prob, dice, amount, info);
 
                     spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                         let mut block = blockwheel_pid.lend_block().await
@@ -177,14 +178,14 @@ fn stress() {
                     let block_index = rng.gen_range(0, blocks.len());
                     let (block_id, _block_bytes) = blocks.swap_remove(block_index);
 
-                    println!(" // delete task of id = {:?} when {:?}", block_id, info);
+                    println!(" // delete task {} of id = {:?} when {:?}", actions_counter, block_id, info);
 
                     let mut blockwheel_pid = pid.clone();
                     spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                         let Deleted = blockwheel_pid.delete_block(block_id.clone()).await
                             .map_err(Error::DeleteBlock)?;
 
-                        println!(" // DONE delete task of id = {:?}", block_id);
+                        println!(" // DONE delete task {} of id = {:?}", actions_counter, block_id);
 
                         Ok(TaskDone::DeleteBlock)
                     });
@@ -213,10 +214,16 @@ fn stress() {
                 });
             }
             actions_counter += 1;
+            active_tasks_count += 1;
         }
+
+        std::mem::drop(done_tx);
+        assert!(done_rx.next().await.is_none());
 
         Ok::<_, Error>(())
     }).unwrap();
+
+    println!(" // counter_reads = {}, counter_writes = {}, counter_deletes = {}", counter_reads, counter_writes, counter_deletes);
 
     assert_eq!(counter_reads + counter_writes + counter_deletes, actions_limit);
 

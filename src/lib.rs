@@ -138,6 +138,7 @@ pub struct Info {
     pub wheel_size_bytes: usize,
     pub service_bytes_used: usize,
     pub data_bytes_used: usize,
+    pub defrag_write_pending_bytes: usize,
     pub bytes_free: usize,
 }
 

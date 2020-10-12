@@ -99,15 +99,22 @@ impl Index {
         -> Result<Allocated<'a>, Error>
     where G: Fn(&block::Id) -> Option<&'a BlockEntry>
     {
-        println!("   //// allocating gap for {} bytes in {:?}", space_required, self.gaps);
+        println!(
+            "   //// allocating gap for {} bytes of {} + {:?} available in {:?}",
+            space_required, self.space_total, defrag_pending_bytes, self.gaps,
+        );
+
+        if let Some(pending_bytes) = defrag_pending_bytes {
+            if space_required + pending_bytes > self.space_total {
+                return Err(Error::NoSpaceLeft);
+            }
+        }
 
         let mut maybe_result = None;
         let mut candidates = self.gaps.range(SpaceKey { space_available: space_required, serial: 0, } ..);
-        loop {
-            match candidates.next() {
-                None =>
-                    break,
-                Some((key, Gap { between, state: GapState::Regular, })) => {
+        while let Some(candidate) = candidates.next() {
+            match candidate {
+                (key, Gap { between, state: GapState::Regular, }) => {
 
                     println!("   //// locating gap for {} bytes: trying {:?} for {:?}", space_required, key, between);
 
@@ -174,7 +181,7 @@ impl Index {
                         },
                     }
                 },
-                Some((key, Gap { state: GapState::LockedDefrag, between, })) => {
+                (key, Gap { state: GapState::LockedDefrag, between, }) => {
 
                     println!("   //// locating gap for {} bytes: trying LOCKED {:?} of {:?}", space_required, key, between);
 
