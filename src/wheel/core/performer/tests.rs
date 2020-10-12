@@ -205,7 +205,13 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 panic!("expected DoTaskAccept but got {:?} @ {}", other_op, script_len - script.len()),
                         },
                     Some(other_op) =>
-                        panic!("expecting exact ExpectOp::InterpretTask for InterpretTask but got {:?} @ {}", other_op, script_len - script.len()),
+                        panic!(
+                            "expecting exact ExpectOp::InterpretTask {{ expect_offset = {}, expect_task = {:?} }} for InterpretTask but got {:?} @ {}",
+                            offset,
+                            task,
+                            other_op,
+                            script_len - script.len(),
+                        ),
                 },
 
             Op::Event(Event { op: EventOp::Info(TaskDoneOp { context, op: InfoOp::Success { info, }, }), performer, }) =>

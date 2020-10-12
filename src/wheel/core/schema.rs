@@ -24,7 +24,7 @@ pub struct Schema {
 #[derive(Debug)]
 pub enum WriteBlockOp<'a> {
     Perform(WriteBlockPerform<'a>),
-    QueuePendingDefrag,
+    QueuePendingDefrag { space_required: usize, },
     ReplyNoSpaceLeft,
 }
 
@@ -361,7 +361,7 @@ impl Schema {
             },
 
             Ok(gaps::Allocated::PendingDefragmentation) =>
-                return WriteBlockOp::QueuePendingDefrag,
+                return WriteBlockOp::QueuePendingDefrag { space_required, },
 
             Err(gaps::Error::NoSpaceLeft) =>
                 return WriteBlockOp::ReplyNoSpaceLeft,

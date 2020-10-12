@@ -81,7 +81,7 @@ fn script_defrag_disturb() {
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 130,
+                current_offset: 146,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -114,7 +114,7 @@ fn script_defrag_disturb() {
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 24,
+                current_offset: 32,
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
@@ -217,7 +217,7 @@ fn script_defrag_disturb() {
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 93,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
@@ -230,6 +230,33 @@ fn script_defrag_disturb() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::Idle),
+        // defragmentation continue (write task)
+        ScriptOp::Expect(ExpectOp::InterpretTask {
+            expect_offset: 24,
+            expect_task: ExpectTask {
+                block_id: block::Id::init().next(),
+                kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
+                    block_bytes: hello_world_bytes(),
+                    context: task::WriteBlockContext::Defrag,
+                }),
+            },
+        }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx09", }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx09",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 85,
+                task: task::TaskDone {
+                    block_id: block::Id::init().next(),
+                    kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                        context: task::WriteBlockContext::Defrag,
+                    }),
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
         // pending write request task becomes free
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 85,
@@ -241,9 +268,9 @@ fn script_defrag_disturb() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx09", }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx0a", }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx09",
+            expect_context: "ictx0a",
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -260,34 +287,9 @@ fn script_defrag_disturb() {
             expect_block_id: block::Id::init().next().next().next(),
             expect_context: "ectx04",
         }),
-        // defragmentation continue (write task)
-        ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
-            expect_task: ExpectTask {
-                block_id: block::Id::init().next(),
-                kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes(),
-                    context: task::WriteBlockContext::Defrag,
-                }),
-            },
-        }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx0a", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx0a",
-        }),
-        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
-            task_done: task::Done {
-                current_offset: 85,
-                task: task::TaskDone {
-                    block_id: block::Id::init().next(),
-                    kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
-                        context: task::WriteBlockContext::Defrag,
-                    }),
-                },
-            },
-        }),
-        ScriptOp::Expect(ExpectOp::Idle),
+
         ScriptOp::Expect(ExpectOp::PollRequest),
+
     ];
 
     interpret(performer, script)

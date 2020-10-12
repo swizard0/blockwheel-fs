@@ -46,8 +46,7 @@ impl<C> PendingQueue<C> {
         }
     }
 
-    pub fn push(&mut self, request_write_block: proto::RequestWriteBlock<C>) {
-        let block_bytes_len = request_write_block.block_bytes.len();
+    pub fn push(&mut self, request_write_block: proto::RequestWriteBlock<C>, block_bytes_len: usize) {
         self.bytes += block_bytes_len;
         match self.queue.entry(block_bytes_len) {
             btree_map::Entry::Vacant(ve) => {
@@ -66,7 +65,7 @@ impl<C> PendingQueue<C> {
         let mut candidates = self.queue.range(..= bytes_available).rev();
         let (&block_bytes_len, &node_ref) = candidates.next()?;
         let node = self.requests.remove(node_ref).unwrap();
-        assert_eq!(block_bytes_len, node.item.block_bytes.len());
+        assert!(block_bytes_len >= node.item.block_bytes.len());
         assert!(self.bytes >= block_bytes_len);
         match node.parent {
             None => {

@@ -327,7 +327,10 @@ impl<C> Inner<C> where C: Context {
                             (),
                     }
                 }
-                self.flush_defrag_pending_queue(block_entry.header.block_size);
+                self.flush_defrag_pending_queue(
+                    self.schema.storage_layout().data_size_block_min()
+                        + block_entry.header.block_size,
+                );
             },
             DoneTask::DeleteBlockDefrag { block_id, block_bytes, } => {
                 if let Some(tasks_head) = self.schema.block_tasks_head(&block_id) {
@@ -353,7 +356,10 @@ impl<C> Inner<C> where C: Context {
                     }
                 }
 
-                self.flush_defrag_pending_queue(block_bytes.len());
+                self.flush_defrag_pending_queue(
+                    self.schema.storage_layout().data_size_block_min()
+                        + block_bytes.len(),
+                );
                 self.done_task = DoneTask::Reenqueue { block_id, };
                 return Op::Idle(Performer { inner: self, });
             },
@@ -480,13 +486,21 @@ impl<C> Inner<C> where C: Context {
                 Op::Idle(Performer { inner: self, })
             },
 
-            schema::WriteBlockOp::QueuePendingDefrag => {
-                log::debug!(
-                    "cannot directly allocate {} bytes in process_write_block_request: moving to pending defrag queue",
+            schema::WriteBlockOp::QueuePendingDefrag { space_required, } => {
+
+                println!(
+                    "  /// cannot directly allocate {} ({}) bytes in process_write_block_request: moving to pending defrag queue",
                     request_write_block.block_bytes.len(),
+                    space_required,
+                );
+
+                log::debug!(
+                    "cannot directly allocate {} ({}) bytes in process_write_block_request: moving to pending defrag queue",
+                    request_write_block.block_bytes.len(),
+                    space_required,
                 );
                 if let Some(Defrag { queues: defrag::Queues { pending, .. }, .. }) = self.defrag.as_mut() {
-                    pending.push(request_write_block);
+                    pending.push(request_write_block, space_required);
                 }
                 Op::Idle(Performer { inner: self, })
             },
@@ -737,10 +751,16 @@ impl<C> Inner<C> where C: Context {
     }
 
     fn flush_defrag_pending_queue(&mut self, bytes_available: usize) {
+
+        println!("  /// flushing defrag pending queue, bytes_available: {}", bytes_available);
+
         if let Some(defrag) = self.defrag.as_mut() {
             while let Some(request_write_block) = defrag.queues.pending.pop_at_most(bytes_available) {
                 match self.schema.process_write_block_request(&request_write_block.block_bytes, Some(defrag.queues.pending.pending_bytes())) {
                     schema::WriteBlockOp::Perform(write_block_perform) => {
+
+                        println!("  /// revoked write block request of {} bytes from defrag queue", request_write_block.block_bytes.len());
+
                         incoming_request_write_block_perform(
                             &mut self.tasks_queue,
                             &self.bg_task,
@@ -749,8 +769,8 @@ impl<C> Inner<C> where C: Context {
                             write_block_perform,
                         );
                     },
-                    schema::WriteBlockOp::QueuePendingDefrag => {
-                        defrag.queues.pending.push(request_write_block);
+                    schema::WriteBlockOp::QueuePendingDefrag { space_required, } => {
+                        defrag.queues.pending.push(request_write_block, space_required);
                         break;
                     },
                     schema::WriteBlockOp::ReplyNoSpaceLeft =>

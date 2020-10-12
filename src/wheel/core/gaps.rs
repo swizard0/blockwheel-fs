@@ -78,8 +78,11 @@ impl Index {
         self.serial += 1;
         let space_key = SpaceKey { space_available, serial: self.serial, };
 
+        println!("   //// inserted gap of {} bytes between: {:?}", space_available, between);
+
         self.gaps.insert(space_key, Gap { between, state: GapState::Regular, });
         self.space_total += space_available;
+
         space_key
     }
 
@@ -96,6 +99,8 @@ impl Index {
         -> Result<Allocated<'a>, Error>
     where G: Fn(&block::Id) -> Option<&'a BlockEntry>
     {
+        println!("   //// allocating gap for {} bytes in {:?}", space_required, self.gaps);
+
         let mut maybe_result = None;
         let mut candidates = self.gaps.range(SpaceKey { space_available: space_required, serial: 0, } ..);
         loop {
@@ -103,6 +108,9 @@ impl Index {
                 None =>
                     break,
                 Some((key, Gap { between, state: GapState::Regular, })) => {
+
+                    println!("   //// locating gap for {} bytes: trying {:?} for {:?}", space_required, key, between);
+
                     self.remove_buf.push(*key);
                     match between {
                         GapBetween::StartAndEnd => {
@@ -114,62 +122,64 @@ impl Index {
                             self.space_total -= key.space_available;
                             break;
                         },
-                        GapBetween::StartAndBlock { right_block, } =>
-                            if let Some(block_entry) = block_get(right_block) {
-                                maybe_result = Some(Allocated::Success {
-                                    space_available: key.space_available,
-                                    between: GapBetween::StartAndBlock {
-                                        right_block: BlockInfo {
-                                            block_id: right_block.clone(),
-                                            block_entry,
-                                        },
+                        GapBetween::StartAndBlock { right_block, } => {
+                            let block_entry = block_get(right_block).unwrap();
+                            maybe_result = Some(Allocated::Success {
+                                space_available: key.space_available,
+                                between: GapBetween::StartAndBlock {
+                                    right_block: BlockInfo {
+                                        block_id: right_block.clone(),
+                                        block_entry,
                                     },
-                                });
-                                assert!(key.space_available <= self.space_total);
-                                self.space_total -= key.space_available;
-                                break;
-                            },
-                        GapBetween::TwoBlocks { left_block, right_block, } => {
-                            let maybe_left = block_get(left_block);
-                            let maybe_right = block_get(right_block);
-                            if let (Some(left_block_entry), Some(right_block_entry)) = (maybe_left, maybe_right) {
-                                maybe_result = Some(Allocated::Success {
-                                    space_available: key.space_available,
-                                    between: GapBetween::TwoBlocks {
-                                        left_block: BlockInfo {
-                                            block_id: left_block.clone(),
-                                            block_entry: left_block_entry,
-                                        },
-                                        right_block: BlockInfo {
-                                            block_id: right_block.clone(),
-                                            block_entry: right_block_entry,
-                                        },
-                                    },
-                                });
-                                assert!(key.space_available <= self.space_total);
-                                self.space_total -= key.space_available;
-                                break;
-                            }
+                                },
+                            });
+                            assert!(key.space_available <= self.space_total);
+                            self.space_total -= key.space_available;
+                            break;
                         },
-                        GapBetween::BlockAndEnd { left_block, } =>
-                            if let Some(block_entry) = block_get(left_block) {
-                                maybe_result = Some(Allocated::Success {
-                                    space_available: key.space_available,
-                                    between: GapBetween::BlockAndEnd {
-                                        left_block: BlockInfo {
-                                            block_id: left_block.clone(),
-                                            block_entry,
-                                        },
+                        GapBetween::TwoBlocks { left_block, right_block, } => {
+                            let left_block_entry = block_get(left_block).unwrap();
+                            let right_block_entry = block_get(right_block).unwrap();
+                            maybe_result = Some(Allocated::Success {
+                                space_available: key.space_available,
+                                between: GapBetween::TwoBlocks {
+                                    left_block: BlockInfo {
+                                        block_id: left_block.clone(),
+                                        block_entry: left_block_entry,
                                     },
-                                });
-                                assert!(key.space_available <= self.space_total);
-                                self.space_total -= key.space_available;
-                                break;
-                            },
+                                    right_block: BlockInfo {
+                                        block_id: right_block.clone(),
+                                        block_entry: right_block_entry,
+                                    },
+                                },
+                            });
+                            assert!(key.space_available <= self.space_total);
+                            self.space_total -= key.space_available;
+                            break;
+                        },
+                        GapBetween::BlockAndEnd { left_block, } => {
+                            let block_entry = block_get(left_block).unwrap();
+                            maybe_result = Some(Allocated::Success {
+                                space_available: key.space_available,
+                                between: GapBetween::BlockAndEnd {
+                                    left_block: BlockInfo {
+                                        block_id: left_block.clone(),
+                                        block_entry,
+                                    },
+                                },
+                            });
+                            assert!(key.space_available <= self.space_total);
+                            self.space_total -= key.space_available;
+                            break;
+                        },
                     }
                 },
-                Some((_key, Gap { state: GapState::LockedDefrag, .. })) =>
-                    (),
+                Some((key, Gap { state: GapState::LockedDefrag, between, })) => {
+
+                    println!("   //// locating gap for {} bytes: trying LOCKED {:?} of {:?}", space_required, key, between);
+
+                    ()
+                },
             }
         }
 

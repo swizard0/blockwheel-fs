@@ -146,6 +146,9 @@ fn stress() {
                     // write task
                     let mut blockwheel_pid = pid.clone();
                     let amount = rng.gen_range(1, block_size_bytes_limit);
+
+                    println!(" // write task of {} bytes when {:?}", amount, info);
+
                     spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                         let mut block = blockwheel_pid.lend_block().await
                             .map_err(|ero::NoProcError| Error::WheelGoneDuringLendBlock)?;
@@ -153,10 +156,18 @@ fn stress() {
                         rand::thread_rng().fill(&mut block[..]);
                         let block_bytes = block.freeze();
                         match blockwheel_pid.write_block(block_bytes.clone()).await {
-                            Ok(block_id) =>
-                                Ok(TaskDone::WriteBlock { block_id, block_bytes, }),
-                            Err(super::WriteBlockError::NoSpaceLeft) =>
-                                Ok(TaskDone::WriteBlockNoSpace),
+                            Ok(block_id) => {
+
+                                println!(" // DONE write task of size = {}, id = {:?} (success)", block_bytes.len(), block_id);
+
+                                Ok(TaskDone::WriteBlock { block_id, block_bytes, })
+                            },
+                            Err(super::WriteBlockError::NoSpaceLeft) => {
+
+                                println!(" // DONE write task of size = {} (no space)", block_bytes.len());
+
+                                Ok(TaskDone::WriteBlockNoSpace)
+                            },
                             Err(error) =>
                                 Err(Error::WriteBlock(error))
                         }
@@ -165,10 +176,16 @@ fn stress() {
                     // delete task
                     let block_index = rng.gen_range(0, blocks.len());
                     let (block_id, _block_bytes) = blocks.swap_remove(block_index);
+
+                    println!(" // delete task of id = {:?} when {:?}", block_id, info);
+
                     let mut blockwheel_pid = pid.clone();
                     spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-                        let Deleted = blockwheel_pid.delete_block(block_id).await
+                        let Deleted = blockwheel_pid.delete_block(block_id.clone()).await
                             .map_err(Error::DeleteBlock)?;
+
+                        println!(" // DONE delete task of id = {:?}", block_id);
+
                         Ok(TaskDone::DeleteBlock)
                     });
                 }
@@ -176,6 +193,9 @@ fn stress() {
                 // read task
                 let block_index = rng.gen_range(0, blocks.len());
                 let (block_id, block_bytes) = blocks[block_index].clone();
+
+                println!(" // read task of id = {:?} when {:?}", block_id, info);
+
                 let mut blockwheel_pid = pid.clone();
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                     let block_bytes_read = blockwheel_pid.read_block(block_id.clone()).await
@@ -185,6 +205,9 @@ fn stress() {
                     if expected_crc != provided_crc {
                         Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, })
                     } else {
+
+                        println!(" // DONE read task of id = {:?}", block_id);
+
                         Ok(TaskDone::ReadBlock)
                     }
                 });
