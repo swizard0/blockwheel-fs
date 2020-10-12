@@ -465,7 +465,7 @@ impl Schema {
                             space_available,
                             gaps::GapBetween::StartAndBlock { right_block: right_block.clone(), },
                         );
-                        self.blocks_index.update_env_left(&right_block, LeftEnvirons::Start);
+                        self.blocks_index.update_env_left(&right_block, LeftEnvirons::Space { space_key, });
                         assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
                         defrag_op = DefragOp::Queue { free_space_offset: block_entry.offset, space_key, };
                         space_key
@@ -474,6 +474,7 @@ impl Schema {
                     // after:  ^| ....... |$
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
