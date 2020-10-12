@@ -515,7 +515,7 @@ impl Schema {
                             space_available,
                             gaps::GapBetween::BlockAndEnd { left_block: left_block.clone(), },
                         );
-                        self.blocks_index.update_env_right(&left_block, RightEnvirons::End);
+                        self.blocks_index.update_env_right(&left_block, RightEnvirons::Space { space_key, });
                         space_key
                     },
                     // before: ^| ... | R |$

@@ -97,6 +97,7 @@ fn stress() {
 
         loop {
             if actions_counter >= actions_limit {
+                std::mem::drop(done_tx);
                 while active_tasks_count > 0 {
 
                     println!(
@@ -260,7 +261,6 @@ fn stress() {
         }
 
         println!("// dropping tx");
-        std::mem::drop(done_tx);
         assert!(done_rx.next().await.is_none());
 
         Ok::<_, Error>(())
