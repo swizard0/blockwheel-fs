@@ -289,7 +289,7 @@ impl Schema {
                 let left_block_id = left_block.block_id.clone();
 
                 let space_left = space_available - space_required;
-                let (self_env, left_env) = if space_left > 0 {
+                let self_env = if space_left > 0 {
                     let space_key = self.gaps_index.insert(
                         space_left,
                         gaps::GapBetween::BlockAndEnd {
@@ -297,15 +297,9 @@ impl Schema {
                         },
                     );
                     right_space_key = Some(space_key);
-                    (
-                        RightEnvirons::Space { space_key, },
-                        RightEnvirons::Block { block_id: block_id.clone(), },
-                    )
+                    RightEnvirons::Space { space_key, }
                 } else {
-                    (
-                        RightEnvirons::End,
-                        RightEnvirons::Block { block_id: block_id.clone(), },
-                    )
+                    RightEnvirons::End
                 };
                 self.blocks_index.insert(
                     block_id.clone(),
@@ -324,7 +318,7 @@ impl Schema {
                         tasks_head: Default::default(),
                     },
                 );
-                self.blocks_index.update_env_right(&left_block_id, left_env);
+                self.blocks_index.update_env_right(&left_block_id, RightEnvirons::Block { block_id: block_id.clone(), });
                 block_offset
             },
 

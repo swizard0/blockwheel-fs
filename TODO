@@ -1,2 +1,4 @@
 - think about "block repay" mechanism: do we really need it?
 - fill defrag queue after blockwheel file opening
+
+- space gap is deleted but it was stored in defrag task: deleted block entry environs checking failed
