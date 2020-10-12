@@ -909,7 +909,7 @@ impl Schema {
                             },
                         );
                         let block_offset = self.blocks_index.with_mut(&left_block_left, |block_entry| {
-                            RightEnvirons::Block { block_id: removed_block_id.clone(), };
+                            block_entry.environs.right = RightEnvirons::Block { block_id: removed_block_id.clone(), };
                             block_entry.offset
                                 + data_size_block_min
                                 + block_entry.header.block_size as u64
@@ -943,7 +943,7 @@ impl Schema {
                             space_key.space_available(),
                             gaps::GapBetween::TwoBlocks { left_block: removed_block_id.clone(), right_block: block_id.clone(), },
                         );
-                        self.blocks_index.update_env_left(&right_block, LeftEnvirons::Space { space_key: moved_space_key, });
+                        self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key: moved_space_key, });
                         let block_end_offset = self.blocks_index.with_mut(&removed_block_id, |block_entry| {
                             block_entry.offset = start_offset;
                             block_entry.environs.left = LeftEnvirons::Start;
