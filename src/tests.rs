@@ -217,9 +217,6 @@ fn stress() {
             active_tasks_count += 1;
         }
 
-        std::mem::drop(done_tx);
-        assert!(done_rx.next().await.is_none());
-
         Ok::<_, Error>(())
     }).unwrap();
 
