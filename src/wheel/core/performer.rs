@@ -14,6 +14,7 @@ use super::{
     block,
     schema,
     defrag,
+    SpaceKey,
     TasksHead,
     BlockEntry,
 };
@@ -47,10 +48,12 @@ enum DoneTask {
     DeleteBlockRegular {
         block_id: block::Id,
         block_entry: BlockEntry,
+        freed_space_key: SpaceKey,
     },
     DeleteBlockDefrag {
         block_id: block::Id,
         block_bytes: block::Bytes,
+        freed_space_key: SpaceKey,
     },
 }
 
@@ -276,7 +279,7 @@ impl<C> Inner<C> where C: Context {
                 self.done_task = DoneTask::Reenqueue { block_id, };
                 return Op::Idle(Performer { inner: self, });
             },
-            DoneTask::DeleteBlockRegular { block_id, mut block_entry, } => {
+            DoneTask::DeleteBlockRegular { block_id, mut block_entry, freed_space_key, } => {
                 while let Some(write_block) = self.tasks_queue.pop_write_task(&mut block_entry.tasks_head) {
                     match write_block.context {
                         task::WriteBlockContext::External(..) =>
@@ -293,6 +296,7 @@ impl<C> Inner<C> where C: Context {
                             self.done_task = DoneTask::DeleteBlockRegular {
                                 block_id: block_id.clone(),
                                 block_entry,
+                                freed_space_key,
                             };
                             return Op::Event(Event {
                                 op: EventOp::ReadBlock(TaskDoneOp {
@@ -313,6 +317,7 @@ impl<C> Inner<C> where C: Context {
                             self.done_task = DoneTask::DeleteBlockRegular {
                                 block_id: block_id.clone(),
                                 block_entry,
+                                freed_space_key,
                             };
                             return Op::Event(Event {
                                 op: EventOp::DeleteBlock(TaskDoneOp {
@@ -327,12 +332,9 @@ impl<C> Inner<C> where C: Context {
                             (),
                     }
                 }
-                self.flush_defrag_pending_queue(
-                    self.schema.storage_layout().data_size_block_min()
-                        + block_entry.header.block_size,
-                );
+                self.flush_defrag_pending_queue(Some(freed_space_key));
             },
-            DoneTask::DeleteBlockDefrag { block_id, block_bytes, } => {
+            DoneTask::DeleteBlockDefrag { block_id, block_bytes, freed_space_key, } => {
                 if let Some(tasks_head) = self.schema.block_tasks_head(&block_id) {
                     while let Some(read_block) = self.tasks_queue.pop_read_task(tasks_head) {
                         self.blocks_pool.repay(read_block.block_bytes.freeze());
@@ -341,6 +343,7 @@ impl<C> Inner<C> where C: Context {
                                 self.done_task = DoneTask::DeleteBlockDefrag {
                                     block_id: block_id.clone(),
                                     block_bytes: block_bytes.clone(),
+                                    freed_space_key,
                                 };
                                 return Op::Event(Event {
                                     op: EventOp::ReadBlock(TaskDoneOp {
@@ -356,10 +359,7 @@ impl<C> Inner<C> where C: Context {
                     }
                 }
 
-                self.flush_defrag_pending_queue(
-                    self.schema.storage_layout().data_size_block_min()
-                        + block_bytes.len(),
-                );
+                self.flush_defrag_pending_queue(Some(freed_space_key));
                 self.done_task = DoneTask::Reenqueue { block_id, };
                 return Op::Idle(Performer { inner: self, });
             },
@@ -650,7 +650,11 @@ impl<C> Inner<C> where C: Context {
                     task::DeleteBlockContext::External(context) => {
                         self.lru_cache.invalidate(&block_id);
                         match self.schema.process_delete_block_task_done(block_id.clone()) {
-                            schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform { defrag_op, block_entry, }) => {
+                            schema::DeleteBlockTaskDoneOp::Perform(schema::DeleteBlockTaskDonePerform {
+                                defrag_op,
+                                block_entry,
+                                freed_space_key,
+                            }) => {
                                 match (defrag_op, self.defrag.as_mut()) {
                                     (
                                         schema::DefragOp::Queue { free_space_offset, space_key, },
@@ -663,6 +667,7 @@ impl<C> Inner<C> where C: Context {
                                 self.done_task = DoneTask::DeleteBlockRegular {
                                     block_id: block_id.clone(),
                                     block_entry,
+                                    freed_space_key,
                                 };
                                 Op::Event(Event {
                                     op: EventOp::DeleteBlock(TaskDoneOp { context, op: DeleteBlockOp::Done { block_id, }, }),
@@ -701,6 +706,7 @@ impl<C> Inner<C> where C: Context {
                                 self.done_task = DoneTask::DeleteBlockDefrag {
                                     block_id,
                                     block_bytes: task_op.block_bytes,
+                                    freed_space_key: task_op.freed_space_key,
                                 };
                                 Op::Idle(Performer { inner: self, })
                             },
@@ -750,17 +756,28 @@ impl<C> Inner<C> where C: Context {
         }
     }
 
-    fn flush_defrag_pending_queue(&mut self, bytes_available: usize) {
+    fn flush_defrag_pending_queue(&mut self, mut maybe_space_key: Option<SpaceKey>) {
 
-        println!("  /// flushing defrag pending queue, bytes_available: {}", bytes_available);
+        println!("  /// flushing defrag pending queue, space_key: {:?}", maybe_space_key);
 
         if let Some(defrag) = self.defrag.as_mut() {
-            while let Some(request_write_block) = defrag.queues.pending.pop_at_most(bytes_available) {
+            loop {
+                let space_key = if let Some(space_key) = maybe_space_key {
+                    space_key
+                } else {
+                    break;
+                };
+                let request_write_block = if let Some(request_write_block) = defrag.queues.pending.pop_at_most(space_key.space_available()) {
+                    request_write_block
+                } else {
+                    break;
+                };
                 match self.schema.process_write_block_request(&request_write_block.block_bytes, Some(defrag.queues.pending.pending_bytes())) {
                     schema::WriteBlockOp::Perform(write_block_perform) => {
 
                         println!("  /// revoked write block request of {} bytes from defrag queue", request_write_block.block_bytes.len());
 
+                        maybe_space_key = write_block_perform.right_space_key;
                         incoming_request_write_block_perform(
                             &mut self.tasks_queue,
                             &self.bg_task,
@@ -790,7 +807,7 @@ fn incoming_request_write_block_perform<'a, C>(
 )
     where C: Context
 {
-    let schema::WriteBlockPerform { defrag_op, task_op, tasks_head, } = write_block_perform;
+    let schema::WriteBlockPerform { defrag_op, task_op, tasks_head, .. } = write_block_perform;
     match (defrag_op, defrag.as_mut()) {
         (
             schema::DefragOp::Queue { free_space_offset, space_key, },
