@@ -1,3 +1,5 @@
+use std::mem::drop;
+
 use super::{
     gaps,
     block,
@@ -452,6 +454,7 @@ impl Schema {
                     // after:  ^| ........| A | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        drop(left_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
@@ -468,6 +471,7 @@ impl Schema {
                     // after:  ^| ....... |$
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        drop(left_block);
                         assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -502,6 +506,7 @@ impl Schema {
                     // after:  ^| ... | A | ....... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        drop(right_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
@@ -516,6 +521,7 @@ impl Schema {
                     // after:  ^| ....... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        drop(right_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
@@ -541,7 +547,9 @@ impl Schema {
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        drop(left_block_right);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
@@ -555,7 +563,9 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        drop(left_block_right);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
@@ -576,7 +586,9 @@ impl Schema {
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        drop(left_block_right);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
@@ -595,7 +607,9 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        drop(left_block_right);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
@@ -629,6 +643,7 @@ impl Schema {
                     // after:  ^| ... | A | .........| B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        drop(right_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
@@ -652,6 +667,7 @@ impl Schema {
                     // after:  ^| ........ | B | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        drop(right_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
@@ -693,6 +709,7 @@ impl Schema {
                     // after:  ^| ... | A | ........ | B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        drop(left_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
@@ -716,6 +733,7 @@ impl Schema {
                     // after:  ^| ... | A | ........ |$
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        drop(left_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
@@ -779,6 +797,7 @@ impl Schema {
                     // after:  ^| R | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        drop(right_block);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
                             gaps::GapBetween::BlockAndEnd { left_block: removed_block_id.clone(), },
@@ -794,6 +813,7 @@ impl Schema {
                     // after:  ^| ... | A | R | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        drop(right_block);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
                             gaps::GapBetween::BlockAndEnd { left_block: removed_block_id.clone(), },
@@ -832,7 +852,9 @@ impl Schema {
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        drop(left_block_right);
                         let moved_space_key = self.gaps_index.insert(
                             space_key_left.space_available() + space_key_right.space_available(),
                             gaps::GapBetween::BlockAndEnd { left_block: removed_block_id.clone(), },
@@ -851,7 +873,9 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        drop(left_block_right);
                         let moved_space_key = self.gaps_index.insert(
                             space_key_left.space_available() + space_key_right.space_available(),
                             gaps::GapBetween::TwoBlocks { left_block: removed_block_id.clone(), right_block: right_block_right.clone(), },
@@ -875,7 +899,9 @@ impl Schema {
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        drop(left_block_right);
                         let moved_space_key = self.gaps_index.insert(
                             space_key_left.space_available() + space_key_right.space_available(),
                             gaps::GapBetween::BlockAndEnd { left_block: removed_block_id.clone(), },
@@ -900,7 +926,9 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        drop(left_block_right);
                         let moved_space_key = self.gaps_index.insert(
                             space_key_left.space_available() + space_key_right.space_available(),
                             gaps::GapBetween::TwoBlocks {
@@ -939,6 +967,7 @@ impl Schema {
                     // after:  ^| R | ... | B | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        drop(right_block);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
                             gaps::GapBetween::TwoBlocks { left_block: removed_block_id.clone(), right_block: block_id.clone(), },
@@ -959,6 +988,7 @@ impl Schema {
                     // after:  ^| ... | A | R | ... | B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        drop(right_block);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
                             gaps::GapBetween::TwoBlocks {
