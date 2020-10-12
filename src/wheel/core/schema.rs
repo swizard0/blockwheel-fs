@@ -776,7 +776,7 @@ impl Schema {
                     None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
                         unreachable!(),
                     // before: ^| ... | R |$
-                    // after:  ^| R | ....|$
+                    // after:  ^| R | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
                         let moved_space_key = self.gaps_index.insert(
@@ -888,7 +888,7 @@ impl Schema {
                         }).unwrap();
                         self.blocks_index.with_mut(&removed_block_id, |block_entry| {
                             block_entry.offset = block_offset;
-                            block_entry.environs.left = LeftEnvirons::Block { block_id: right_block_left, };
+                            block_entry.environs.left = LeftEnvirons::Block { block_id: left_block_left, };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
                         moved_space_key
