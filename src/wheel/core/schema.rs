@@ -672,8 +672,8 @@ impl Schema {
                     },
                 },
 
-            // before: ^| ... | A || R | ... |$
-            // after:  ^| ... | A | ........ |$
+            // before: ^| ... | A || R ||$
+            // after:  ^| ... | A | ... |$
             Environs {
                 left: LeftEnvirons::Block { block_id, },
                 right: RightEnvirons::End,
