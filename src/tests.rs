@@ -34,8 +34,9 @@ fn stress() {
     let wheel_filename = "/tmp/blockwheel_stress";
     let active_tasks_limit = 256;
     let actions_limit = 3072;
-    let work_block_size_bytes = 128 * 1024;
+    let work_block_size_bytes = 64 * 1024;
     let block_size_bytes_limit = work_block_size_bytes - 256;
+    let init_wheel_size_bytes = 2 * 1024 * 1024;
 
     let mut counter_reads = 0;
     let mut counter_writes = 0;
@@ -53,7 +54,7 @@ fn stress() {
                 supervisor_pid.clone(),
                 Params {
                     wheel_filename: wheel_filename.into(),
-                    init_wheel_size_bytes: 4 * 1024 * 1024,
+                    init_wheel_size_bytes,
                     work_block_size_bytes,
                     lru_cache_size_bytes: 0,
                     ..Default::default()
@@ -66,6 +67,9 @@ fn stress() {
         let (done_tx, done_rx) = mpsc::channel(0);
         pin_mut!(done_rx);
         let mut active_tasks_count = 0;
+        let mut active_read_tasks_count = 0;
+        let mut active_write_tasks_count = 0;
+        let mut active_delete_tasks_count = 0;
         let mut actions_counter = 0;
 
         enum TaskDone {
@@ -94,19 +98,37 @@ fn stress() {
         loop {
             if actions_counter >= actions_limit {
                 while active_tasks_count > 0 {
+
+                    println!(
+                        " // termination await of {} active tasks ({}/{} / {}/{} / {}/{})",
+                        active_tasks_count,
+                        counter_reads,
+                        active_read_tasks_count,
+                        counter_writes,
+                        active_write_tasks_count,
+                        counter_deletes,
+                        active_delete_tasks_count,
+                    );
+
                     match done_rx.next().await.unwrap()? {
-                        TaskDone::WriteBlock { .. } | TaskDone::WriteBlockNoSpace =>
-                            counter_writes += 1,
-                        TaskDone::ReadBlock =>
-                            counter_reads += 1,
-                        TaskDone::DeleteBlock =>
-                            counter_deletes += 1,
+                        TaskDone::WriteBlock { .. } | TaskDone::WriteBlockNoSpace => {
+                            counter_writes += 1;
+                            active_write_tasks_count -= 1;
+                        },
+                        TaskDone::ReadBlock => {
+                            counter_reads += 1;
+                            active_read_tasks_count -= 1;
+                        },
+                        TaskDone::DeleteBlock => {
+                            counter_deletes += 1;
+                            active_delete_tasks_count -= 1;
+                        },
                     }
                     active_tasks_count -= 1;
                 }
                 break;
             }
-            let maybe_task_result = if active_tasks_count >= active_tasks_limit {
+            let maybe_task_result = if (active_tasks_count >= active_tasks_limit) || (blocks.is_empty() && active_write_tasks_count > 0) {
                 Some(done_rx.next().await.unwrap())
             } else {
                 select! {
@@ -124,6 +146,7 @@ fn stress() {
                         TaskDone::WriteBlock { block_id, block_bytes, } => {
                             blocks.push((block_id, block_bytes));
                             counter_writes += 1;
+                            active_write_tasks_count -= 1;
                         },
                         TaskDone::WriteBlockNoSpace =>
                             counter_writes += 1,
@@ -148,7 +171,15 @@ fn stress() {
                     let mut blockwheel_pid = pid.clone();
                     let amount = rng.gen_range(1, block_size_bytes_limit);
 
-                    println!(" // write task {} prob = {}/{} of {} bytes when {:?}", actions_counter, write_prob, dice, amount, info);
+                    println!(
+                        " // write task {} prob = {}/{}/{} of {} bytes when {:?}",
+                        actions_counter,
+                        write_prob,
+                        dice,
+                        blocks.len(),
+                        amount,
+                        info,
+                    );
 
                     spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                         let mut block = blockwheel_pid.lend_block().await
@@ -161,6 +192,8 @@ fn stress() {
 
                                 println!(" // DONE write task of size = {}, id = {:?} (success)", block_bytes.len(), block_id);
 
+                                blockwheel_pid.repay_block(block_bytes.clone()).await
+                                    .map_err(|ero::NoProcError| Error::WheelGoneDuringRepayBlock)?;
                                 Ok(TaskDone::WriteBlock { block_id, block_bytes, })
                             },
                             Err(super::WriteBlockError::NoSpaceLeft) => {
@@ -173,6 +206,7 @@ fn stress() {
                                 Err(Error::WriteBlock(error))
                         }
                     });
+                    active_write_tasks_count += 1;
                 } else {
                     // delete task
                     let block_index = rng.gen_range(0, blocks.len());
@@ -189,13 +223,14 @@ fn stress() {
 
                         Ok(TaskDone::DeleteBlock)
                     });
+                    active_delete_tasks_count += 1;
                 }
             } else {
                 // read task
                 let block_index = rng.gen_range(0, blocks.len());
                 let (block_id, block_bytes) = blocks[block_index].clone();
 
-                println!(" // read task of id = {:?} when {:?}", block_id, info);
+                println!(" // read task {} of id = {:?} when {:?}", actions_counter, block_id, info);
 
                 let mut blockwheel_pid = pid.clone();
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
@@ -212,10 +247,15 @@ fn stress() {
                         Ok(TaskDone::ReadBlock)
                     }
                 });
+                active_read_tasks_count += 1;
             }
             actions_counter += 1;
             active_tasks_count += 1;
         }
+
+        println!("// dropping tx");
+        std::mem::drop(done_tx);
+        assert!(done_rx.next().await.is_none());
 
         Ok::<_, Error>(())
     }).unwrap();
@@ -231,6 +271,7 @@ fn stress() {
 enum Error {
     WheelGoneDuringInfo,
     WheelGoneDuringLendBlock,
+    WheelGoneDuringRepayBlock,
     WriteBlock(super::WriteBlockError),
     DeleteBlock(super::DeleteBlockError),
     ReadBlock(super::ReadBlockError),

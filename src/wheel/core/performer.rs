@@ -498,13 +498,6 @@ impl<C> Inner<C> where C: Context {
             },
 
             schema::WriteBlockOp::QueuePendingDefrag { space_required, } => {
-
-                println!(
-                    "  /// cannot directly allocate {} ({}) bytes in process_write_block_request: moving to pending defrag queue",
-                    request_write_block.block_bytes.len(),
-                    space_required,
-                );
-
                 log::debug!(
                     "cannot directly allocate {} ({}) bytes in process_write_block_request: moving to pending defrag queue",
                     request_write_block.block_bytes.len(),
@@ -768,9 +761,6 @@ impl<C> Inner<C> where C: Context {
     }
 
     fn flush_defrag_pending_queue(&mut self, mut maybe_space_key: Option<SpaceKey>) {
-
-        println!("  /// flushing defrag pending queue, space_key: {:?}", maybe_space_key);
-
         if let Some(defrag) = self.defrag.as_mut() {
             loop {
                 let space_key = if let Some(space_key) = maybe_space_key {
@@ -785,9 +775,6 @@ impl<C> Inner<C> where C: Context {
                 };
                 match self.schema.process_write_block_request(&request_write_block.block_bytes, Some(defrag.queues.pending.pending_bytes())) {
                     schema::WriteBlockOp::Perform(write_block_perform) => {
-
-                        println!("  /// revoked write block request of {} bytes from defrag queue", request_write_block.block_bytes.len());
-
                         maybe_space_key = write_block_perform.right_space_key;
                         incoming_request_write_block_perform(
                             &mut self.tasks_queue,

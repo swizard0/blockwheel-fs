@@ -452,8 +452,8 @@ impl Schema {
 
             Environs { left: LeftEnvirons::Start, right: RightEnvirons::Space { space_key, }, } =>
                 match self.gaps_index.remove(&space_key) {
-                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::StartAndBlock { .. }) =>
-                        unreachable!(),
+                    value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::StartAndBlock { .. }) =>
+                        unreachable!("delete inconsistent environs Start/Space with right space = {:?}", value),
                     // before: ^| R | ... | A | ... |$
                     // after:  ^| ........| A | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
@@ -502,8 +502,8 @@ impl Schema {
                 right: RightEnvirons::End,
             } =>
                 match self.gaps_index.remove(&space_key) {
-                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
-                        unreachable!(),
+                    value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::BlockAndEnd { .. }) =>
+                        unreachable!("delete inconsistent environs Space/End with left space = {:?}", value),
                     // before: ^| ... | A | ... | R |$
                     // after:  ^| ... | A | ....... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
@@ -534,10 +534,12 @@ impl Schema {
                 right: RightEnvirons::Space { space_key: space_key_right, },
             } =>
                 match (self.gaps_index.remove(&space_key_left), self.gaps_index.remove(&space_key_right)) {
-                    (None, _) | (_, None) |
-                    (Some(gaps::GapBetween::StartAndEnd), _) | (_, Some(gaps::GapBetween::StartAndEnd)) |
-                    (Some(gaps::GapBetween::BlockAndEnd { .. }), _) | (_, Some(gaps::GapBetween::StartAndBlock { .. })) =>
-                        unreachable!(),
+                    (lvalue @ None, rvalue) | (lvalue, rvalue @ None) |
+                    (lvalue @ Some(gaps::GapBetween::StartAndEnd), rvalue) |
+                    (lvalue, rvalue @ Some(gaps::GapBetween::StartAndEnd)) |
+                    (lvalue @ Some(gaps::GapBetween::BlockAndEnd { .. }), rvalue) |
+                    (lvalue, rvalue @ Some(gaps::GapBetween::StartAndBlock { .. })) =>
+                        unreachable!("delete inconsistent environs Space/Space with left space = {:?} and right space = {:?}", lvalue, rvalue),
                     // before: ^| ... | R | ... |$
                     // after:  ^| ..............|$
                     (
@@ -627,8 +629,8 @@ impl Schema {
                 right: RightEnvirons::Block { block_id, },
             } =>
                 match self.gaps_index.remove(&space_key) {
-                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
-                        unreachable!(),
+                    value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::BlockAndEnd { .. }) =>
+                        unreachable!("delete inconsistent environs Space/Block with left space = {:?}", value),
                     // before: ^| ... | A | ... | R || B | ... |$
                     // after:  ^| ... | A | .........| B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
@@ -691,8 +693,8 @@ impl Schema {
                 right: RightEnvirons::Space { space_key, },
             } =>
                 match self.gaps_index.remove(&space_key) {
-                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::StartAndBlock { .. }) =>
-                        unreachable!(),
+                    value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::StartAndBlock { .. }) =>
+                        unreachable!("delete inconsistent environs Block/Space with right space = {:?}", value),
                     // before: ^| ... | A || R | ... | B | ... |$
                     // after:  ^| ... | A | ........ | B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {

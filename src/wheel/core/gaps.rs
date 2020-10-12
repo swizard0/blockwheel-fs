@@ -77,12 +77,8 @@ impl Index {
     pub fn insert(&mut self, space_available: usize, between: GapBetween<block::Id>) -> SpaceKey {
         self.serial += 1;
         let space_key = SpaceKey { space_available, serial: self.serial, };
-
-        println!("   //// inserted gap of {} bytes between: {:?}", space_available, between);
-
         self.gaps.insert(space_key, Gap { between, state: GapState::Regular, });
         self.space_total += space_available;
-
         space_key
     }
 
@@ -99,11 +95,6 @@ impl Index {
         -> Result<Allocated<'a>, Error>
     where G: Fn(&block::Id) -> Option<&'a BlockEntry>
     {
-        println!(
-            "   //// allocating gap for {} bytes of {} + {:?} available in {:?}",
-            space_required, self.space_total, defrag_pending_bytes, self.gaps,
-        );
-
         if let Some(pending_bytes) = defrag_pending_bytes {
             if space_required + pending_bytes > self.space_total {
                 return Err(Error::NoSpaceLeft);
@@ -115,9 +106,6 @@ impl Index {
         while let Some(candidate) = candidates.next() {
             match candidate {
                 (key, Gap { between, state: GapState::Regular, }) => {
-
-                    println!("   //// locating gap for {} bytes: trying {:?} for {:?}", space_required, key, between);
-
                     self.remove_buf.push(*key);
                     match between {
                         GapBetween::StartAndEnd => {
@@ -181,12 +169,8 @@ impl Index {
                         },
                     }
                 },
-                (key, Gap { state: GapState::LockedDefrag, between, }) => {
-
-                    println!("   //// locating gap for {} bytes: trying LOCKED {:?} of {:?}", space_required, key, between);
-
-                    ()
-                },
+                (_key, Gap { state: GapState::LockedDefrag, .. }) =>
+                    (),
             }
         }
 
