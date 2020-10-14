@@ -76,3 +76,30 @@ impl TasksHead {
             && self.head_delete.is_none()
     }
 }
+
+pub trait BlockGet {
+    fn by_id<'s>(&'s mut self, block_id: &block::Id) -> Option<&'s mut BlockEntry>;
+}
+
+impl<'a, T> BlockGet for &'a mut T where T: BlockGet {
+    fn by_id<'s>(&'s mut self, block_id: &block::Id) -> Option<&'s mut BlockEntry> {
+        (**self).by_id(block_id)
+    }
+}
+
+pub struct BlockEntryGet<'a> {
+    block_entry: &'a mut BlockEntry,
+}
+
+impl<'a> BlockEntryGet<'a> {
+    fn new(block_entry: &'a mut BlockEntry) -> BlockEntryGet<'a> {
+        BlockEntryGet { block_entry, }
+    }
+}
+
+impl<'a> BlockGet for BlockEntryGet<'a> {
+    fn by_id<'s>(&'s mut self, block_id: &block::Id) -> Option<&'s mut BlockEntry> {
+        assert_eq!(&self.block_entry.header.block_id, block_id);
+        Some(self.block_entry)
+    }
+}

@@ -15,8 +15,9 @@ use super::{
     schema,
     defrag,
     SpaceKey,
-    TasksHead,
+    BlockGet,
     BlockEntry,
+    BlockEntryGet,
 };
 
 #[cfg(test)]
@@ -26,9 +27,9 @@ struct Inner<C> where C: Context {
     schema: schema::Schema,
     lru_cache: lru::Cache,
     blocks_pool: pool::Blocks,
-    tasks_queue: task::queue::Queue<C>,
     defrag: Option<Defrag<C::WriteBlock>>,
     bg_task: BackgroundTask<C::Interpreter>,
+    tasks_queue: task::queue::Queue<C>,
     done_task: DoneTask,
 }
 
@@ -40,7 +41,6 @@ struct Defrag<C> {
 
 enum DoneTask {
     None,
-    Reenqueue { block_id: block::Id, },
     ReadBlock {
         block_id: block::Id,
         block_bytes: block::Bytes,
@@ -252,35 +252,23 @@ impl<C> Inner<C> where C: Context {
         match mem::replace(&mut self.done_task, DoneTask::None) {
             DoneTask::None =>
                 (),
-            DoneTask::Reenqueue { block_id, } =>
-                if let Some((block_offset, tasks_head)) = self.schema.block_offset_tasks_head(&block_id) {
-                    if let Some(kind) = self.tasks_queue.pop_task(tasks_head) {
-                        tasks_queue_push(
-                            &mut self.tasks_queue,
-                            &self.bg_task,
-                            block_offset,
-                            task::Task { block_id, kind, },
-                            tasks_head,
-                        );
-                    }
-                },
             DoneTask::ReadBlock { block_id, block_bytes, } => {
-                if let Some(tasks_head) = self.schema.block_tasks_head(&block_id) {
-                    assert!(self.tasks_queue.pop_write_task(tasks_head).is_none());
-                    if let Some(read_block) = self.tasks_queue.pop_read_task(tasks_head) {
-                        self.blocks_pool.repay(read_block.block_bytes.freeze());
-                        self.done_task = DoneTask::ReadBlock {
-                            block_id: block_id.clone(),
-                            block_bytes: block_bytes.clone(),
-                        };
-                        return self.proceed_read_block_task_done(block_id, block_bytes, read_block.context);
-                    }
+                let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
+                assert!(lens.pop_write_task(self.schema.block_get()).is_none());
+                if let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
+                    self.blocks_pool.repay(read_block.block_bytes.freeze());
+                    self.done_task = DoneTask::ReadBlock {
+                        block_id: block_id.clone(),
+                        block_bytes: block_bytes.clone(),
+                    };
+                    return self.proceed_read_block_task_done(block_id, block_bytes, read_block.context);
                 }
-                self.done_task = DoneTask::Reenqueue { block_id, };
-                return Op::Idle(Performer { inner: self, });
+                lens.enqueue(self.schema.block_get());
             },
             DoneTask::DeleteBlockRegular { block_id, mut block_entry, freed_space_key, } => {
-                while let Some(write_block) = self.tasks_queue.pop_write_task(&mut block_entry.tasks_head) {
+                let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
+                let mut block_get = BlockEntryGet::new(&mut block_entry);
+                while let Some(write_block) = lens.pop_write_task(&mut block_get) {
                     match write_block.context {
                         task::WriteBlockContext::External(..) =>
                             unreachable!(),
@@ -289,7 +277,7 @@ impl<C> Inner<C> where C: Context {
                             (),
                     }
                 }
-                while let Some(read_block) = self.tasks_queue.pop_read_task(&mut block_entry.tasks_head) {
+                while let Some(read_block) = lens.pop_read_task(&mut block_get) {
                     self.blocks_pool.repay(read_block.block_bytes.freeze());
                     match read_block.context {
                         task::ReadBlockContext::External(context) => {
@@ -311,7 +299,7 @@ impl<C> Inner<C> where C: Context {
                             (),
                     }
                 }
-                while let Some(delete_block) = self.tasks_queue.pop_delete_task(&mut block_entry.tasks_head) {
+                while let Some(delete_block) = lens.pop_delete_task(&mut block_get) {
                     match delete_block.context {
                         task::DeleteBlockContext::External(context) => {
                             self.done_task = DoneTask::DeleteBlockRegular {
@@ -335,33 +323,30 @@ impl<C> Inner<C> where C: Context {
                 self.flush_defrag_pending_queue(Some(freed_space_key));
             },
             DoneTask::DeleteBlockDefrag { block_id, block_bytes, freed_space_key, } => {
-                if let Some(tasks_head) = self.schema.block_tasks_head(&block_id) {
-                    while let Some(read_block) = self.tasks_queue.pop_read_task(tasks_head) {
-                        self.blocks_pool.repay(read_block.block_bytes.freeze());
-                        match read_block.context {
-                            task::ReadBlockContext::External(context) => {
-                                self.done_task = DoneTask::DeleteBlockDefrag {
-                                    block_id: block_id.clone(),
-                                    block_bytes: block_bytes.clone(),
-                                    freed_space_key,
-                                };
-                                return Op::Event(Event {
-                                    op: EventOp::ReadBlock(TaskDoneOp {
-                                        context,
-                                        op: ReadBlockOp::Done { block_bytes, },
-                                    }),
-                                    performer: Performer { inner: self, },
-                                });
+                let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
+                while let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
+                    self.blocks_pool.repay(read_block.block_bytes.freeze());
+                    match read_block.context {
+                        task::ReadBlockContext::External(context) => {
+                            self.done_task = DoneTask::DeleteBlockDefrag {
+                                block_id: block_id.clone(),
+                                block_bytes: block_bytes.clone(),
+                                freed_space_key,
+                            };
+                            return Op::Event(Event {
+                                op: EventOp::ReadBlock(TaskDoneOp {
+                                    context,
+                                    op: ReadBlockOp::Done { block_bytes, },
+                                }),
+                                performer: Performer { inner: self, },
+                            });
                             },
-                            task::ReadBlockContext::Defrag { .. } =>
-                                unreachable!(),
-                        }
+                        task::ReadBlockContext::Defrag { .. } =>
+                            unreachable!(),
                     }
                 }
-
+                lens.enqueue(self.schema.block_get());
                 self.flush_defrag_pending_queue(Some(freed_space_key));
-                self.done_task = DoneTask::Reenqueue { block_id, };
-                return Op::Idle(Performer { inner: self, });
             },
         }
 
@@ -373,10 +358,8 @@ impl<C> Inner<C> where C: Context {
                 if let Some((_free_space_offset, space_key)) = defrag.queues.tasks.pop() {
                     if let Some(block_entry) = self.schema.pick_defrag_space_key(&space_key) {
                         let block_bytes = self.blocks_pool.lend();
-                        tasks_queue_push(
-                            &mut self.tasks_queue,
-                            &self.bg_task,
-                            block_entry.offset,
+                        let mut lens = self.tasks_queue.focus_block_id(block_entry.header.block_id.clone());
+                        lens.push_task(
                             task::Task {
                                 block_id: block_entry.header.block_id.clone(),
                                 kind: task::TaskKind::ReadBlock(task::ReadBlock {
@@ -385,8 +368,9 @@ impl<C> Inner<C> where C: Context {
                                     context: task::ReadBlockContext::Defrag { space_key, },
                                 }),
                             },
-                            &mut block_entry.tasks_head,
+                            self.schema.block_get(),
                         );
+                        lens.enqueue(self.schema.block_get());
                         defrag.in_progress_tasks_count += 1;
                     }
                 } else {
@@ -397,15 +381,18 @@ impl<C> Inner<C> where C: Context {
 
         match mem::replace(&mut self.bg_task.state, BackgroundTaskState::Idle) {
             BackgroundTaskState::Idle =>
-                if let Some((offset, block_id)) = self.tasks_queue.pop_block_id(self.bg_task.current_offset) {
-                    let tasks_head = self.schema.block_tasks_head(&block_id).unwrap();
-                    let task_kind = self.tasks_queue.pop_task(tasks_head).unwrap();
-                    tasks_head.is_queued = false;
-                    self.bg_task.state = BackgroundTaskState::Await { block_id: block_id.clone(), };
+                if let Some((offset, mut lens)) = self.tasks_queue.next_trigger(self.bg_task.current_offset, self.schema.block_get()) {
+                    let task_kind = lens.pop_task(self.schema.block_get()).unwrap();
+                    self.bg_task.state = BackgroundTaskState::Await {
+                        block_id: lens.block_id().clone(),
+                    };
 
                     Op::Query(QueryOp::InterpretTask(InterpretTask {
                         offset,
-                        task: task::Task { block_id, kind: task_kind, },
+                        task: task::Task {
+                            block_id: lens.block_id().clone(),
+                            kind: task_kind,
+                        },
                         next: InterpretTaskNext {
                             inner: self,
                         },
@@ -489,10 +476,10 @@ impl<C> Inner<C> where C: Context {
             schema::WriteBlockOp::Perform(write_block_perform) => {
                 incoming_request_write_block_perform(
                     &mut self.tasks_queue,
-                    &self.bg_task,
                     self.defrag.as_mut(),
                     request_write_block,
                     write_block_perform,
+                    self.schema.block_get(),
                 );
                 Op::Idle(Performer { inner: self, })
             },
@@ -510,7 +497,7 @@ impl<C> Inner<C> where C: Context {
             },
 
             schema::WriteBlockOp::ReplyNoSpaceLeft =>
-                Op::Event(Event {
+               Op::Event(Event {
                     op: EventOp::WriteBlock(TaskDoneOp {
                         context: request_write_block.context,
                         op: WriteBlockOp::NoSpaceLeft,
@@ -524,7 +511,7 @@ impl<C> Inner<C> where C: Context {
     fn incoming_request_read_block(mut self, request_read_block: proto::RequestReadBlock<C::ReadBlock>) -> Op<C> {
         match self.schema.process_read_block_request(&request_read_block.block_id) {
 
-            schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, tasks_head, }) =>
+            schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) =>
                 if let Some(block_bytes) = self.lru_cache.get(&request_read_block.block_id) {
                     Op::Event(Event {
                         op: EventOp::ReadBlock(TaskDoneOp {
@@ -537,12 +524,10 @@ impl<C> Inner<C> where C: Context {
                     })
                 } else {
                     let block_bytes = self.blocks_pool.lend();
-                    tasks_queue_push(
-                        &mut self.tasks_queue,
-                        &self.bg_task,
-                        block_offset,
+                    let mut lens = self.tasks_queue.focus_block_id(request_read_block.block_id.clone());
+                    lens.push_task(
                         task::Task {
-                            block_id: request_read_block.block_id.clone(),
+                            block_id: request_read_block.block_id,
                             kind: task::TaskKind::ReadBlock(task::ReadBlock {
                                 block_header: block_header.clone(),
                                 block_bytes,
@@ -551,8 +536,9 @@ impl<C> Inner<C> where C: Context {
                                 ),
                             }),
                         },
-                        tasks_head,
+                        self.schema.block_get(),
                     );
+                    lens.enqueue(self.schema.block_get());
                     Op::Idle(Performer { inner: self, })
                 },
 
@@ -580,11 +566,9 @@ impl<C> Inner<C> where C: Context {
     fn incoming_request_delete_block(mut self, request_delete_block: proto::RequestDeleteBlock<C::DeleteBlock>) -> Op<C> {
         match self.schema.process_delete_block_request(&request_delete_block.block_id) {
 
-            schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform { block_offset, tasks_head, }) => {
-                tasks_queue_push(
-                    &mut self.tasks_queue,
-                    &self.bg_task,
-                    block_offset,
+            schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform) => {
+                let mut lens = self.tasks_queue.focus_block_id(request_delete_block.block_id.clone());
+                lens.push_task(
                     task::Task {
                         block_id: request_delete_block.block_id,
                         kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
@@ -593,8 +577,9 @@ impl<C> Inner<C> where C: Context {
                             ),
                         }),
                     },
-                    tasks_head,
+                    self.schema.block_get(),
                 );
+                lens.enqueue(self.schema.block_get());
                 Op::Idle(Performer { inner: self, })
             },
 
@@ -616,9 +601,8 @@ impl<C> Inner<C> where C: Context {
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::WriteBlock(write_block), }, } => {
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 self.schema.process_write_block_task_done(&block_id);
-                self.done_task = DoneTask::Reenqueue {
-                    block_id: block_id.clone(),
-                };
+                self.tasks_queue.focus_block_id(block_id.clone())
+                    .enqueue(self.schema.block_get());
                 match write_block.context {
                     task::WriteBlockContext::External(context) =>
                         Op::Event(Event {
@@ -692,21 +676,17 @@ impl<C> Inner<C> where C: Context {
                                     (schema::DefragOp::None, _) | (_, None) =>
                                         (),
                                 }
-                                tasks_queue_push(
-                                    &mut self.tasks_queue,
-                                    &self.bg_task,
-                                    task_op.block_offset,
-                                    task::Task {
-                                        block_id: block_id.clone(),
-                                        kind: task::TaskKind::WriteBlock(
-                                            task::WriteBlock {
+                                self.tasks_queue.focus_block_id(block_id.clone())
+                                    .push_task(
+                                        task::Task {
+                                            block_id: block_id.clone(),
+                                            kind: task::TaskKind::WriteBlock(task::WriteBlock {
                                                 block_bytes: task_op.block_bytes.clone(),
                                                 context: task::WriteBlockContext::Defrag,
-                                            },
-                                        ),
-                                    },
-                                    task_op.tasks_head,
-                                );
+                                            }),
+                                        },
+                                        self.schema.block_get(),
+                                    );
                                 self.done_task = DoneTask::DeleteBlockDefrag {
                                     block_id,
                                     block_bytes: task_op.block_bytes,
@@ -728,7 +708,7 @@ impl<C> Inner<C> where C: Context {
         task_context: task::ReadBlockContext<C::ReadBlock>,
     ) -> Op<C> {
         match self.schema.process_read_block_task_done(&block_id) {
-            schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform { block_offset, block_bytes_cached, tasks_head, }) =>
+            schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform { block_bytes_cached, }) =>
                 match task_context {
                     task::ReadBlockContext::External(context) =>
                         Op::Event(Event {
@@ -742,18 +722,16 @@ impl<C> Inner<C> where C: Context {
                         let block_bytes_cached_prev =
                             mem::replace(block_bytes_cached, Some(block_bytes));
                         assert_eq!(block_bytes_cached_prev, None);
-                        tasks_queue_push(
-                            &mut self.tasks_queue,
-                            &self.bg_task,
-                            block_offset,
-                            task::Task {
-                                block_id,
-                                kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
-                                    context: task::DeleteBlockContext::Defrag { space_key, },
-                                }),
-                            },
-                            tasks_head,
-                        );
+                        self.tasks_queue.focus_block_id(block_id.clone())
+                            .push_task(
+                                task::Task {
+                                    block_id,
+                                    kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                                        context: task::DeleteBlockContext::Defrag { space_key, },
+                                    }),
+                                },
+                                self.schema.block_get(),
+                            );
                         Op::Idle(Performer { inner: self, })
                     },
                 },
@@ -778,10 +756,10 @@ impl<C> Inner<C> where C: Context {
                         maybe_space_key = write_block_perform.right_space_key;
                         incoming_request_write_block_perform(
                             &mut self.tasks_queue,
-                            &self.bg_task,
                             Some(defrag),
                             request_write_block,
                             write_block_perform,
+                            self.schema.block_get(),
                         );
                     },
                     schema::WriteBlockOp::QueuePendingDefrag { space_required, } => {
@@ -796,16 +774,17 @@ impl<C> Inner<C> where C: Context {
     }
 }
 
-fn incoming_request_write_block_perform<'a, C>(
+fn incoming_request_write_block_perform<C, B>(
     tasks_queue: &mut task::queue::Queue<C>,
-    bg_task: &BackgroundTask<C::Interpreter>,
     mut defrag: Option<&mut Defrag<C::WriteBlock>>,
     request_write_block: proto::RequestWriteBlock<C::WriteBlock>,
-    write_block_perform: schema::WriteBlockPerform<'a>,
+    write_block_perform: schema::WriteBlockPerform,
+    mut block_get: B,
 )
-    where C: Context
+where C: Context,
+      B: BlockGet,
 {
-    let schema::WriteBlockPerform { defrag_op, task_op, tasks_head, .. } = write_block_perform;
+    let schema::WriteBlockPerform { defrag_op, task_op, .. } = write_block_perform;
     match (defrag_op, defrag.as_mut()) {
         (
             schema::DefragOp::Queue { free_space_offset, space_key, },
@@ -815,43 +794,18 @@ fn incoming_request_write_block_perform<'a, C>(
         (schema::DefragOp::None, _) | (_, None) =>
             (),
     }
-    tasks_queue_push(
-        tasks_queue,
-        &bg_task,
-        task_op.block_offset,
+    let mut lens = tasks_queue.focus_block_id(task_op.block_id.clone());
+    lens.push_task(
         task::Task {
             block_id: task_op.block_id,
-            kind: task::TaskKind::WriteBlock(
-                task::WriteBlock {
-                    block_bytes: request_write_block.block_bytes,
-                    context: task::WriteBlockContext::External(
-                        request_write_block.context,
-                    ),
-                },
-            ),
+            kind: task::TaskKind::WriteBlock(task::WriteBlock {
+                block_bytes: request_write_block.block_bytes,
+                context: task::WriteBlockContext::External(
+                    request_write_block.context,
+                ),
+            }),
         },
-        tasks_head,
+        &mut block_get,
     );
-}
-
-fn tasks_queue_push<C>(
-    tasks_queue: &mut task::queue::Queue<C>,
-    bg_task: &BackgroundTask<C::Interpreter>,
-    block_offset: u64,
-    task: task::Task<C>,
-    tasks_head: &mut TasksHead,
-)
-    where C: Context
-{
-    let maybe_current_offset = match &bg_task.state {
-        BackgroundTaskState::Await { block_id, } | BackgroundTaskState::InProgress { block_id, .. } if block_id != &task.block_id =>
-            Some(bg_task.current_offset),
-        BackgroundTaskState::Idle =>
-            Some(bg_task.current_offset),
-        BackgroundTaskState::Await { .. } |
-        BackgroundTaskState::InProgress { .. } =>
-            None,
-    };
-
-    tasks_queue.push(maybe_current_offset, block_offset, task, tasks_head);
+    lens.enqueue(block_get);
 }

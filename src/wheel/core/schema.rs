@@ -6,7 +6,6 @@ use super::{
     blocks,
     storage,
     SpaceKey,
-    TasksHead,
     BlockEntry,
     Environs,
     LeftEnvirons,
@@ -24,17 +23,16 @@ pub struct Schema {
 }
 
 #[derive(Debug)]
-pub enum WriteBlockOp<'a> {
-    Perform(WriteBlockPerform<'a>),
+pub enum WriteBlockOp {
+    Perform(WriteBlockPerform),
     QueuePendingDefrag { space_required: usize, },
     ReplyNoSpaceLeft,
 }
 
 #[derive(Debug)]
-pub struct WriteBlockPerform<'a> {
+pub struct WriteBlockPerform {
     pub defrag_op: DefragOp,
     pub task_op: WriteBlockTaskOp,
-    pub tasks_head: &'a mut TasksHead,
     pub right_space_key: Option<SpaceKey>,
 }
 
@@ -59,22 +57,17 @@ pub enum ReadBlockOp<'a> {
 
 #[derive(Debug)]
 pub struct ReadBlockPerform<'a> {
-    pub block_offset: u64,
     pub block_header: &'a storage::BlockHeader,
-    pub tasks_head: &'a mut TasksHead,
 }
 
 #[derive(Debug)]
-pub enum DeleteBlockOp<'a> {
-    Perform(DeleteBlockPerform<'a>),
+pub enum DeleteBlockOp {
+    Perform(DeleteBlockPerform),
     NotFound,
 }
 
 #[derive(Debug)]
-pub struct DeleteBlockPerform<'a> {
-    pub block_offset: u64,
-    pub tasks_head: &'a mut TasksHead,
-}
+pub struct DeleteBlockPerform;
 
 #[derive(Debug)]
 pub enum ReadBlockTaskDoneOp<'a> {
@@ -83,9 +76,7 @@ pub enum ReadBlockTaskDoneOp<'a> {
 
 #[derive(Debug)]
 pub struct ReadBlockTaskDonePerform<'a> {
-    pub block_offset: u64,
     pub block_bytes_cached: &'a mut Option<block::Bytes>,
-    pub tasks_head: &'a mut TasksHead,
 }
 
 #[derive(Debug)]
@@ -101,15 +92,14 @@ pub struct DeleteBlockTaskDonePerform {
 }
 
 #[derive(Debug)]
-pub enum DeleteBlockTaskDoneDefragOp<'a> {
-    Perform(DeleteBlockTaskDoneDefragPerform<'a>),
+pub enum DeleteBlockTaskDoneDefragOp {
+    Perform(DeleteBlockTaskDoneDefragPerform),
 }
 
 #[derive(Debug)]
-pub struct DeleteBlockTaskDoneDefragPerform<'a> {
+pub struct DeleteBlockTaskDoneDefragPerform {
     pub block_offset: u64,
     pub block_bytes: block::Bytes,
-    pub tasks_head: &'a mut TasksHead,
     pub defrag_op: DefragOp,
     pub freed_space_key: SpaceKey,
 }
@@ -157,12 +147,12 @@ impl Schema {
         }
     }
 
-    pub fn process_write_block_request<'a>(
-        &'a mut self,
+    pub fn process_write_block_request(
+        &mut self,
         block_bytes: &block::Bytes,
         defrag_pending_bytes: Option<usize>,
     )
-        -> WriteBlockOp<'a>
+        -> WriteBlockOp
     {
         let block_id = self.next_block_id.clone();
         self.next_block_id = self.next_block_id.next();
@@ -375,7 +365,6 @@ impl Schema {
 
         WriteBlockOp::Perform(
             WriteBlockPerform {
-                tasks_head: &mut self.blocks_index.get_mut(&block_id).unwrap().tasks_head,
                 defrag_op,
                 task_op: WriteBlockTaskOp {
                     block_id,
@@ -393,9 +382,7 @@ impl Schema {
                     ReadBlockOp::Cached { block_bytes: block_bytes.clone(), }
                 } else {
                     ReadBlockOp::Perform(ReadBlockPerform {
-                        block_offset: block_entry.offset,
                         block_header: &block_entry.header,
-                        tasks_head: &mut block_entry.tasks_head,
                     })
                 },
             None =>
@@ -403,13 +390,10 @@ impl Schema {
         }
     }
 
-    pub fn process_delete_block_request<'a>(&'a mut self, block_id: &block::Id) -> DeleteBlockOp<'a> {
-        match self.blocks_index.get_mut(&block_id) {
-            Some(block_entry) =>
-                DeleteBlockOp::Perform(DeleteBlockPerform {
-                    block_offset: block_entry.offset,
-                    tasks_head: &mut block_entry.tasks_head,
-                }),
+    pub fn process_delete_block_request<'a>(&'a mut self, block_id: &block::Id) -> DeleteBlockOp {
+        match self.blocks_index.get(&block_id) {
+            Some(..) =>
+                DeleteBlockOp::Perform(DeleteBlockPerform),
             None =>
                 DeleteBlockOp::NotFound,
         }
@@ -424,9 +408,7 @@ impl Schema {
     pub fn process_read_block_task_done<'a>(&'a mut self, read_block_id: &block::Id) -> ReadBlockTaskDoneOp<'a> {
         let block_entry = self.blocks_index.get_mut(read_block_id).unwrap();
         ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform {
-            block_offset: block_entry.offset,
             block_bytes_cached: &mut block_entry.block_bytes,
-            tasks_head: &mut block_entry.tasks_head,
         })
     }
 
@@ -771,12 +753,12 @@ impl Schema {
         DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform { defrag_op, block_entry, freed_space_key, })
     }
 
-    pub fn process_delete_block_task_done_defrag<'a>(
-        &'a mut self,
+    pub fn process_delete_block_task_done_defrag(
+        &mut self,
         removed_block_id: block::Id,
         defrag_space_key: SpaceKey,
     )
-        -> DeleteBlockTaskDoneDefragOp<'a>
+        -> DeleteBlockTaskDoneDefragOp
     {
         let block_entry = self.blocks_index.get_mut(&removed_block_id).unwrap();
         let start_offset = self.storage_layout.wheel_header_size as u64;
@@ -1028,19 +1010,13 @@ impl Schema {
                 .as_ref()
                 .map(Clone::clone)
                 .unwrap(),
-            tasks_head: &mut block_entry.tasks_head,
             defrag_op,
             freed_space_key,
         })
     }
 
-    pub fn block_tasks_head(&mut self, block_id: &block::Id) -> Option<&mut TasksHead> {
-        self.block_offset_tasks_head(block_id).map(|pair| pair.1)
-    }
-
-    pub fn block_offset_tasks_head(&mut self, block_id: &block::Id) -> Option<(u64, &mut TasksHead)> {
-        self.blocks_index.get_mut(block_id)
-            .map(|block_entry| (block_entry.offset, &mut block_entry.tasks_head))
+    pub fn block_get<'a>(&'a mut self) -> BlockGet<'a> {
+        BlockGet { blocks_index: &mut self.blocks_index, }
     }
 
     pub fn pick_defrag_space_key(&mut self, space_key: &SpaceKey) -> Option<&mut BlockEntry> {
@@ -1057,6 +1033,17 @@ impl Schema {
         Some(block_entry)
     }
 }
+
+pub struct BlockGet<'a> {
+    blocks_index: &'a mut blocks::Index,
+}
+
+impl<'a> super::BlockGet for BlockGet<'a> {
+    fn by_id<'s>(&'s mut self, block_id: &block::Id) -> Option<&'s mut BlockEntry> {
+        self.blocks_index.get_mut(block_id)
+    }
+}
+
 
 pub struct Builder {
     storage_layout: storage::Layout,
@@ -1373,7 +1360,7 @@ mod tests {
         schema.process_write_block_task_done(&block::Id::init());
 
         let op = schema.process_read_block_request(&block::Id::init());
-        assert!(matches!(op, ReadBlockOp::Perform(ReadBlockPerform { block_offset: 24, .. })));
+        assert!(matches!(op, ReadBlockOp::Perform(ReadBlockPerform { .. })));
     }
 
     #[test]
@@ -1387,7 +1374,7 @@ mod tests {
         assert!(matches!(op, WriteBlockOp::Perform(..)));
 
         let op = schema.process_delete_block_request(&block::Id::init());
-        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { .. })));
 
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init()),
@@ -1438,7 +1425,7 @@ mod tests {
         assert!(matches!(op, WriteBlockOp::Perform(..)));
 
         let op = schema.process_delete_block_request(&block::Id::init().next());
-        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 85, .. })));
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { .. })));
 
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next()),
@@ -1491,7 +1478,7 @@ mod tests {
         assert!(matches!(op, WriteBlockOp::Perform(..)));
 
         let op = schema.process_delete_block_request(&block::Id::init());
-        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 24, .. })));
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { .. })));
 
         let op = schema.process_delete_block_task_done(block::Id::init());
         assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
@@ -1506,7 +1493,7 @@ mod tests {
         assert_eq!(schema.gaps_index.space_total(), 75);
 
         let op = schema.process_delete_block_request(&block::Id::init().next());
-        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { block_offset: 85, .. })));
+        assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { .. })));
 
         let op = schema.process_delete_block_task_done_defrag(
             block::Id::init().next(),

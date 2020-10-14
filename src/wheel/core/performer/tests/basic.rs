@@ -266,7 +266,6 @@ fn script_basic() {
             expect_block_bytes: hello_world_bytes(),
             expect_context: "ectx0a",
         }),
-        ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingRequest {
             request: proto::Request::Info(proto::RequestInfo { context: "ectx0b", }),

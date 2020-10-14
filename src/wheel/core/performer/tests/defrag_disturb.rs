@@ -186,7 +186,6 @@ fn script_defrag_disturb() {
             expect_block_bytes: hello_world_bytes(),
             expect_context: "ectx03",
         }),
-        ScriptOp::Expect(ExpectOp::Idle),
         // defragmentation continue (delete task)
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 85,
@@ -229,7 +228,6 @@ fn script_defrag_disturb() {
             },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::Idle),
         // defragmentation continue (write task)
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 24,
@@ -257,6 +255,9 @@ fn script_defrag_disturb() {
             },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
+
+        // TODO: here
+
         // pending write request task becomes free
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 85,

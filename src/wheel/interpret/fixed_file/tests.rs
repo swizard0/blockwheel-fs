@@ -91,42 +91,34 @@ fn create_read_one() {
             let block_id = block::Id::init();
             let expected_offset = schema.storage_layout().wheel_header_size as u64;
             match schema.process_read_block_request(&block_id) {
-                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) => {
-                    if block_offset != expected_offset {
-                        Err(Error::Unexpected(UnexpectedError::ReadBlockOffset {
-                            block_id: block_header.block_id.clone(),
-                            expected_offset,
-                            provided_offset: block_offset,
-                        }))
-                    } else {
-                        let task_done = request_reply(
-                            &mut pid,
-                            block_offset,
-                            block_header.block_id.clone(),
-                            task::TaskKind::ReadBlock(task::ReadBlock {
-                                block_header: block_header.clone(),
-                                block_bytes: block::BytesMut::new_detached(),
-                                context: task::ReadBlockContext::External(context),
-                            }),
-                        ).await?;
-                        match task_done {
-                            task::Done {
-                                task: task::TaskDone {
-                                    block_id,
-                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                                        block_bytes,
-                                        context: task::ReadBlockContext::External(ctx),
-                                    }),
-                                },
-                                ..
-                            } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
-                                Ok(()),
-                            other_done_task =>
-                                Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
-                                    expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
-                                    received: other_done_task,
-                                })),
-                        }
+                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
+                    let task_done = request_reply(
+                        &mut pid,
+                        expected_offset,
+                        block_header.block_id.clone(),
+                        task::TaskKind::ReadBlock(task::ReadBlock {
+                            block_header: block_header.clone(),
+                            block_bytes: block::BytesMut::new_detached(),
+                            context: task::ReadBlockContext::External(context),
+                        }),
+                    ).await?;
+                    match task_done {
+                        task::Done {
+                            task: task::TaskDone {
+                                block_id,
+                                kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                    block_bytes,
+                                    context: task::ReadBlockContext::External(ctx),
+                                }),
+                            },
+                            ..
+                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                            Ok(()),
+                        other_done_task =>
+                            Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
+                                expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
+                                received: other_done_task,
+                            })),
                     }
                 },
                 schema::ReadBlockOp::Cached { .. } =>
@@ -196,43 +188,36 @@ fn create_write_overlap_read_one() {
             let expected_offset = schema.storage_layout().wheel_header_size as u64
                 + schema.storage_layout().block_header_size as u64;
             match schema.process_read_block_request(&block_id) {
-                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) =>
-                    if block_offset != expected_offset {
-                        Err(Error::Unexpected(UnexpectedError::ReadBlockOffset {
-                            block_id: block_header.block_id.clone(),
-                            expected_offset,
-                            provided_offset: block_offset,
-                        }))
-                    } else {
-                        let task_done = request_reply(
-                            &mut pid,
-                            block_offset,
-                            block_header.block_id.clone(),
-                            task::TaskKind::ReadBlock(task::ReadBlock {
-                                block_header: block_header.clone(),
-                                block_bytes: block::BytesMut::new_detached(),
-                                context: task::ReadBlockContext::External(context),
-                            }),
-                        ).await?;
-                        match task_done {
-                            task::Done {
-                                task: task::TaskDone {
-                                    block_id,
-                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                                        block_bytes,
-                                        context: task::ReadBlockContext::External(ctx),
-                                    }),
-                                },
-                                ..
-                            } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
-                                Ok(()),
-                            other_done_task =>
-                                Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
-                                    expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
-                                    received: other_done_task,
-                                })),
-                        }
-                    },
+                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
+                    let task_done = request_reply(
+                        &mut pid,
+                        expected_offset,
+                        block_header.block_id.clone(),
+                        task::TaskKind::ReadBlock(task::ReadBlock {
+                            block_header: block_header.clone(),
+                            block_bytes: block::BytesMut::new_detached(),
+                            context: task::ReadBlockContext::External(context),
+                        }),
+                    ).await?;
+                    match task_done {
+                        task::Done {
+                            task: task::TaskDone {
+                                block_id,
+                                kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                    block_bytes,
+                                    context: task::ReadBlockContext::External(ctx),
+                                }),
+                            },
+                            ..
+                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                            Ok(()),
+                        other_done_task =>
+                            Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
+                                expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
+                                received: other_done_task,
+                            })),
+                    }
+                },
                 schema::ReadBlockOp::Cached { .. } =>
                     Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
                 schema::ReadBlockOp::NotFound =>
@@ -323,43 +308,36 @@ fn create_write_delete_read_one() {
                 + schema.storage_layout().data_size_block_min() as u64
                 + hello_world_bytes().len() as u64;
             match schema.process_read_block_request(&block_id) {
-                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_offset, block_header, .. }) =>
-                    if block_offset != expected_offset {
-                        Err(Error::Unexpected(UnexpectedError::ReadBlockOffset {
-                            block_id: block_header.block_id.clone(),
-                            expected_offset,
-                            provided_offset: block_offset,
-                        }))
-                    } else {
-                        let task_done = request_reply(
-                            &mut pid,
-                            block_offset,
-                            block_header.block_id.clone(),
-                            task::TaskKind::ReadBlock(task::ReadBlock {
-                                block_header: block_header.clone(),
-                                block_bytes: block::BytesMut::new_detached(),
-                                context: task::ReadBlockContext::External(context),
-                            }),
-                        ).await?;
-                        match task_done {
-                            task::Done {
-                                task: task::TaskDone {
-                                    block_id,
-                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                                        block_bytes,
-                                        context: task::ReadBlockContext::External(ctx),
-                                    }),
-                                },
-                                ..
-                            } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
-                                Ok(()),
-                            other_done_task =>
-                                Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
-                                    expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
-                                    received: other_done_task,
-                                })),
-                        }
-                    },
+                schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
+                    let task_done = request_reply(
+                        &mut pid,
+                        expected_offset,
+                        block_header.block_id.clone(),
+                        task::TaskKind::ReadBlock(task::ReadBlock {
+                            block_header: block_header.clone(),
+                            block_bytes: block::BytesMut::new_detached(),
+                            context: task::ReadBlockContext::External(context),
+                        }),
+                    ).await?;
+                    match task_done {
+                        task::Done {
+                            task: task::TaskDone {
+                                block_id,
+                                kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                    block_bytes,
+                                    context: task::ReadBlockContext::External(ctx),
+                                }),
+                            },
+                            ..
+                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                            Ok(()),
+                        other_done_task =>
+                            Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
+                                expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
+                                received: other_done_task,
+                            })),
+                    }
+                },
                 schema::ReadBlockOp::Cached { .. } =>
                     Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
                 schema::ReadBlockOp::NotFound =>
@@ -402,11 +380,6 @@ enum UnexpectedError {
     },
     ReadNotFound {
         block_id: block::Id,
-    },
-    ReadBlockOffset {
-        block_id: block::Id,
-        expected_offset: u64,
-        provided_offset: u64,
     },
 }
 

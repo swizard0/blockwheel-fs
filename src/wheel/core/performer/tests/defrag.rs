@@ -163,7 +163,6 @@ fn script_simple_defrag() {
             },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 85,
             expect_task: ExpectTask {
@@ -192,7 +191,6 @@ fn script_simple_defrag() {
                 },
             },
         }),
-        ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 24,

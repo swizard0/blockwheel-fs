@@ -21,6 +21,7 @@ pub struct Tasks<C> where C: Context {
     tasks_delete: Forest1<DeleteBlock<C::DeleteBlock>>,
 }
 
+#[derive(Debug)]
 pub enum PushStatus {
     New,
     Queued,
