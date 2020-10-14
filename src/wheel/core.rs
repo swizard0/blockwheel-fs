@@ -1,5 +1,3 @@
-use o1::set::Ref;
-
 use super::{
     block,
     storage,
@@ -20,7 +18,7 @@ pub struct BlockEntry {
     pub header: storage::BlockHeader,
     pub block_bytes: Option<block::Bytes>,
     pub environs: Environs,
-    pub tasks_head: TasksHead,
+    pub tasks_head: task::queue::TasksHead,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -58,22 +56,6 @@ pub struct SpaceKey {
 impl SpaceKey {
     pub fn space_available(&self) -> usize {
         self.space_available
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
-pub struct TasksHead {
-    head_write: Option<Ref>,
-    head_read: Option<Ref>,
-    head_delete: Option<Ref>,
-    is_queued: bool,
-}
-
-impl TasksHead {
-    pub fn is_empty(&self) -> bool {
-        self.head_write.is_none()
-            && self.head_read.is_none()
-            && self.head_delete.is_none()
     }
 }
 

@@ -4,6 +4,8 @@ use std::{
     },
 };
 
+use o1::set::Ref;
+
 use super::{
     block,
     Task,
@@ -14,7 +16,6 @@ use super::{
     Context,
     super::{
         BlockGet,
-        TasksHead,
     },
 };
 
@@ -61,8 +62,8 @@ impl<C> Queue<C> where C: Context {
                 self.remove_buf.push(offset);
                 if let Some(block_entry) = block_get.by_id(block_id) {
                     outcome = if offset == block_entry.offset {
-                        assert!(block_entry.tasks_head.is_queued);
-                        block_entry.tasks_head.is_queued = false;
+                        assert_eq!(block_entry.tasks_head.queue_state, QueueState::Scheduled);
+                        block_entry.tasks_head.queue_state = QueueState::Granted;
                         Outcome::Found { block_id: block_id.clone(), offset, }
                     } else {
                         Outcome::Adjust {
@@ -105,12 +106,21 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
         &self.block_id
     }
 
+    pub fn finish<'a, B>(&mut self, mut block_get: B) where B: BlockGet {
+        let block_entry = block_get.by_id(&self.block_id).unwrap();
+        assert_eq!(block_entry.tasks_head.queue_state, QueueState::Granted);
+        block_entry.tasks_head.queue_state = QueueState::Vacant;
+    }
+
     pub fn enqueue<'a, B>(self, mut block_get: B) where B: BlockGet {
         if let Some(block_entry) = block_get.by_id(&self.block_id) {
-            if !block_entry.tasks_head.is_queued && !block_entry.tasks_head.is_empty() {
+            if (block_entry.tasks_head.queue_state == QueueState::Vacant) && !block_entry.tasks_head.is_empty() {
+
+                println!("    ---- enqueued trigger for {:?}; tasks_head = {:?}", self.block_id, block_entry.tasks_head);
+
                 let prev = self.queue.triggers.insert(block_entry.offset, self.block_id.clone());
                 assert!(prev.is_none(), "inconsistent scenario: prev value = {:?} for offset = {}", prev, block_entry.offset);
-                block_entry.tasks_head.is_queued = true;
+                block_entry.tasks_head.queue_state = QueueState::Scheduled;
             }
         }
     }
@@ -140,5 +150,34 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
     pub fn pop_delete_task<'a, B>(&mut self, mut block_get: B) -> Option<DeleteBlock<C::DeleteBlock>> where B: BlockGet {
         let block_entry = block_get.by_id(&self.block_id)?;
         self.queue.tasks.pop_delete(&mut block_entry.tasks_head)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
+pub struct TasksHead {
+    head_write: Option<Ref>,
+    head_read: Option<Ref>,
+    head_delete: Option<Ref>,
+    queue_state: QueueState,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+enum QueueState {
+    Vacant,
+    Scheduled,
+    Granted,
+}
+
+impl Default for QueueState {
+    fn default() -> QueueState {
+        QueueState::Vacant
+    }
+}
+
+impl TasksHead {
+    pub fn is_empty(&self) -> bool {
+        self.head_write.is_none()
+            && self.head_read.is_none()
+            && self.head_delete.is_none()
     }
 }

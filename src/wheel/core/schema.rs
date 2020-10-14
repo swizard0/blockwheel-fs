@@ -823,10 +823,10 @@ impl Schema {
                 right: RightEnvirons::Space { space_key: space_key_right, },
             } if space_key_left == defrag_space_key =>
                 match (self.gaps_index.remove(&space_key_left), self.gaps_index.remove(&space_key_right)) {
-                    (None, _) | (_, None) |
-                    (Some(gaps::GapBetween::StartAndEnd), _) | (_, Some(gaps::GapBetween::StartAndEnd)) |
-                    (Some(gaps::GapBetween::BlockAndEnd { .. }), _) | (_, Some(gaps::GapBetween::StartAndBlock { .. })) =>
-                        unreachable!(),
+                    (lvalue @ None, rvalue) | (lvalue, rvalue @ None) |
+                    (lvalue @ Some(gaps::GapBetween::StartAndEnd), rvalue) | (lvalue, rvalue @ Some(gaps::GapBetween::StartAndEnd)) |
+                    (lvalue @ Some(gaps::GapBetween::BlockAndEnd { .. }), rvalue) | (lvalue, rvalue @ Some(gaps::GapBetween::StartAndBlock { .. })) =>
+                        unreachable!("delete defrag inconsistent environs Space/Space with left space = {:?} right space = {:?}", lvalue, rvalue),
                     // before: ^| ... | R | ... |$
                     // after:  ^| R | ......... |$
                     (

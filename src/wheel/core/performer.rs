@@ -357,6 +357,9 @@ impl<C> Inner<C> where C: Context {
                 }
                 if let Some((_free_space_offset, space_key)) = defrag.queues.tasks.pop() {
                     if let Some(block_entry) = self.schema.pick_defrag_space_key(&space_key) {
+
+                        println!("   /// DEFRAG scheduling read for {:?}", block_entry.header.block_id);
+
                         let block_bytes = self.blocks_pool.lend();
                         let mut lens = self.tasks_queue.focus_block_id(block_entry.header.block_id.clone());
                         lens.push_task(
@@ -382,7 +385,10 @@ impl<C> Inner<C> where C: Context {
         match mem::replace(&mut self.bg_task.state, BackgroundTaskState::Idle) {
             BackgroundTaskState::Idle =>
                 if let Some((offset, mut lens)) = self.tasks_queue.next_trigger(self.bg_task.current_offset, self.schema.block_get()) {
-                    let task_kind = lens.pop_task(self.schema.block_get()).unwrap();
+                    let task_kind = match lens.pop_task(self.schema.block_get()) {
+                        Some(task_kind) => task_kind,
+                        None => panic!("empty task queue unexpected for block {:?} @ {}", lens.block_id(), offset),
+                    };
                     self.bg_task.state = BackgroundTaskState::Await {
                         block_id: lens.block_id().clone(),
                     };
@@ -600,9 +606,10 @@ impl<C> Inner<C> where C: Context {
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::WriteBlock(write_block), }, } => {
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+                let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
+                lens.finish(self.schema.block_get());
+                lens.enqueue(self.schema.block_get());
                 self.schema.process_write_block_task_done(&block_id);
-                self.tasks_queue.focus_block_id(block_id.clone())
-                    .enqueue(self.schema.block_get());
                 match write_block.context {
                     task::WriteBlockContext::External(context) =>
                         Op::Event(Event {
@@ -613,6 +620,9 @@ impl<C> Inner<C> where C: Context {
                             performer: Performer { inner: self, },
                         }),
                     task::WriteBlockContext::Defrag => {
+
+                        println!("   /// DEFRAG write task done for {:?}", block_id);
+
                         let defrag = self.defrag.as_mut().unwrap();
                         assert!(defrag.in_progress_tasks_count > 0);
                         defrag.in_progress_tasks_count -= 1;
@@ -623,6 +633,8 @@ impl<C> Inner<C> where C: Context {
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::ReadBlock(read_block), }, } => {
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+                self.tasks_queue.focus_block_id(block_id.clone())
+                    .finish(self.schema.block_get());
                 let block_bytes = read_block.block_bytes.freeze();
                 self.lru_cache.insert(block_id.clone(), block_bytes.clone());
                 self.done_task = DoneTask::ReadBlock {
@@ -634,6 +646,8 @@ impl<C> Inner<C> where C: Context {
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::DeleteBlock(delete_block), }, } => {
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
+                self.tasks_queue.focus_block_id(block_id.clone())
+                    .finish(self.schema.block_get());
                 match delete_block.context {
                     task::DeleteBlockContext::External(context) => {
                         self.lru_cache.invalidate(&block_id);
@@ -667,6 +681,9 @@ impl<C> Inner<C> where C: Context {
                     task::DeleteBlockContext::Defrag { space_key, } =>
                         match self.schema.process_delete_block_task_done_defrag(block_id.clone(), space_key) {
                             schema::DeleteBlockTaskDoneDefragOp::Perform(task_op) => {
+
+                                println!("   /// DEFRAG delete task done for {:?}, scheduling write", block_id);
+
                                 match (task_op.defrag_op, self.defrag.as_mut()) {
                                     (
                                         schema::DefragOp::Queue { free_space_offset, space_key, },
@@ -719,6 +736,9 @@ impl<C> Inner<C> where C: Context {
                             performer: Performer { inner: self, },
                         }),
                     task::ReadBlockContext::Defrag { space_key, } => {
+
+                        println!("   /// DEFRAG read task done for {:?}, scheduling delete", block_id);
+
                         let block_bytes_cached_prev =
                             mem::replace(block_bytes_cached, Some(block_bytes));
                         assert_eq!(block_bytes_cached_prev, None);
