@@ -253,6 +253,9 @@ impl<C> Inner<C> where C: Context {
             DoneTask::None =>
                 (),
             DoneTask::ReadBlock { block_id, block_bytes, } => {
+
+                println!("    ** ReadBlock spin for {:?}", block_id);
+
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 assert!(lens.pop_write_task(self.schema.block_get()).is_none());
                 if let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
@@ -266,15 +269,20 @@ impl<C> Inner<C> where C: Context {
                 lens.enqueue(self.schema.block_get());
             },
             DoneTask::DeleteBlockRegular { block_id, mut block_entry, freed_space_key, } => {
+
+                println!("    ** DeleteBlockRegular spin for {:?}", block_id);
+
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 let mut block_get = BlockEntryGet::new(&mut block_entry);
                 while let Some(write_block) = lens.pop_write_task(&mut block_get) {
                     match write_block.context {
                         task::WriteBlockContext::External(..) =>
                             unreachable!(),
-                        task::WriteBlockContext::Defrag { .. } =>
-                        // cancel defrag write task
-                            (),
+                        task::WriteBlockContext::Defrag { .. } => {
+                            // cancel defrag write task
+                            println!("   /// DEFRAG write task CANCEL for {:?} after DeleteBlockRegular", block_id);
+                            cancel_defrag_task(self.defrag.as_mut().unwrap());
+                        },
                     }
                 }
                 while let Some(read_block) = lens.pop_read_task(&mut block_get) {
@@ -294,9 +302,11 @@ impl<C> Inner<C> where C: Context {
                                 performer: Performer { inner: self, },
                             });
                         },
-                        task::ReadBlockContext::Defrag { .. } =>
-                        // cancel defrag read task
-                            (),
+                        task::ReadBlockContext::Defrag { .. } => {
+                            // cancel defrag read task
+                            println!("   /// DEFRAG read task CANCEL for {:?} after DeleteBlockRegular", block_id);
+                            cancel_defrag_task(self.defrag.as_mut().unwrap());
+                        },
                     }
                 }
                 while let Some(delete_block) = lens.pop_delete_task(&mut block_get) {
@@ -315,14 +325,19 @@ impl<C> Inner<C> where C: Context {
                                 performer: Performer { inner: self, },
                             });
                         },
-                        task::DeleteBlockContext::Defrag { .. } =>
-                        // cancel defrag delete task
-                            (),
+                        task::DeleteBlockContext::Defrag { .. } => {
+                            // cancel defrag delete task
+                            println!("   /// DEFRAG delete task CANCEL for {:?} after DeleteBlockRegular", block_id);
+                            cancel_defrag_task(self.defrag.as_mut().unwrap());
+                        },
                     }
                 }
                 self.flush_defrag_pending_queue(Some(freed_space_key));
             },
             DoneTask::DeleteBlockDefrag { block_id, block_bytes, freed_space_key, } => {
+
+                println!("    ** DEFRAG DeleteBlockDefrag spin for {:?}", block_id);
+
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 while let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
                     self.blocks_pool.repay(read_block.block_bytes.freeze());
@@ -738,10 +753,7 @@ impl<C> Inner<C> where C: Context {
                                 defrag_gaps,
                                 block_entry.environs,
                             );
-
-                            let defrag = self.defrag.as_mut().unwrap();
-                            assert!(defrag.in_progress_tasks_count > 0);
-                            defrag.in_progress_tasks_count -= 1;
+                            cancel_defrag_task(self.defrag.as_mut().unwrap());
                         }
                         Op::Idle(Performer { inner: self, })
                     },
@@ -798,6 +810,15 @@ impl<C> Inner<C> where C: Context {
                         (),
                     task::TaskKind::DeleteBlock(task::DeleteBlock { context: task::DeleteBlockContext::Defrag { defrag_gaps, }, }) =>
                         if !defrag_gaps.is_still_relevant(lens.block_id(), self.schema.block_get()) {
+
+                            println!(
+                                "   /// DEFRAG read task CANCEL on run for {:?} (not relevant for {:?}, env: {:?})",
+                                lens.block_id(),
+                                defrag_gaps,
+                                { let mut block_get = self.schema.block_get(); block_get.by_id(lens.block_id()).as_ref().unwrap().environs.clone() },
+                            );
+
+                            cancel_defrag_task(self.defrag.as_mut().unwrap());
                             lens.finish(self.schema.block_get());
                             lens.enqueue(self.schema.block_get());
                             continue;
@@ -863,4 +884,9 @@ where C: Context,
         &mut block_get,
     );
     lens.enqueue(block_get);
+}
+
+fn cancel_defrag_task<C>(defrag: &mut Defrag<C>) {
+    assert!(defrag.in_progress_tasks_count > 0);
+    defrag.in_progress_tasks_count -= 1;
 }
