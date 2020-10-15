@@ -6,6 +6,7 @@ use super::{
     blocks,
     storage,
     SpaceKey,
+    DefragGaps,
     BlockEntry,
     Environs,
     LeftEnvirons,
@@ -39,7 +40,7 @@ pub struct WriteBlockPerform {
 #[derive(Clone, PartialEq, Debug)]
 pub enum DefragOp {
     None,
-    Queue { free_space_offset: u64, space_key: SpaceKey, },
+    Queue { defrag_gaps: DefragGaps, moving_block_id: block::Id, },
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -70,14 +71,12 @@ pub enum DeleteBlockOp {
 pub struct DeleteBlockPerform;
 
 #[derive(Debug)]
-pub enum ReadBlockTaskDoneOp<'a> {
-    Perform(ReadBlockTaskDonePerform<'a>),
+pub enum ReadBlockTaskDoneOp {
+    Perform(ReadBlockTaskDonePerform),
 }
 
 #[derive(Debug)]
-pub struct ReadBlockTaskDonePerform<'a> {
-    pub block_bytes_cached: &'a mut Option<block::Bytes>,
-}
+pub struct ReadBlockTaskDonePerform;
 
 #[derive(Debug)]
 pub enum DeleteBlockTaskDoneOp {
@@ -182,8 +181,7 @@ impl Schema {
                         },
                     );
                     right_space_key = Some(space_key);
-                    let free_space_offset = block_offset + space_required as u64;
-                    defrag_op = DefragOp::Queue { free_space_offset, space_key, };
+                    defrag_op = self.make_defrag_op(space_key, right_block_id.clone());
                     (
                         RightEnvirons::Space { space_key, },
                         LeftEnvirons::Space { space_key, },
@@ -235,8 +233,7 @@ impl Schema {
                         },
                     );
                     right_space_key = Some(space_key);
-                    let free_space_offset = block_offset + space_required as u64;
-                    defrag_op = DefragOp::Queue { free_space_offset, space_key, };
+                    defrag_op = self.make_defrag_op(space_key, right_block_id.clone());
                     (
                         RightEnvirons::Space { space_key, },
                         RightEnvirons::Block { block_id: block_id.clone(), },
@@ -315,7 +312,7 @@ impl Schema {
             },
 
             // before: ^| ....... |$
-            // after:  ^| A | ... |$
+            // after:  ^| R | ... |$
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndEnd, }) => {
                 let block_offset = self.storage_layout.wheel_header_size as u64;
 
@@ -390,7 +387,7 @@ impl Schema {
         }
     }
 
-    pub fn process_delete_block_request<'a>(&'a mut self, block_id: &block::Id) -> DeleteBlockOp {
+    pub fn process_delete_block_request(&mut self, block_id: &block::Id) -> DeleteBlockOp {
         match self.blocks_index.get(&block_id) {
             Some(..) =>
                 DeleteBlockOp::Perform(DeleteBlockPerform),
@@ -405,11 +402,9 @@ impl Schema {
         }).unwrap();
     }
 
-    pub fn process_read_block_task_done<'a>(&'a mut self, read_block_id: &block::Id) -> ReadBlockTaskDoneOp<'a> {
-        let block_entry = self.blocks_index.get_mut(read_block_id).unwrap();
-        ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform {
-            block_bytes_cached: &mut block_entry.block_bytes,
-        })
+    pub fn process_read_block_task_done(&mut self, read_block_id: &block::Id) -> ReadBlockTaskDoneOp {
+        assert!(self.blocks_index.get_mut(read_block_id).is_some());
+        ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform)
     }
 
     pub fn process_delete_block_task_done(&mut self, removed_block_id: block::Id) -> DeleteBlockTaskDoneOp {
@@ -446,7 +441,7 @@ impl Schema {
                         );
                         self.blocks_index.update_env_left(&right_block, LeftEnvirons::Space { space_key, });
                         assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
-                        defrag_op = DefragOp::Queue { free_space_offset: block_entry.offset, space_key, };
+                        defrag_op = self.make_defrag_op(space_key, right_block.clone());
                         space_key
                     },
                     // before: ^| R | ... |$
@@ -473,7 +468,7 @@ impl Schema {
                 let space_key = self.gaps_index.insert(space_available, gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), });
                 self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key, });
                 assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
-                defrag_op = DefragOp::Queue { free_space_offset: block_entry.offset, space_key, };
+                defrag_op = self.make_defrag_op(space_key, block_id.clone());
                 space_key
             },
 
@@ -557,8 +552,7 @@ impl Schema {
                             gaps::GapBetween::StartAndBlock { right_block: right_block_right.clone(), },
                         );
                         self.blocks_index.update_env_left(&right_block_right, LeftEnvirons::Space { space_key, });
-                        let free_space_offset = self.storage_layout.wheel_header_size as u64;
-                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
+                        defrag_op = self.make_defrag_op(space_key, right_block_right.clone());
                         space_key
                     },
                     // before: ^| ... | A | ... | R | ... |$
@@ -605,11 +599,7 @@ impl Schema {
                         );
                         self.blocks_index.update_env_right(&left_block_left, RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&right_block_right, LeftEnvirons::Space { space_key, });
-                        let block_entry_left = self.blocks_index.get(&left_block_left).unwrap();
-                        let free_space_offset = block_entry_left.offset
-                            + self.storage_layout.data_size_block_min() as u64
-                            + block_entry_left.header.block_size as u64;
-                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
+                        defrag_op = self.make_defrag_op(space_key, right_block_right.clone());
                         space_key
                     },
                 },
@@ -638,11 +628,7 @@ impl Schema {
                         );
                         self.blocks_index.update_env_right(&left_block, RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key, });
-                        let block_entry_left = self.blocks_index.get(&left_block).unwrap();
-                        let free_space_offset = block_entry_left.offset
-                            + self.storage_layout.data_size_block_min() as u64
-                            + block_entry_left.header.block_size as u64;
-                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
+                        defrag_op = self.make_defrag_op(space_key, block_id.clone());
                         space_key
                     },
                     // before: ^| ... | R || B | ... |$
@@ -658,8 +644,7 @@ impl Schema {
                             gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), },
                         );
                         self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key, });
-                        let free_space_offset = self.storage_layout.wheel_header_size as u64;
-                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
+                        defrag_op = self.make_defrag_op(space_key, block_id.clone());
                         space_key
                     },
                 },
@@ -704,11 +689,7 @@ impl Schema {
                         );
                         self.blocks_index.update_env_right(&block_id, RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&right_block, LeftEnvirons::Space { space_key, });
-                        let block_entry_left = self.blocks_index.get(&block_id).unwrap();
-                        let free_space_offset = block_entry_left.offset
-                            + self.storage_layout.data_size_block_min() as u64
-                            + block_entry_left.header.block_size as u64;
-                        defrag_op = DefragOp::Queue { free_space_offset, space_key, };
+                        defrag_op = self.make_defrag_op(space_key, right_block.clone());
                         space_key
                     },
                     // before: ^| ... | A || R | ... |$
@@ -745,7 +726,7 @@ impl Schema {
                 );
                 self.blocks_index.update_env_right(&block_id_left, RightEnvirons::Space { space_key, });
                 self.blocks_index.update_env_left(&block_id_right, LeftEnvirons::Space { space_key, });
-                defrag_op = DefragOp::Queue { free_space_offset: block_entry.offset, space_key, };
+                defrag_op = self.make_defrag_op(space_key, block_id_right.clone());
                 space_key
             },
         };
@@ -756,7 +737,6 @@ impl Schema {
     pub fn process_delete_block_task_done_defrag(
         &mut self,
         removed_block_id: block::Id,
-        defrag_space_key: SpaceKey,
     )
         -> DeleteBlockTaskDoneDefragOp
     {
@@ -767,11 +747,10 @@ impl Schema {
 
         let freed_space_key = match block_entry.environs.clone() {
 
-            Environs { left: LeftEnvirons::Start, .. } |
-            Environs { left: LeftEnvirons::Block { .. }, .. }=>
+            Environs { left: LeftEnvirons::Start, .. } | Environs { left: LeftEnvirons::Block { .. }, .. } =>
                 unreachable!(),
 
-            Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::End, } if space_key == defrag_space_key =>
+            Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::End, } =>
                 match self.gaps_index.remove(&space_key) {
                     None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
                         unreachable!(),
@@ -815,13 +794,10 @@ impl Schema {
                     },
                 },
 
-            Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::End, } =>
-                panic!("right end, unexpected left gap {:?}, expected {:?}", space_key, defrag_space_key),
-
             Environs {
                 left: LeftEnvirons::Space { space_key: space_key_left, },
                 right: RightEnvirons::Space { space_key: space_key_right, },
-            } if space_key_left == defrag_space_key =>
+            } =>
                 match (self.gaps_index.remove(&space_key_left), self.gaps_index.remove(&space_key_right)) {
                     (lvalue @ None, rvalue) | (lvalue, rvalue @ None) |
                     (lvalue @ Some(gaps::GapBetween::StartAndEnd), rvalue) | (lvalue, rvalue @ Some(gaps::GapBetween::StartAndEnd)) |
@@ -863,15 +839,12 @@ impl Schema {
                             gaps::GapBetween::TwoBlocks { left_block: removed_block_id.clone(), right_block: right_block_right.clone(), },
                         );
                         self.blocks_index.update_env_left(&right_block_right, LeftEnvirons::Space { space_key: moved_space_key, });
-                        let block_end_offset = self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
                             block_entry.offset = start_offset;
                             block_entry.environs.left = LeftEnvirons::Start;
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
-                            block_entry.offset
-                                + data_size_block_min
-                                + block_entry.header.block_size as u64
                         }).unwrap();
-                        defrag_op = DefragOp::Queue { free_space_offset: block_end_offset, space_key: moved_space_key, };
+                        defrag_op = self.make_defrag_op(moved_space_key, right_block_right.clone());
                         moved_space_key
                     },
                     // before: ^| ... | A | ... | R | ... |$
@@ -925,23 +898,17 @@ impl Schema {
                                 + block_entry.header.block_size as u64
                         }).unwrap();
                         self.blocks_index.update_env_left(&right_block_right, LeftEnvirons::Space { space_key: moved_space_key, });
-                        let block_end_offset = self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
                             block_entry.offset = block_offset;
                             block_entry.environs.left = LeftEnvirons::Block { block_id: left_block_left.clone(), };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
-                            block_entry.offset
-                                + data_size_block_min
-                                + block_entry.header.block_size as u64
                         }).unwrap();
-                        defrag_op = DefragOp::Queue { free_space_offset: block_end_offset, space_key: moved_space_key, };
+                        defrag_op = self.make_defrag_op(moved_space_key, right_block_right.clone());
                         moved_space_key
                     },
                 },
 
-            Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::Space { .. }, } =>
-                panic!("right gap, unexpected left gap {:?}, expected {:?}", space_key, defrag_space_key),
-
-            Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::Block { block_id, }, } if space_key == defrag_space_key =>
+            Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::Block { block_id, }, } =>
                 match self.gaps_index.remove(&space_key) {
                     None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
                         unreachable!(),
@@ -955,15 +922,12 @@ impl Schema {
                             gaps::GapBetween::TwoBlocks { left_block: removed_block_id.clone(), right_block: block_id.clone(), },
                         );
                         self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key: moved_space_key, });
-                        let block_end_offset = self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
                             block_entry.offset = start_offset;
                             block_entry.environs.left = LeftEnvirons::Start;
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
-                            block_entry.offset
-                                + data_size_block_min
-                                + block_entry.header.block_size as u64
                         }).unwrap();
-                        defrag_op = DefragOp::Queue { free_space_offset: block_end_offset, space_key: moved_space_key, };
+                        defrag_op = self.make_defrag_op(moved_space_key, block_id.clone());
                         moved_space_key
                     },
                     // before: ^| ... | A | ... | R | B | ... |$
@@ -985,21 +949,16 @@ impl Schema {
                                 + block_entry.header.block_size as u64
                         }).unwrap();
                         self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key: moved_space_key, });
-                        let block_end_offset = self.blocks_index.with_mut(&removed_block_id, |block_entry| {
+                        self.blocks_index.with_mut(&removed_block_id, |block_entry| {
                             block_entry.offset = block_offset;
                             block_entry.environs.left = LeftEnvirons::Block { block_id: left_block.clone(), };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
-                            block_entry.offset
-                                + data_size_block_min
-                                + block_entry.header.block_size as u64
                         }).unwrap();
-                        defrag_op = DefragOp::Queue { free_space_offset: block_end_offset, space_key: moved_space_key, };
+                        defrag_op = self.make_defrag_op(moved_space_key, block_id.clone());
                         moved_space_key
                     },
                 },
 
-            Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::Block { .. }, } =>
-                panic!("right block, unexpected left gap {:?}, expected {:?}", space_key, defrag_space_key),
         };
 
         let block_entry = self.blocks_index.get_mut(&removed_block_id).unwrap();
@@ -1019,18 +978,16 @@ impl Schema {
         BlockGet { blocks_index: &mut self.blocks_index, }
     }
 
-    pub fn pick_defrag_space_key(&mut self, space_key: &SpaceKey) -> Option<&mut BlockEntry> {
-        let block_id = match self.gaps_index.get(space_key)? {
-            gaps::GapBetween::StartAndBlock { right_block, } =>
-                right_block,
-            gaps::GapBetween::TwoBlocks { right_block, .. } =>
-                right_block,
-            gaps::GapBetween::BlockAndEnd { .. } | gaps::GapBetween::StartAndEnd =>
-                unreachable!(),
-        };
-        let block_entry = self.blocks_index.get_mut(block_id).unwrap();
-        self.gaps_index.lock_defrag(space_key);
-        Some(block_entry)
+    fn make_defrag_op(&mut self, space_key_left: SpaceKey, moving_block_id: block::Id) -> DefragOp {
+        let defrag_gaps = self.blocks_index.with_mut(&moving_block_id, |block_entry| {
+            match block_entry.environs.right {
+                RightEnvirons::End | RightEnvirons::Block { .. } =>
+                    DefragGaps::OnlyLeft { space_key_left, },
+                RightEnvirons::Space { space_key: space_key_right, } =>
+                    DefragGaps::Both { space_key_left, space_key_right, },
+            }
+        }).unwrap();
+        DefragOp::Queue { defrag_gaps, moving_block_id, }
     }
 }
 
@@ -1203,6 +1160,7 @@ mod tests {
         WriteBlockOp,
         WriteBlockPerform,
         DefragOp,
+        DefragGaps,
         WriteBlockTaskOp,
         ReadBlockOp,
         ReadBlockPerform,
@@ -1396,11 +1354,14 @@ mod tests {
         let op = schema.process_delete_block_task_done(block::Id::init());
         assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
             defrag_op: DefragOp::Queue {
-                free_space_offset: 24,
-                space_key: SpaceKey { space_available: 61, serial: 4, },
+                defrag_gaps: DefragGaps::Both {
+                    space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                    space_key_right: SpaceKey { space_available: 14, serial: 3 },
+                },
+                moving_block_id,
             },
             ..
-        })));
+        }) if moving_block_id == block::Id::init().next()));
 
         assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
         assert!(matches!(
@@ -1483,11 +1444,14 @@ mod tests {
         let op = schema.process_delete_block_task_done(block::Id::init());
         assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
             defrag_op: DefragOp::Queue {
-                free_space_offset: 24,
-                space_key: SpaceKey { space_available: 61, serial: 4, },
+                defrag_gaps: DefragGaps::Both {
+                    space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                    space_key_right: SpaceKey { space_available: 14, serial: 3 },
+                },
+                moving_block_id,
             },
             ..
-        })));
+        }) if moving_block_id == block::Id::init().next()));
 
         // defrag delete
         assert_eq!(schema.gaps_index.space_total(), 75);
@@ -1495,10 +1459,7 @@ mod tests {
         let op = schema.process_delete_block_request(&block::Id::init().next());
         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { .. })));
 
-        let op = schema.process_delete_block_task_done_defrag(
-            block::Id::init().next(),
-            SpaceKey { space_available: 61, serial: 4, },
-        );
+        let op = schema.process_delete_block_task_done_defrag(block::Id::init().next());
         assert!(matches!(op, DeleteBlockTaskDoneDefragOp::Perform(DeleteBlockTaskDoneDefragPerform {
             block_offset: 24,
             ..

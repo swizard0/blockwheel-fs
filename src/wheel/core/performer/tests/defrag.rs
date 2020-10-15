@@ -17,7 +17,10 @@ use super::{
     DefragConfig,
 };
 
-use crate::wheel::core::SpaceKey;
+use crate::wheel::core::{
+    SpaceKey,
+    DefragGaps,
+};
 
 #[test]
 fn script_simple_defrag() {
@@ -139,7 +142,10 @@ fn script_simple_defrag() {
                         ..Default::default()
                     },
                     context: task::ReadBlockContext::Defrag {
-                        space_key: SpaceKey { space_available: 61, serial: 4, },
+                        defrag_gaps: DefragGaps::Both {
+                            space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                            space_key_right: SpaceKey { space_available: 14, serial: 3 },
+                        },
                     },
                 }),
             },
@@ -156,7 +162,9 @@ fn script_simple_defrag() {
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                         block_bytes: hello_world_bytes().into_mut().unwrap(),
                         context: task::ReadBlockContext::Defrag {
-                            space_key: SpaceKey { space_available: 61, serial: 4, },
+                            defrag_gaps: DefragGaps::OnlyLeft {
+                                space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                            },
                         },
                     }),
                 },
@@ -169,7 +177,9 @@ fn script_simple_defrag() {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
                     context: task::DeleteBlockContext::Defrag {
-                        space_key: SpaceKey { space_available: 61, serial: 4, },
+                        defrag_gaps: DefragGaps::OnlyLeft {
+                            space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                        },
                     },
                 }),
             },
@@ -185,7 +195,9 @@ fn script_simple_defrag() {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
                         context: task::DeleteBlockContext::Defrag {
-                            space_key: SpaceKey { space_available: 61, serial: 4, },
+                            defrag_gaps: DefragGaps::OnlyLeft {
+                                space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                            },
                         },
                     }),
                 },

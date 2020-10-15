@@ -13,8 +13,10 @@ use o1::{
 };
 
 use super::{
+    block,
+    BlockGet,
+    DefragGaps,
     super::proto,
-    SpaceKey,
 };
 
 pub struct Queues<C> {
@@ -96,25 +98,29 @@ impl TaskQueue {
         }
     }
 
-    pub fn push(&mut self, offset: u64, space_key: SpaceKey) {
-        self.queue.push(DefragTask { offset, space_key, });
+    pub fn push(&mut self, defrag_gaps: DefragGaps, moving_block_id: block::Id) {
+        self.queue.push(DefragTask { defrag_gaps, moving_block_id, });
     }
 
-    pub fn pop(&mut self) -> Option<(u64, SpaceKey)> {
-        self.queue.pop()
-            .map(|defrag_task| (defrag_task.offset, defrag_task.space_key))
+    pub fn pop<B>(&mut self, mut block_get: B) -> Option<(DefragGaps, block::Id)> where B: BlockGet {
+        loop {
+            let DefragTask { defrag_gaps, moving_block_id, } = self.queue.pop()?;
+            if defrag_gaps.is_still_relevant(&moving_block_id, &mut block_get) {
+                return Some((defrag_gaps, moving_block_id))
+            }
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 struct DefragTask {
-    offset: u64,
-    space_key: SpaceKey,
+    defrag_gaps: DefragGaps,
+    moving_block_id: block::Id,
 }
 
 impl PartialEq for DefragTask {
     fn eq(&self, other: &DefragTask) -> bool {
-        self.offset == other.offset
+        self.defrag_gaps == other.defrag_gaps
     }
 }
 
@@ -128,6 +134,21 @@ impl PartialOrd for DefragTask {
 
 impl Ord for DefragTask {
     fn cmp(&self, other: &DefragTask) -> cmp::Ordering {
-        other.offset.cmp(&self.offset)
+        match (&self.defrag_gaps, &other.defrag_gaps) {
+            (DefragGaps::OnlyLeft { space_key_left: space_self, }, DefragGaps::OnlyLeft { space_key_left: space_other, }) =>
+                space_self.cmp(&space_other),
+            (DefragGaps::OnlyLeft { .. }, DefragGaps::Both { .. }) =>
+                cmp::Ordering::Less,
+            (DefragGaps::Both { .. }, DefragGaps::OnlyLeft { .. }) =>
+                cmp::Ordering::Greater,
+            (
+                DefragGaps::Both { space_key_left: space_left_self, space_key_right: space_right_self },
+                DefragGaps::Both { space_key_left: space_left_other, space_key_right: space_right_other, },
+            ) => {
+                let space_sum_self = space_left_self.space_available() + space_right_self.space_available();
+                let space_sum_other = space_left_other.space_available() + space_right_other.space_available();
+                space_sum_self.cmp(&space_sum_other)
+            },
+        }
     }
 }

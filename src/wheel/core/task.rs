@@ -1,7 +1,7 @@
 use super::{
     block,
     storage,
-    SpaceKey,
+    DefragGaps,
 };
 
 use crate::context::Context;
@@ -43,7 +43,7 @@ pub struct ReadBlock<C> {
 #[derive(Clone, PartialEq, Debug)]
 pub enum ReadBlockContext<C> {
     External(C),
-    Defrag { space_key: SpaceKey, },
+    Defrag { defrag_gaps: DefragGaps, },
 }
 
 #[derive(Debug)]
@@ -54,9 +54,7 @@ pub struct DeleteBlock<C> {
 #[derive(Clone, PartialEq, Debug)]
 pub enum DeleteBlockContext<C> {
     External(C),
-    Defrag {
-        space_key: SpaceKey,
-    },
+    Defrag { defrag_gaps: DefragGaps, },
 }
 
 #[derive(Debug)]

@@ -64,6 +64,12 @@ fn hello_world_bytes() -> block::Bytes {
     block_bytes_mut.freeze()
 }
 
+fn hello_bytes() -> block::Bytes {
+    let mut block_bytes_mut = block::BytesMut::new_detached();
+    block_bytes_mut.extend("hello!".as_bytes().iter().cloned());
+    block_bytes_mut.freeze()
+}
+
 #[derive(Debug)]
 enum ScriptOp {
     Expect(ExpectOp),

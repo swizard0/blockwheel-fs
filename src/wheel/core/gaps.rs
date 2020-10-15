@@ -22,13 +22,6 @@ pub struct Index {
 #[derive(Debug)]
 struct Gap {
     between: GapBetween<block::Id>,
-    state: GapState,
-}
-
-#[derive(Debug)]
-enum GapState {
-    Regular,
-    LockedDefrag,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -77,13 +70,9 @@ impl Index {
     pub fn insert(&mut self, space_available: usize, between: GapBetween<block::Id>) -> SpaceKey {
         self.serial += 1;
         let space_key = SpaceKey { space_available, serial: self.serial, };
-        self.gaps.insert(space_key, Gap { between, state: GapState::Regular, });
+        self.gaps.insert(space_key, Gap { between, });
         self.space_total += space_available;
         space_key
-    }
-
-    pub fn get(&self, space_key: &SpaceKey) -> Option<&GapBetween<block::Id>> {
-        self.gaps.get(space_key).map(|gap| &gap.between)
     }
 
     pub fn allocate<'a, G>(
@@ -105,7 +94,7 @@ impl Index {
         let mut candidates = self.gaps.range(SpaceKey { space_available: space_required, serial: 0, } ..);
         while let Some(candidate) = candidates.next() {
             match candidate {
-                (key, Gap { between, state: GapState::Regular, }) => {
+                (key, Gap { between, }) => {
                     self.remove_buf.push(*key);
                     match between {
                         GapBetween::StartAndEnd => {
@@ -169,8 +158,6 @@ impl Index {
                         },
                     }
                 },
-                (_key, Gap { state: GapState::LockedDefrag, .. }) =>
-                    (),
             }
         }
 
@@ -189,12 +176,6 @@ impl Index {
         }
 
         Err(Error::NoSpaceLeft)
-    }
-
-    pub fn lock_defrag(&mut self, key: &SpaceKey) {
-        if let Some(gap) = self.gaps.get_mut(key) {
-            gap.state = GapState::LockedDefrag;
-        }
     }
 
     pub fn remove(&mut self, key: &SpaceKey) -> Option<GapBetween<block::Id>> {
@@ -408,48 +389,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn lock_unlock_defrag() {
-        let Init { block_b_id, space_key_a, blocks_index, mut gaps_index, .. } = Init::new();
-
-        gaps_index.lock_defrag(&space_key_a);
-        assert_eq!(
-            gaps_index.allocate(3, Some(0), |key| blocks_index.get(key)),
-            Ok(Allocated::Success {
-                space_available: 60,
-                between: GapBetween::BlockAndEnd {
-                    left_block: BlockInfo {
-                        block_id: block_b_id.clone(),
-                        block_entry: &BlockEntry {
-                            offset: 8,
-                            header: storage::BlockHeader {
-                                block_id: block_b_id.clone(),
-                                block_size: 0,
-                                ..Default::default()
-                            },
-                            block_bytes: None,
-                            environs: Environs {
-                                left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
-                                right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
-                            },
-                            tasks_head: Default::default(),
-                        },
-                    },
-                },
-            }),
-        );
-
-        assert_eq!(
-            gaps_index.allocate(3, Some(0), |key| blocks_index.get(key)),
-            Ok(Allocated::PendingDefragmentation),
-        );
-    }
-
-
     struct Init {
         block_a_id: block::Id,
         block_b_id: block::Id,
-        space_key_a: SpaceKey,
         blocks_index: HashMap<block::Id, BlockEntry>,
         gaps_index: Index,
     }
@@ -498,7 +440,7 @@ mod tests {
                 tasks_head: Default::default(),
             });
 
-            Init { block_a_id, block_b_id, space_key_a, blocks_index, gaps_index, }
+            Init { block_a_id, block_b_id, blocks_index, gaps_index, }
         }
     }
 }
