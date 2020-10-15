@@ -102,10 +102,10 @@ async fn busyloop(
     let performer = performer::Performer::new(
         schema,
         lru::Cache::new(state.params.lru_cache_size_bytes),
-        if state.params.disable_defragmentation {
+        if state.params.defrag_parallel_tasks_limit == 0 {
             None
         } else {
-            Some(performer::DefragConfig::new(1))
+            Some(performer::DefragConfig::new(state.params.defrag_parallel_tasks_limit))
         },
     );
 

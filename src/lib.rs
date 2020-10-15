@@ -38,7 +38,7 @@ pub struct Params {
     pub wheel_task_restart_sec: usize,
     pub work_block_size_bytes: usize,
     pub lru_cache_size_bytes: usize,
-    pub disable_defragmentation: bool,
+    pub defrag_parallel_tasks_limit: usize,
 }
 
 impl Default for Params {
@@ -49,7 +49,7 @@ impl Default for Params {
             wheel_task_restart_sec: 4,
             work_block_size_bytes: 8 * 1024 * 1024,
             lru_cache_size_bytes: 16 * 1024 * 1024,
-            disable_defragmentation: false,
+            defrag_parallel_tasks_limit: 1,
         }
     }
 }
