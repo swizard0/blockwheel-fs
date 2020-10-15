@@ -180,6 +180,7 @@ fn script_simple_defrag() {
                         defrag_gaps: DefragGaps::OnlyLeft {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
                         },
+                        block_bytes: hello_world_bytes(),
                     },
                 }),
             },
@@ -198,6 +199,7 @@ fn script_simple_defrag() {
                             defrag_gaps: DefragGaps::OnlyLeft {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
                             },
+                            block_bytes: hello_world_bytes(),
                         },
                     }),
                 },

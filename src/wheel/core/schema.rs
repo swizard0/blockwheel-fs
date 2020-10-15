@@ -52,7 +52,6 @@ pub struct WriteBlockTaskOp {
 #[derive(Debug)]
 pub enum ReadBlockOp<'a> {
     Perform(ReadBlockPerform<'a>),
-    Cached { block_bytes: block::Bytes, },
     NotFound,
 }
 
@@ -98,7 +97,6 @@ pub enum DeleteBlockTaskDoneDefragOp {
 #[derive(Debug)]
 pub struct DeleteBlockTaskDoneDefragPerform {
     pub block_offset: u64,
-    pub block_bytes: block::Bytes,
     pub defrag_op: DefragOp,
     pub freed_space_key: SpaceKey,
 }
@@ -201,7 +199,6 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        block_bytes: Some(block_bytes.clone()),
                         environs: Environs {
                             left: LeftEnvirons::Start,
                             right: self_env,
@@ -255,7 +252,6 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        block_bytes: Some(block_bytes.clone()),
                         environs: Environs {
                             left: LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
@@ -299,7 +295,6 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        block_bytes: Some(block_bytes.clone()),
                         environs: Environs {
                             left: LeftEnvirons::Block { block_id: left_block_id.clone(), },
                             right: self_env,
@@ -344,7 +339,6 @@ impl Schema {
                             block_size: block_bytes.len(),
                             ..Default::default()
                         },
-                        block_bytes: Some(block_bytes.clone()),
                         environs,
                         tasks_head: Default::default(),
                     },
@@ -375,13 +369,9 @@ impl Schema {
     pub fn process_read_block_request<'a>(&'a mut self, block_id: &block::Id) -> ReadBlockOp<'a> {
         match self.blocks_index.get_mut(block_id) {
             Some(block_entry) =>
-                if let Some(ref block_bytes) = block_entry.block_bytes {
-                    ReadBlockOp::Cached { block_bytes: block_bytes.clone(), }
-                } else {
-                    ReadBlockOp::Perform(ReadBlockPerform {
-                        block_header: &block_entry.header,
-                    })
-                },
+                ReadBlockOp::Perform(ReadBlockPerform {
+                    block_header: &block_entry.header,
+                }),
             None =>
                 ReadBlockOp::NotFound,
         }
@@ -394,12 +384,6 @@ impl Schema {
             None =>
                 DeleteBlockOp::NotFound,
         }
-    }
-
-    pub fn process_write_block_task_done(&mut self, written_block_id: &block::Id) {
-        self.blocks_index.with_mut(written_block_id, |block_entry| {
-            block_entry.block_bytes = None;
-        }).unwrap();
     }
 
     pub fn process_read_block_task_done(&mut self, read_block_id: &block::Id) -> ReadBlockTaskDoneOp {
@@ -964,11 +948,6 @@ impl Schema {
         let block_entry = self.blocks_index.get_mut(&removed_block_id).unwrap();
         DeleteBlockTaskDoneDefragOp::Perform(DeleteBlockTaskDoneDefragPerform {
             block_offset: block_entry.offset,
-            block_bytes: block_entry
-                .block_bytes
-                .as_ref()
-                .map(Clone::clone)
-                .unwrap(),
             defrag_op,
             freed_space_key,
         })
@@ -1094,7 +1073,6 @@ impl Builder {
             BlockEntry {
                 offset,
                 header: block_header,
-                block_bytes: None,
                 environs: Environs { left, right: RightEnvirons::End, },
                 tasks_head: Default::default(),
             },
@@ -1311,11 +1289,6 @@ mod tests {
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
         assert_eq!(schema.gaps_index.space_total(), 75);
-
-        let op = schema.process_read_block_request(&block::Id::init());
-        assert!(matches!(op, ReadBlockOp::Cached { ref block_bytes, } if block_bytes == &sample_hello_world()));
-
-        schema.process_write_block_task_done(&block::Id::init());
 
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::Perform(ReadBlockPerform { .. })));

@@ -534,15 +534,6 @@ impl<C> Inner<C> where C: Context {
                     Op::Idle(Performer { inner: self, })
                 },
 
-            schema::ReadBlockOp::Cached { block_bytes, } =>
-                Op::Event(Event {
-                    op: EventOp::ReadBlock(TaskDoneOp {
-                        context: request_read_block.context,
-                        op: ReadBlockOp::Done { block_bytes, },
-                    }),
-                    performer: Performer { inner: self, },
-                }),
-
             schema::ReadBlockOp::NotFound =>
                 Op::Event(Event {
                     op: EventOp::ReadBlock(TaskDoneOp {
@@ -595,7 +586,6 @@ impl<C> Inner<C> where C: Context {
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 lens.finish(self.schema.block_get());
                 lens.enqueue(self.schema.block_get());
-                self.schema.process_write_block_task_done(&block_id);
                 match write_block.context {
                     task::WriteBlockContext::External(context) =>
                         Op::Event(Event {
@@ -663,7 +653,7 @@ impl<C> Inner<C> where C: Context {
                             },
                         }
                     },
-                    task::DeleteBlockContext::Defrag { .. } =>
+                    task::DeleteBlockContext::Defrag { block_bytes, .. } =>
                         match self.schema.process_delete_block_task_done_defrag(block_id.clone()) {
                             schema::DeleteBlockTaskDoneDefragOp::Perform(task_op) => {
 
@@ -682,7 +672,7 @@ impl<C> Inner<C> where C: Context {
                                         task::Task {
                                             block_id: block_id.clone(),
                                             kind: task::TaskKind::WriteBlock(task::WriteBlock {
-                                                block_bytes: task_op.block_bytes.clone(),
+                                                block_bytes: block_bytes.clone(),
                                                 context: task::WriteBlockContext::Defrag,
                                             }),
                                         },
@@ -690,7 +680,7 @@ impl<C> Inner<C> where C: Context {
                                     );
                                 self.done_task = DoneTask::DeleteBlockDefrag {
                                     block_id,
-                                    block_bytes: task_op.block_bytes,
+                                    block_bytes,
                                     freed_space_key: task_op.freed_space_key,
                                 };
                                 Op::Idle(Performer { inner: self, })
@@ -728,15 +718,13 @@ impl<C> Inner<C> where C: Context {
                             self.tasks_queue.focus_block_id(block_id.clone())
                                 .push_task(
                                     task::Task {
-                                        block_id,
+                                        block_id: block_id.clone(),
                                         kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
-                                            context: task::DeleteBlockContext::Defrag { defrag_gaps, },
+                                            context: task::DeleteBlockContext::Defrag { defrag_gaps, block_bytes, },
                                         }),
                                     },
                                     &mut block_entry_get,
                                 );
-                            assert_eq!(block_entry.block_bytes, None);
-                            block_entry.block_bytes = Some(block_bytes);
                         } else {
                             println!(
                                 "   /// DEFRAG read task CANCEL for {:?} (not relevant for {:?}, env: {:?})",
@@ -799,7 +787,7 @@ impl<C> Inner<C> where C: Context {
                         (),
                     task::TaskKind::ReadBlock(..) =>
                         (),
-                    task::TaskKind::DeleteBlock(task::DeleteBlock { context: task::DeleteBlockContext::Defrag { defrag_gaps, }, }) =>
+                    task::TaskKind::DeleteBlock(task::DeleteBlock { context: task::DeleteBlockContext::Defrag { defrag_gaps, .. }, }) =>
                         if !defrag_gaps.is_still_relevant(lens.block_id(), self.schema.block_get()) {
 
                             println!(

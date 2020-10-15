@@ -28,8 +28,8 @@ mod proto;
 mod storage;
 mod context;
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 #[derive(Clone, Debug)]
 pub struct Params {

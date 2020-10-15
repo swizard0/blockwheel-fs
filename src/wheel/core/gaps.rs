@@ -231,7 +231,6 @@ mod tests {
                                 block_size: 4,
                                 ..Default::default()
                             },
-                            block_bytes: None,
                             environs: Environs {
                                 left: LeftEnvirons::Start,
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
@@ -248,7 +247,6 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            block_bytes: None,
                             environs: Environs {
                                 left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
@@ -279,7 +277,6 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            block_bytes: None,
                             environs: Environs {
                                 left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
@@ -330,7 +327,6 @@ mod tests {
                                 block_size: 4,
                                 ..Default::default()
                             },
-                            block_bytes: None,
                             environs: Environs {
                                 left: LeftEnvirons::Start,
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
@@ -347,7 +343,6 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            block_bytes: None,
                             environs: Environs {
                                 left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
@@ -372,7 +367,6 @@ mod tests {
                                 block_size: 0,
                                 ..Default::default()
                             },
-                            block_bytes: None,
                             environs: Environs {
                                 left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
@@ -418,7 +412,6 @@ mod tests {
                     block_size: 4,
                     ..Default::default()
                 },
-                block_bytes: None,
                 environs: Environs {
                     left: LeftEnvirons::Start,
                     right: RightEnvirons::Space { space_key: space_key_a, },
@@ -432,7 +425,6 @@ mod tests {
                     block_size: 0,
                     ..Default::default()
                 },
-                block_bytes: None,
                 environs: Environs {
                     left: LeftEnvirons::Space { space_key: space_key_a, },
                     right: RightEnvirons::Space { space_key: space_key_b, },

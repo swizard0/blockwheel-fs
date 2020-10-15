@@ -54,7 +54,10 @@ pub struct DeleteBlock<C> {
 #[derive(Clone, PartialEq, Debug)]
 pub enum DeleteBlockContext<C> {
     External(C),
-    Defrag { defrag_gaps: DefragGaps, },
+    Defrag {
+        defrag_gaps: DefragGaps,
+        block_bytes: block::Bytes,
+    },
 }
 
 #[derive(Debug)]

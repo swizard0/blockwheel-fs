@@ -63,10 +63,7 @@ fn script_basic() {
             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ectx03", }),
             interpreter_context: "ictx01",
         }),
-        ScriptOp::Expect(ExpectOp::ReadBlockDone {
-            expect_block_bytes: hello_world_bytes(),
-            expect_context: "ectx03",
-        }),
+        ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
             expect_context: "ictx01",
         }),
@@ -134,6 +131,40 @@ fn script_basic() {
             expect_offset: 24,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
+                kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {
+                    block_header: storage::BlockHeader {
+                        block_id: block::Id::init(),
+                        block_size: 13,
+                        ..Default::default()
+                    },
+                    context: task::ReadBlockContext::External("ectx03"),
+                }),
+            },
+        }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx05", }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx05",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 85,
+                task: task::TaskDone {
+                    block_id: block::Id::init(),
+                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                        block_bytes: hello_world_bytes().into_mut().unwrap(),
+                        context: task::ReadBlockContext::External("ectx03"),
+                    }),
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::ReadBlockDone {
+            expect_block_bytes: hello_world_bytes(),
+            expect_context: "ectx03",
+        }),
+        ScriptOp::Expect(ExpectOp::InterpretTask {
+            expect_offset: 24,
+            expect_task: ExpectTask {
+                block_id: block::Id::init(),
                 kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
                     context: task::DeleteBlockContext::External("ectx04"),
                 }),
@@ -147,7 +178,10 @@ fn script_basic() {
             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ectx06", }),
             interpreter_context: "ictx06",
         }),
-        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::ReadBlockDone {
+            expect_block_bytes: hello_world_bytes(),
+            expect_context: "ectx06",
+        }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
             expect_context: "ictx06",
         }),
@@ -173,9 +207,6 @@ fn script_basic() {
         ScriptOp::Expect(ExpectOp::DeleteBlockDone {
             expect_block_id: block::Id::init(),
             expect_context: "ectx04",
-        }),
-        ScriptOp::Expect(ExpectOp::ReadBlockNotFound {
-            expect_context: "ectx06",
         }),
         ScriptOp::Expect(ExpectOp::DeleteBlockNotFound {
             expect_context: "ectx07",

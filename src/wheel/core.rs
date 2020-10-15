@@ -16,7 +16,6 @@ pub mod performer;
 pub struct BlockEntry {
     pub offset: u64,
     pub header: storage::BlockHeader,
-    pub block_bytes: Option<block::Bytes>,
     pub environs: Environs,
     pub tasks_head: task::queue::TasksHead,
 }
@@ -94,6 +93,14 @@ impl DefragGaps {
 
 pub trait BlockGet {
     fn by_id<'s>(&'s mut self, block_id: &block::Id) -> Option<&'s mut BlockEntry>;
+
+    fn with_mut<F, T>(&mut self, block_id: &block::Id, action: F) -> Option<T> where F: FnOnce(&mut BlockEntry) -> T {
+        if let Some(value) = self.by_id(block_id) {
+            Some(action(value))
+        } else {
+            None
+        }
+     }
 }
 
 impl<'a, T> BlockGet for &'a mut T where T: BlockGet {

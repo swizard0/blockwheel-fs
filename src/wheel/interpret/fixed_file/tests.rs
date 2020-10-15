@@ -121,8 +121,6 @@ fn create_read_one() {
                             })),
                     }
                 },
-                schema::ReadBlockOp::Cached { .. } =>
-                    Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
                 schema::ReadBlockOp::NotFound =>
                     Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id, })),
             }
@@ -179,8 +177,6 @@ fn create_write_overlap_read_one() {
             match schema.process_read_block_request(&block_id) {
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { .. }) =>
                     return Err(Error::Unexpected(UnexpectedError::ReadPerform { block_id, })),
-                schema::ReadBlockOp::Cached { .. } =>
-                    return Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
                 schema::ReadBlockOp::NotFound =>
                     (),
             }
@@ -218,8 +214,6 @@ fn create_write_overlap_read_one() {
                             })),
                     }
                 },
-                schema::ReadBlockOp::Cached { .. } =>
-                    Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
                 schema::ReadBlockOp::NotFound =>
                     Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id, })),
             }
@@ -298,8 +292,6 @@ fn create_write_delete_read_one() {
             match schema.process_read_block_request(&block_id) {
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { .. }) =>
                     return Err(Error::Unexpected(UnexpectedError::ReadPerform { block_id, })),
-                schema::ReadBlockOp::Cached { .. } =>
-                    return Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
                 schema::ReadBlockOp::NotFound =>
                     (),
             }
@@ -338,8 +330,6 @@ fn create_write_delete_read_one() {
                             })),
                     }
                 },
-                schema::ReadBlockOp::Cached { .. } =>
-                    Err(Error::Unexpected(UnexpectedError::ReadCached { block_id, })),
                 schema::ReadBlockOp::NotFound =>
                     Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id, })),
             }
@@ -373,9 +363,6 @@ enum UnexpectedError {
         received: task::Done<LocalContext>,
     },
     ReadPerform {
-        block_id: block::Id,
-    },
-    ReadCached {
         block_id: block::Id,
     },
     ReadNotFound {
