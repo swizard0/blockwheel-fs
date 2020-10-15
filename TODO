@@ -1,7 +1,3 @@
 - think about "block repay" mechanism: do we really need it?
 - add stats about lend/repay in `Info`
 - fill defrag queue after blockwheel file opening
-- no defrag space key: use block id instead
-- defrag queue priority: merge 2 spaces first
-
-- space gap is deleted but it was stored in defrag task: deleted block entry environs checking failed
