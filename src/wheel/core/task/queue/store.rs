@@ -21,12 +21,6 @@ pub struct Tasks<C> where C: Context {
     tasks_delete: Forest1<DeleteBlock<C::DeleteBlock>>,
 }
 
-#[derive(Debug)]
-pub enum PushStatus {
-    New,
-    Queued,
-}
-
 impl<C> Tasks<C> where C: Context {
     pub fn new() -> Tasks<C> {
         Tasks {
@@ -36,13 +30,7 @@ impl<C> Tasks<C> where C: Context {
         }
     }
 
-    pub fn push(&mut self, tasks_head: &mut TasksHead, task: Task<C>) -> PushStatus {
-        let status = if tasks_head.is_empty() {
-            PushStatus::New
-        } else {
-            PushStatus::Queued
-        };
-
+    pub fn push(&mut self, tasks_head: &mut TasksHead, task: Task<C>) {
         match task.kind {
             TaskKind::WriteBlock(write_block) => {
                 assert!(tasks_head.head_write.is_none());
@@ -66,8 +54,6 @@ impl<C> Tasks<C> where C: Context {
                     tasks_head.head_delete = Some(node_ref);
                 },
         }
-
-        status
     }
 
     pub fn pop(&mut self, tasks_head: &mut TasksHead) -> Option<TaskKind<C>> {
