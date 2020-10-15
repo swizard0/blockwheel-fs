@@ -253,9 +253,6 @@ impl<C> Inner<C> where C: Context {
             DoneTask::None =>
                 (),
             DoneTask::ReadBlock { block_id, block_bytes, } => {
-
-                println!("    ** ReadBlock spin for {:?}", block_id);
-
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 assert!(lens.pop_write_task(self.schema.block_get()).is_none());
                 if let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
@@ -269,9 +266,6 @@ impl<C> Inner<C> where C: Context {
                 lens.enqueue(self.schema.block_get());
             },
             DoneTask::DeleteBlockRegular { block_id, mut block_entry, freed_space_key, } => {
-
-                println!("    ** DeleteBlockRegular spin for {:?}", block_id);
-
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 let mut block_get = BlockEntryGet::new(&mut block_entry);
                 while let Some(write_block) = lens.pop_write_task(&mut block_get) {
@@ -335,9 +329,6 @@ impl<C> Inner<C> where C: Context {
                 self.flush_defrag_pending_queue(Some(freed_space_key));
             },
             DoneTask::DeleteBlockDefrag { block_id, block_bytes, freed_space_key, } => {
-
-                println!("    ** DEFRAG DeleteBlockDefrag spin for {:?}", block_id);
-
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 while let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
                     self.blocks_pool.repay(read_block.block_bytes.freeze());

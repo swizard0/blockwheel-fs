@@ -57,6 +57,7 @@ fn stress() {
                     init_wheel_size_bytes,
                     work_block_size_bytes,
                     lru_cache_size_bytes: 0,
+                    defrag_parallel_tasks_limit: 4,
                     ..Default::default()
                 },
             ),
@@ -171,7 +172,11 @@ fn stress() {
                 .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
             if blocks.is_empty() || rng.gen_range(0.0, 1.0) < 0.5 {
                 // write or delete task
-                let write_prob = info.bytes_free as f64 / info.wheel_size_bytes as f64;
+                let write_prob = if info.bytes_free * 2 >= info.wheel_size_bytes {
+                    1.0
+                } else {
+                    (info.bytes_free * 2) as f64 / info.wheel_size_bytes as f64
+                };
                 let dice = rng.gen_range(0.0, 1.0);
                 if blocks.is_empty() || dice < write_prob {
                     // write task
