@@ -23,8 +23,7 @@ use super::{
 
 #[test]
 fn create_read_empty() {
-    let mut runtime = tokio::runtime::Builder::new()
-        .basic_scheduler()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_create_read_empty";
@@ -45,8 +44,7 @@ fn create_read_empty() {
 
 #[test]
 fn create_read_one() {
-    let mut runtime = tokio::runtime::Builder::new()
-        .basic_scheduler()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_create_read_one";
@@ -132,8 +130,7 @@ fn create_read_one() {
 
 #[test]
 fn create_write_overlap_read_one() {
-    let mut runtime = tokio::runtime::Builder::new()
-        .basic_scheduler()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let wheel_filename = "/tmp/create_write_overlap_read_one";
@@ -225,8 +222,7 @@ fn create_write_overlap_read_one() {
 
 #[test]
 fn create_write_delete_read_one() {
-    let mut runtime = tokio::runtime::Builder::new()
-        .basic_scheduler()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let wheel_filename = "/tmp/create_write_delete_read_one";

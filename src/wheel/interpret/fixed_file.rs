@@ -19,6 +19,7 @@ use futures::{
 use tokio::{
     fs,
     io::{
+        AsyncSeekExt,
         AsyncReadExt,
         AsyncWriteExt,
     },

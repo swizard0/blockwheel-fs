@@ -27,8 +27,7 @@ use super::{
 
 #[test]
 fn stress() {
-    let mut runtime = tokio::runtime::Builder::new()
-        .basic_scheduler()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";

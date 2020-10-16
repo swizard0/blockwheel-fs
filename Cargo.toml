@@ -6,7 +6,7 @@ description = "Persistent binary blocks with rotating wheel like access."
 edition = "2018"
 
 [dependencies]
-ero = { git = "https://github.com/swizard0/ero.git" }
+ero = { git = "https://github.com/swizard0/ero.git", branch = "tokio_03" }
 o1 = { git = "https://github.com/swizard0/o1.git" }
 
 log = "^0.4"
@@ -16,7 +16,7 @@ futures = "^0.3"
 bincode = "^1.2"
 serde_derive = "^1.0"
 
-tokio = { version = "^0.2", features = ["full"] }
+tokio = { version = "^0.3", features = ["full"] }
 
 [dev-dependencies]
 rand = "^0.7"
