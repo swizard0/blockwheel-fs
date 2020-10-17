@@ -7,6 +7,7 @@ use super::{
     Op,
     Event,
     InfoOp,
+    FlushOp,
     QueryOp,
     EventOp,
     Performer,
@@ -36,6 +37,7 @@ type C = &'static str;
 
 impl BaseContext for Context {
     type Info = C;
+    type Flush = C;
     type LendBlock = C;
     type WriteBlock = C;
     type ReadBlock = C;
@@ -83,6 +85,7 @@ enum ExpectOp {
     PollRequestAndInterpreter { expect_context: C, },
     InterpretTask { expect_offset: u64, expect_task: ExpectTask, },
     InfoSuccess { expect_info: Info, expect_context: C, },
+    FlushSuccess { expect_context: C, },
     LendBlockSuccess { expect_context: C, },
     WriteBlockNoSpaceLeft { expect_context: C, },
     WriteBlockDone { expect_block_id: block::Id, expect_context: C, },
@@ -231,6 +234,19 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         panic!(
                             "expecting exact ExpectOp::InfoSuccess {{ info: {:?}, }} for InfoOp::Success but got {:?} @ {}",
                             info, other_op, script_len - script.len(),
+                        ),
+                },
+
+            Op::Event(Event { op: EventOp::Flush(TaskDoneOp { context, op: FlushOp::Flushed, }), performer, }) =>
+                match script.pop() {
+                    None =>
+                        panic!("unexpected script end on FlushOp::Success, expecting ExpectOp::FlushSuccess @ {}", script_len - script.len()),
+                    Some(ScriptOp::Expect(ExpectOp::FlushSuccess { expect_context, })) if expect_context == context =>
+                        performer.next(),
+                    Some(other_op) =>
+                        panic!(
+                            "expecting exact ExpectOp::FlushSuccess for FlushOp::Flushed but got {:?} @ {}",
+                            other_op, script_len - script.len(),
                         ),
                 },
 

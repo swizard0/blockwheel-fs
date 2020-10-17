@@ -6,6 +6,7 @@ use super::{
 #[derive(Debug)]
 pub enum Request<C> where C: Context {
     Info(RequestInfo<C::Info>),
+    Flush(RequestFlush<C::Flush>),
     LendBlock(RequestLendBlock<C::LendBlock>),
     RepayBlock(RequestRepayBlock),
     WriteBlock(RequestWriteBlock<C::WriteBlock>),
@@ -15,6 +16,11 @@ pub enum Request<C> where C: Context {
 
 #[derive(Debug)]
 pub struct RequestInfo<C> {
+    pub context: C,
+}
+
+#[derive(Debug)]
+pub struct RequestFlush<C> {
     pub context: C,
 }
 

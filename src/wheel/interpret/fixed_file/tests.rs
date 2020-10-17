@@ -373,6 +373,7 @@ type C = &'static str;
 
 impl Context for LocalContext {
     type Info = C;
+    type Flush = C;
     type LendBlock = C;
     type WriteBlock = C;
     type ReadBlock = C;

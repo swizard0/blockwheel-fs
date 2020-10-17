@@ -313,6 +313,12 @@ fn script_basic() {
             expect_context: "ectx0b",
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::Flush(proto::RequestFlush { context: "ectx0c", }),
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::FlushSuccess { expect_context: "ectx0c", }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
     ];
 
     interpret(performer, script)

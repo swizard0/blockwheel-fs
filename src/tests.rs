@@ -22,6 +22,7 @@ use super::{
     block,
     Params,
     GenServer,
+    Flushed,
     Deleted,
 };
 
@@ -31,8 +32,8 @@ fn stress() {
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
-    let work_block_size_bytes = 64 * 1024;
-    let init_wheel_size_bytes = 2 * 1024 * 1024;
+    let work_block_size_bytes = 32 * 1024;
+    let init_wheel_size_bytes = 1 * 1024 * 1024;
 
     let params = Params {
         wheel_filename: wheel_filename.into(),
@@ -52,10 +53,19 @@ fn stress() {
     let mut counter = Counter::default();
     let mut blocks = Vec::new();
 
-    runtime.block_on(stress_loop(params, &mut blocks, &mut counter, &limits)).unwrap();
+    // first fill wheel from scratch
+    fs::remove_file(wheel_filename).ok();
+    runtime.block_on(stress_loop(params.clone(), &mut blocks, &mut counter, &limits)).unwrap();
 
-    println!(" // counter_reads = {}, counter_writes = {}, counter_deletes = {}", counter.reads, counter.writes, counter.deletes);
+    println!(" // CREATE: counter_reads = {}, counter_writes = {}, counter_deletes = {}", counter.reads, counter.writes, counter.deletes);
+    assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
+    // next load existing wheel and repeat stress with blocks
+    fs::remove_file(wheel_filename).ok();
+    counter.clear();
+    runtime.block_on(stress_loop(params.clone(), &mut blocks, &mut counter, &limits)).unwrap();
+
+    println!(" // LOAD: counter_reads = {}, counter_writes = {}, counter_deletes = {}", counter.reads, counter.writes, counter.deletes);
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
     fs::remove_file(wheel_filename).ok();
@@ -78,6 +88,12 @@ struct Counter {
 impl Counter {
     fn sum(&self) -> usize {
         self.reads + self.writes + self.deletes
+    }
+
+    fn clear(&mut self) {
+        self.reads = 0;
+        self.writes = 0;
+        self.deletes = 0;
     }
 }
 
@@ -149,6 +165,7 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
     loop {
         if actions_counter >= limits.actions {
             std::mem::drop(done_tx);
+
             while active_tasks_counter.sum() > 0 {
 
                 println!(
@@ -284,6 +301,11 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
     println!("// dropping tx");
     assert!(done_rx.next().await.is_none());
 
+    println!("// flushing ...");
+    let Flushed = pid.flush().await
+        .map_err(|ero::NoProcError| Error::WheelGoneDuringFlush)?;
+    println!("// flushed");
+
     Ok::<_, Error>(())
 }
 
@@ -291,6 +313,7 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
 #[derive(Debug)]
 enum Error {
     WheelGoneDuringInfo,
+    WheelGoneDuringFlush,
     WheelGoneDuringLendBlock,
     WheelGoneDuringRepayBlock,
     WriteBlock(super::WriteBlockError),

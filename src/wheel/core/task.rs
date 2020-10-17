@@ -61,6 +61,11 @@ pub enum DeleteBlockContext<C> {
 }
 
 #[derive(Debug)]
+pub struct Flush<C> {
+    pub context: C,
+}
+
+#[derive(Debug)]
 pub struct Done<C> where C: Context {
     pub current_offset: u64,
     pub task: TaskDone<C>,

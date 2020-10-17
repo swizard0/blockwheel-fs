@@ -20,6 +20,7 @@ use super::{
     proto,
     storage,
     Params,
+    Flushed,
     Deleted,
     blockwheel_context::Context,
 };
@@ -201,6 +202,18 @@ async fn busyloop(
             }) => {
                 if let Err(_send_error) = reply_tx.send(info) {
                     log::warn!("Pid is gone during Info query result send");
+                }
+                performer.next()
+            },
+
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::Flush(
+                    performer::TaskDoneOp { context: reply_tx, op: performer::FlushOp::Flushed, },
+                ),
+                performer,
+            }) => {
+                if let Err(_send_error) = reply_tx.send(Flushed) {
+                    log::warn!("Pid is gone during Flush query result send");
                 }
                 performer.next()
             },

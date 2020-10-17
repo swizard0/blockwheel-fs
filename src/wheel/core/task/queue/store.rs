@@ -10,6 +10,7 @@ use super::{
         WriteBlock,
         ReadBlock,
         DeleteBlock,
+        Flush,
         Context,
     },
     TasksHead,
@@ -19,6 +20,7 @@ pub struct Tasks<C> where C: Context {
     tasks_write: Set<WriteBlock<C::WriteBlock>>,
     tasks_read: Forest1<ReadBlock<C::ReadBlock>>,
     tasks_delete: Forest1<DeleteBlock<C::DeleteBlock>>,
+    tasks_flush: Vec<Flush<C::Flush>>,
 }
 
 impl<C> Tasks<C> where C: Context {
@@ -27,6 +29,7 @@ impl<C> Tasks<C> where C: Context {
             tasks_write: Set::new(),
             tasks_read: Forest1::new(),
             tasks_delete: Forest1::new(),
+            tasks_flush: Vec::new(),
         }
     }
 
@@ -54,6 +57,16 @@ impl<C> Tasks<C> where C: Context {
                     tasks_head.head_delete = Some(node_ref);
                 },
         }
+    }
+
+    pub fn is_empty_tasks(&self) -> bool {
+        self.tasks_write.is_empty()
+            && self.tasks_read.is_empty()
+            && self.tasks_delete.is_empty()
+    }
+
+    pub fn push_flush(&mut self, task: Flush<C::Flush>) {
+        self.tasks_flush.push(task);
     }
 
     pub fn pop(&mut self, tasks_head: &mut TasksHead) -> Option<TaskKind<C>> {
@@ -98,5 +111,9 @@ impl<C> Tasks<C> where C: Context {
         } else {
             None
         }
+    }
+
+    pub fn pop_flush(&mut self) -> Option<Flush<C::Flush>> {
+        self.tasks_flush.pop()
     }
 }

@@ -132,6 +132,9 @@ pub enum DeleteBlockError {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Deleted;
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Flushed;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub struct Info {
     pub blocks_count: usize,
@@ -151,6 +154,20 @@ impl Pid {
             match reply_rx.await {
                 Ok(info) =>
                     return Ok(info),
+                Err(oneshot::Canceled) =>
+                    (),
+            }
+        }
+    }
+
+    pub async fn flush(&mut self) -> Result<Flushed, ero::NoProcError> {
+        loop {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            self.request_tx.send(proto::Request::Flush(proto::RequestFlush { context: reply_tx, })).await
+                .map_err(|_send_error| ero::NoProcError)?;
+            match reply_rx.await {
+                Ok(Flushed) =>
+                    return Ok(Flushed),
                 Err(oneshot::Canceled) =>
                     (),
             }
@@ -257,6 +274,7 @@ mod blockwheel_context {
         context,
         wheel::core::task,
         Deleted,
+        Flushed,
         Info,
     };
 
@@ -264,6 +282,7 @@ mod blockwheel_context {
 
     impl context::Context for Context {
         type Info = oneshot::Sender<Info>;
+        type Flush = oneshot::Sender<Flushed>;
         type LendBlock = oneshot::Sender<block::BytesMut>;
         type WriteBlock = oneshot::Sender<Result<block::Id, RequestWriteBlockError>>;
         type ReadBlock = oneshot::Sender<Result<block::Bytes, RequestReadBlockError>>;

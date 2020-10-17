@@ -89,6 +89,7 @@ pub struct Event<C> where C: Context {
 
 pub enum EventOp<C> where C: Context {
     Info(TaskDoneOp<C::Info, InfoOp>),
+    Flush(TaskDoneOp<C::Flush, FlushOp>),
     LendBlock(TaskDoneOp<C::LendBlock, LendBlockOp>),
     WriteBlock(TaskDoneOp<C::WriteBlock, WriteBlockOp>),
     ReadBlock(TaskDoneOp<C::ReadBlock, ReadBlockOp>),
@@ -102,6 +103,10 @@ pub struct TaskDoneOp<C, O> {
 
 pub enum InfoOp {
     Success { info: Info, },
+}
+
+pub enum FlushOp {
+    Flushed,
 }
 
 pub enum LendBlockOp {
@@ -393,6 +398,15 @@ impl<C> Inner<C> where C: Context {
             }
         }
 
+        if self.tasks_queue.is_empty_tasks() && self.defrag.as_ref().map_or(true, |defrag| defrag.queues.is_empty()) {
+            if let Some(task::Flush { context, }) = self.tasks_queue.pop_flush() {
+                return Op::Event(Event {
+                    op: EventOp::Flush(TaskDoneOp { context, op: FlushOp::Flushed, }),
+                    performer: Performer { inner: self, },
+                });
+            }
+        }
+
         match mem::replace(&mut self.bg_task.state, BackgroundTaskState::Idle) {
             BackgroundTaskState::Idle =>
                 self.maybe_run_background_task(),
@@ -414,6 +428,8 @@ impl<C> Inner<C> where C: Context {
         match incoming {
             proto::Request::Info(request_info) =>
                 self.incoming_request_info(request_info),
+            proto::Request::Flush(request_flush) =>
+                self.incoming_request_flush(request_flush),
             proto::Request::LendBlock(request_lend_block) =>
                 self.incoming_request_lend_block(request_lend_block),
             proto::Request::RepayBlock(request_repay_block) =>
@@ -444,6 +460,11 @@ impl<C> Inner<C> where C: Context {
             op: EventOp::Info(TaskDoneOp { context, op: InfoOp::Success { info, }, }),
             performer: Performer { inner: self, },
         })
+    }
+
+    fn incoming_request_flush(mut self, proto::RequestFlush { context, }: proto::RequestFlush<C::Flush>) -> Op<C> {
+        self.tasks_queue.push_flush(task::Flush { context, });
+        Op::Idle(Performer { inner: self, })
     }
 
     fn incoming_request_lend_block(mut self, proto::RequestLendBlock { context, }: proto::RequestLendBlock<C::LendBlock>) -> Op<C> {

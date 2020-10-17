@@ -13,6 +13,7 @@ use super::{
     WriteBlock,
     ReadBlock,
     DeleteBlock,
+    Flush,
     Context,
     super::{
         BlockGet,
@@ -93,6 +94,18 @@ impl<C> Queue<C> where C: Context {
                 },
             }
         }
+    }
+
+    pub fn is_empty_tasks(&self) -> bool {
+        self.triggers.is_empty() && self.tasks.is_empty_tasks()
+    }
+
+    pub fn push_flush(&mut self, task: Flush<C::Flush>) {
+        self.tasks.push_flush(task);
+    }
+
+    pub fn pop_flush(&mut self) -> Option<Flush<C::Flush>> {
+        self.tasks.pop_flush()
     }
 }
 
