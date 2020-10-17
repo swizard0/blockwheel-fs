@@ -11,7 +11,6 @@ use futures::{
         mpsc,
         oneshot,
     },
-    Future,
     SinkExt,
     StreamExt,
 };
@@ -32,7 +31,7 @@ use crate::{
         storage,
         core::{
             task,
-            schema,
+            performer,
         },
     },
 };
@@ -96,7 +95,6 @@ pub enum WheelCreateError {
         wheel_filename: PathBuf,
         error: io::Error,
     },
-    StorageLayoutCalculate(storage::LayoutError),
     InitWheelSizeIsTooSmall {
         provided: usize,
         required_min: usize,
@@ -110,7 +108,6 @@ pub enum WheelCreateError {
 #[derive(Debug)]
 pub enum WheelOpenError {
     FileWrongType,
-    FileNotFound,
     FileMetadata {
         wheel_filename: PathBuf,
         error: io::Error,
@@ -119,7 +116,6 @@ pub enum WheelOpenError {
         wheel_filename: PathBuf,
         error: io::Error,
     },
-    StorageLayoutCalculate(storage::LayoutError),
     HeaderRead(io::Error),
     HeaderDeserialize(bincode::Error),
     HeaderInvalidMagic {
@@ -152,29 +148,44 @@ pub enum WheelOpenError {
     BlockSeekEnd(io::Error),
 }
 
+pub struct WheelData<C> where C: Context {
+    pub gen_server: GenServer<C>,
+    pub performer: performer::Performer<C>,
+}
+
+pub enum WheelOpenStatus<C> where C: Context {
+    Success(WheelData<C>),
+    FileNotFound {
+        performer_builder: performer::PerformerBuilderInit<C>,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct CreateParams<P> {
     pub wheel_filename: P,
-    pub work_block_size_bytes: usize,
     pub init_wheel_size_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct OpenParams<P> {
     pub wheel_filename: P,
-    pub work_block_size_bytes: usize,
 }
 
 pub struct GenServer<C> where C: Context {
     wheel_file: fs::File,
     work_block: Vec<u8>,
-    schema: schema::Schema,
     request_tx: mpsc::Sender<Request<C>>,
     request_rx: mpsc::Receiver<Request<C>>,
+    storage_layout: storage::Layout,
 }
 
 impl<C> GenServer<C> where C: Context {
-    pub async fn create<P>(params: CreateParams<P>) -> Result<Self, WheelCreateError> where P: AsRef<Path> {
+    pub async fn create<P>(
+        params: CreateParams<P>,
+        mut performer_builder: performer::PerformerBuilderInit<C>,
+    )
+        -> Result<WheelData<C>, WheelCreateError> where P: AsRef<Path>
+    {
         log::debug!("creating new wheel file [ {:?} ]", params.wheel_filename.as_ref());
 
         let mut wheel_file = fs::OpenOptions::new()
@@ -188,24 +199,20 @@ impl<C> GenServer<C> where C: Context {
                 error,
             })?;
 
-        let mut work_block: Vec<u8> = Vec::with_capacity(params.work_block_size_bytes);
-
-        let storage_layout = storage::Layout::calculate(&mut work_block)
-            .map_err(WheelCreateError::StorageLayoutCalculate)?;
-
         let wheel_header = storage::WheelHeader {
             size_bytes: params.init_wheel_size_bytes as u64,
             ..storage::WheelHeader::default()
         };
-        bincode::serialize_into(&mut work_block, &wheel_header)
+        bincode::serialize_into(performer_builder.work_block_cleared(), &wheel_header)
             .map_err(WheelCreateError::HeaderSerialize)?;
 
-        let mut cursor = work_block.len();
-        let min_wheel_file_size = storage_layout.wheel_header_size;
+        let mut cursor = performer_builder.work_block().len();
+        let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size;
         assert_eq!(cursor, min_wheel_file_size);
-        wheel_file.write_all(&work_block).await
+        wheel_file.write_all(performer_builder.work_block()).await
             .map_err(WheelCreateError::HeaderTagWrite)?;
 
+        let work_block_size_bytes = performer_builder.work_block().capacity();
         let size_bytes_total = params.init_wheel_size_bytes;
         if size_bytes_total < min_wheel_file_size {
             return Err(WheelCreateError::InitWheelSizeIsTooSmall {
@@ -214,40 +221,50 @@ impl<C> GenServer<C> where C: Context {
             });
         }
 
-        work_block.clear();
-        work_block.extend((0 .. params.work_block_size_bytes).map(|_| 0));
+        performer_builder
+            .work_block_cleared()
+            .extend((0 .. work_block_size_bytes).map(|_| 0));
 
         while cursor < size_bytes_total {
             let bytes_remain = size_bytes_total - cursor;
-            let write_amount = if bytes_remain < params.work_block_size_bytes {
+            let write_amount = if bytes_remain < work_block_size_bytes {
                 bytes_remain
             } else {
-                params.work_block_size_bytes
+                work_block_size_bytes
             };
-            wheel_file.write_all(&work_block[.. write_amount]).await
+            wheel_file.write_all(&performer_builder.work_block()[.. write_amount]).await
                 .map_err(WheelCreateError::ZeroChunkWrite)?;
             cursor += write_amount;
         }
         wheel_file.flush().await
             .map_err(WheelCreateError::Flush)?;
 
-        let mut schema = schema::Schema::new(storage_layout);
-        schema.initialize_empty(size_bytes_total);
-
-        log::debug!("initialized wheel schema: {:?}", schema);
+        log::debug!("interpret::fixed_file create success");
+        let storage_layout = performer_builder.storage_layout().clone();
 
         let (request_tx, request_rx) = mpsc::channel(0);
 
-        Ok(GenServer {
-            wheel_file,
-            work_block,
-            schema,
-            request_tx,
-            request_rx,
+        let (performer_builder, work_block) = performer_builder.start_fill();
+
+        Ok(WheelData {
+            gen_server: GenServer {
+                wheel_file,
+                work_block,
+                request_tx,
+                request_rx,
+                storage_layout,
+            },
+            performer: performer_builder
+                .finish(params.init_wheel_size_bytes),
         })
     }
 
-    pub async fn open<P>(params: OpenParams<P>) -> Result<Self, WheelOpenError> where P: AsRef<Path> {
+    pub async fn open<P>(
+        params: OpenParams<P>,
+        mut performer_builder: performer::PerformerBuilderInit<C>,
+    )
+        -> Result<WheelOpenStatus<C>, WheelOpenError> where P: AsRef<Path>
+    {
         log::debug!("opening existing wheel file [ {:?} ]", params.wheel_filename.as_ref());
 
         let file_size = match fs::metadata(&params.wheel_filename).await {
@@ -256,7 +273,7 @@ impl<C> GenServer<C> where C: Context {
             Ok(..) =>
                 return Err(WheelOpenError::FileWrongType),
             Err(ref error) if error.kind() == io::ErrorKind::NotFound =>
-                return Err(WheelOpenError::FileNotFound),
+                return Ok(WheelOpenStatus::FileNotFound { performer_builder, }),
             Err(error) =>
                 return Err(WheelOpenError::FileMetadata {
                     wheel_filename: params.wheel_filename.as_ref().to_owned(),
@@ -275,16 +292,17 @@ impl<C> GenServer<C> where C: Context {
                 error,
             })?;
 
-        let mut work_block: Vec<u8> = Vec::with_capacity(params.work_block_size_bytes);
-
-        let storage_layout = storage::Layout::calculate(&mut work_block)
-            .map_err(WheelOpenError::StorageLayoutCalculate)?;
+        let work_block_size_bytes = performer_builder
+            .work_block()
+            .capacity();
 
         // read wheel header
-        work_block.extend((0 .. storage_layout.wheel_header_size).map(|_| 0));
-        wheel_file.read_exact(&mut work_block).await
+        performer_builder
+            .work_block_cleared()
+            .extend((0 .. work_block_size_bytes).map(|_| 0));
+        wheel_file.read_exact(performer_builder.work_block()).await
             .map_err(WheelOpenError::HeaderRead)?;
-        let wheel_header: storage::WheelHeader = bincode::deserialize_from(&work_block[..])
+        let wheel_header: storage::WheelHeader = bincode::deserialize_from(&performer_builder.work_block()[..])
             .map_err(WheelOpenError::HeaderDeserialize)?;
         if wheel_header.magic != storage::WHEEL_MAGIC {
             return Err(WheelOpenError::HeaderInvalidMagic {
@@ -306,12 +324,12 @@ impl<C> GenServer<C> where C: Context {
         }
 
         // read blocks and gaps
-        let mut builder = schema::Builder::new(storage_layout);
+        let (mut builder, mut work_block) = performer_builder.start_fill();
 
         let mut cursor = work_block.len() as u64;
         assert_eq!(cursor, builder.storage_layout().wheel_header_size as u64);
 
-        work_block.resize(params.work_block_size_bytes, 0);
+        work_block.resize(work_block_size_bytes, 0);
         let mut offset = 0;
 
         loop {
@@ -337,9 +355,8 @@ impl<C> GenServer<C> where C: Context {
                             cursor,
                             &block_header,
                             builder.storage_layout(),
-                            &params,
                         ).await?;
-                        work_block.resize(params.work_block_size_bytes, 0);
+                        work_block.resize(work_block_size_bytes, 0);
                         offset = 0;
                         start = 0;
 
@@ -371,19 +388,24 @@ impl<C> GenServer<C> where C: Context {
             builder.storage_layout().block_header_size,
             file_size,
         );
-        let schema = builder.finish(&wheel_header);
 
         log::debug!("loaded wheel schema");
 
         let (request_tx, request_rx) = mpsc::channel(0);
 
-        Ok(GenServer {
-            wheel_file,
-            work_block,
-            schema,
-            request_tx,
-            request_rx,
-        })
+        Ok(WheelOpenStatus::Success(WheelData {
+            gen_server: GenServer {
+                wheel_file,
+                work_block,
+                request_tx,
+                request_rx,
+                storage_layout: builder
+                    .storage_layout()
+                    .clone(),
+            },
+            performer: builder
+                .finish(wheel_header.size_bytes as usize),
+        }))
     }
 
     pub fn pid(&self) -> Pid<C> {
@@ -392,17 +414,13 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub fn run(self) -> (schema::Schema, impl Future<Output = Result<(), Error>>) where C: Send {
-        let storage_layout = self.schema.storage_layout().clone();
-        (
-            self.schema,
-            busyloop(
-                self.request_rx,
-                self.wheel_file,
-                self.work_block,
-                storage_layout,
-            ),
-        )
+    pub async fn run(self) -> Result<(), Error> where C: Send {
+        busyloop(
+            self.request_rx,
+            self.wheel_file,
+            self.work_block,
+            self.storage_layout,
+        ).await
     }
 }
 
@@ -427,13 +445,12 @@ enum ReadBlockStatus {
     BlockFound { next_cursor: u64, },
 }
 
-async fn try_read_block<P>(
+async fn try_read_block(
     wheel_file: &mut fs::File,
     work_block: &mut Vec<u8>,
     cursor: u64,
     block_header: &storage::BlockHeader,
     storage_layout: &storage::Layout,
-    params: &OpenParams<P>,
 )
     -> Result<ReadBlockStatus, WheelOpenError>
 {
@@ -460,9 +477,9 @@ async fn try_read_block<P>(
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
         return Ok(ReadBlockStatus::NotABlock { next_cursor, });
     }
-    if block_header.block_size > params.work_block_size_bytes {
+    if block_header.block_size > work_block.capacity() {
         return Err(WheelOpenError::BlockSizeTooLarge {
-            work_block_size_bytes: params.work_block_size_bytes,
+            work_block_size_bytes: work_block.capacity(),
             block_size: block_header.block_size,
         });
     }

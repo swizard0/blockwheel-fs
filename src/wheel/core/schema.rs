@@ -111,17 +111,6 @@ impl Schema {
         }
     }
 
-    pub fn initialize_empty(&mut self, size_bytes_total: usize) {
-        let total_service_size = self.storage_layout.service_size_min();
-        if size_bytes_total > total_service_size {
-            let space_available = size_bytes_total - total_service_size;
-            self.gaps_index.insert(
-                space_available,
-                gaps::GapBetween::StartAndEnd,
-            );
-        }
-    }
-
     pub fn storage_layout(&self) -> &storage::Layout {
         &self.storage_layout
     }
@@ -1080,17 +1069,21 @@ impl Builder {
         self
     }
 
-    pub fn finish(mut self, wheel_header: &storage::WheelHeader) -> Schema {
+    pub fn finish(mut self, size_bytes_total: usize) -> Schema {
+        let total_service_size = self.storage_layout.service_size_min();
         let next_block_id = match self.tracker {
             None => {
-                let space_available = wheel_header.size_bytes
-                    - self.storage_layout.wheel_header_size as u64;
-                self.gaps_index.insert(space_available as usize, gaps::GapBetween::StartAndEnd);
+                if size_bytes_total > total_service_size {
+                    let space_available = size_bytes_total - total_service_size;
+                    self.gaps_index.insert(
+                        space_available,
+                        gaps::GapBetween::StartAndEnd,
+                    );
+                }
                 block::Id::init()
             },
             Some(tracker) => {
-                let space_total = wheel_header.size_bytes
-                    - self.storage_layout.wheel_header_size as u64;
+                let space_total = (size_bytes_total - total_service_size) as u64;
                 let prev_block_end_offset = tracker.prev_block_offset + tracker.prev_block_size as u64;
                 assert!(space_total >= prev_block_end_offset);
                 match space_total - prev_block_end_offset {

@@ -27,7 +27,6 @@ use super::{
 
 pub mod core;
 use self::core::{
-    schema,
     performer,
 };
 
@@ -37,6 +36,7 @@ mod interpret;
 
 #[derive(Debug)]
 pub enum Error {
+    InterpreterInit(performer::BuilderError),
     InterpreterOpen(interpret::fixed_file::WheelOpenError),
     InterpreterCreate(interpret::fixed_file::WheelCreateError),
     InterpreterRun(interpret::fixed_file::Error),
@@ -52,33 +52,50 @@ pub struct State {
 }
 
 pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> Result<(), ErrorSeverity<State, Error>> {
-    let open_async = interpret::fixed_file::GenServer::open(interpret::fixed_file::OpenParams {
-        wheel_filename: &state.params.wheel_filename,
-        work_block_size_bytes: state.params.work_block_size_bytes,
-    });
-    let interpreter_gen_server = match open_async.await {
-        Ok(gen_server) =>
-            gen_server,
-        Err(interpret::fixed_file::WheelOpenError::FileWrongType) => {
-            log::error!("[ {:?} ] is not a file", state.params.wheel_filename);
-            return Err(ErrorSeverity::Recoverable { state, });
+    let performer_builder = performer::PerformerBuilderInit::new(
+        lru::Cache::new(state.params.lru_cache_size_bytes),
+        if state.params.defrag_parallel_tasks_limit == 0 {
+            None
+        } else {
+            Some(performer::DefragConfig::new(state.params.defrag_parallel_tasks_limit))
         },
-        Err(interpret::fixed_file::WheelOpenError::FileNotFound) => {
-            let create_async = interpret::fixed_file::GenServer::create(interpret::fixed_file::CreateParams {
-                wheel_filename: &state.params.wheel_filename,
-                work_block_size_bytes: state.params.work_block_size_bytes,
-                init_wheel_size_bytes: state.params.init_wheel_size_bytes,
-            });
+        state.params.work_block_size_bytes,
+    )
+        .map_err(Error::InterpreterInit)
+        .map_err(ErrorSeverity::Fatal)?;
+
+
+    let open_async = interpret::fixed_file::GenServer::open(
+        interpret::fixed_file::OpenParams {
+            wheel_filename: &state.params.wheel_filename,
+        },
+        performer_builder,
+    );
+    let interpret::fixed_file::WheelData { gen_server: interpreter_gen_server, performer, } = match open_async.await {
+        Ok(interpret::fixed_file::WheelOpenStatus::Success(wheel_data)) =>
+            wheel_data,
+        Ok(interpret::fixed_file::WheelOpenStatus::FileNotFound { performer_builder, }) => {
+            let create_async = interpret::fixed_file::GenServer::create(
+                interpret::fixed_file::CreateParams {
+                    wheel_filename: &state.params.wheel_filename,
+                    init_wheel_size_bytes: state.params.init_wheel_size_bytes,
+                },
+                performer_builder,
+            );
             create_async.await
                 .map_err(Error::InterpreterCreate)
                 .map_err(ErrorSeverity::Fatal)?
+        },
+        Err(interpret::fixed_file::WheelOpenError::FileWrongType) => {
+            log::error!("[ {:?} ] is not a file", state.params.wheel_filename);
+            return Err(ErrorSeverity::Recoverable { state, });
         },
         Err(error) =>
             return Err(ErrorSeverity::Fatal(Error::InterpreterOpen(error))),
     };
 
     let interpreter_pid = interpreter_gen_server.pid();
-    let (schema, interpreter_task) = interpreter_gen_server.run();
+    let interpreter_task = interpreter_gen_server.run();
     let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
     supervisor_pid.spawn_link_permanent(
         async move {
@@ -88,7 +105,7 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
         },
     );
 
-    busyloop(supervisor_pid, interpreter_pid, interpret_error_rx.fuse(), state, schema).await
+    busyloop(supervisor_pid, interpreter_pid, interpret_error_rx.fuse(), state, performer).await
 }
 
 async fn busyloop(
@@ -96,20 +113,10 @@ async fn busyloop(
     mut interpreter_pid: interpret::fixed_file::Pid<Context>,
     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
     mut state: State,
-    schema: schema::Schema,
+    performer: performer::Performer<Context>,
 )
     -> Result<(), ErrorSeverity<State, Error>>
 {
-    let performer = performer::Performer::new(
-        schema,
-        lru::Cache::new(state.params.lru_cache_size_bytes),
-        if state.params.defrag_parallel_tasks_limit == 0 {
-            None
-        } else {
-            Some(performer::DefragConfig::new(state.params.defrag_parallel_tasks_limit))
-        },
-    );
-
     let mut op = performer.next();
     loop {
         op = match op {

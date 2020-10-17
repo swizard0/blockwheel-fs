@@ -9,6 +9,7 @@ use super::{
         lru,
         pool,
         proto,
+        storage,
     },
     task,
     block,
@@ -160,28 +161,99 @@ impl<C> DefragConfig<C> {
     }
 }
 
-impl<C> Performer<C> where C: Context {
+#[derive(Debug)]
+pub enum BuilderError {
+    StorageLayoutCalculate(storage::LayoutError),
+}
+
+pub struct PerformerBuilderInit<C> where C: Context {
+    lru_cache: lru::Cache,
+    defrag: Option<Defrag<C::WriteBlock>>,
+    storage_layout: storage::Layout,
+    work_block: Vec<u8>,
+}
+
+impl<C> PerformerBuilderInit<C> where C: Context {
     pub fn new(
-        schema: schema::Schema,
         lru_cache: lru::Cache,
         defrag_queues: Option<DefragConfig<C::WriteBlock>>,
+        work_block_size_bytes: usize,
     )
-        -> Performer<C>
+        -> Result<PerformerBuilderInit<C>, BuilderError>
     {
+        let mut work_block = Vec::with_capacity(work_block_size_bytes);
+        let storage_layout = storage::Layout::calculate(&mut work_block)
+            .map_err(BuilderError::StorageLayoutCalculate)?;
+
+        Ok(PerformerBuilderInit {
+            lru_cache,
+            defrag: defrag_queues
+                .map(|config| Defrag {
+                    queues: config.queues,
+                    in_progress_tasks_count: 0,
+                    in_progress_tasks_limit: config.in_progress_tasks_limit,
+                }),
+            storage_layout,
+            work_block,
+        })
+    }
+
+    pub fn storage_layout(&self) -> &storage::Layout {
+        &self.storage_layout
+    }
+
+    pub fn work_block_cleared(&mut self) -> &mut Vec<u8> {
+        self.work_block.clear();
+        self.work_block()
+    }
+
+    pub fn work_block(&mut self) -> &mut Vec<u8> {
+        &mut self.work_block
+    }
+
+    pub fn start_fill(self) -> (PerformerBuilder<C>, Vec<u8>) {
+        let schema_builder = schema::Builder::new(self.storage_layout);
+        (
+            PerformerBuilder {
+                schema_builder,
+                lru_cache: self.lru_cache,
+                defrag: self.defrag,
+            },
+            self.work_block,
+        )
+    }
+}
+
+pub struct PerformerBuilder<C> where C: Context {
+    schema_builder: schema::Builder,
+    lru_cache: lru::Cache,
+    defrag: Option<Defrag<C::WriteBlock>>,
+}
+
+impl<C> PerformerBuilder<C> where C: Context {
+
+    pub fn push_block(&mut self, offset: u64, block_header: storage::BlockHeader) {
+        self.schema_builder.push_block(offset, block_header);
+    }
+
+    pub fn storage_layout(&self) -> &storage::Layout {
+        self.schema_builder.storage_layout()
+    }
+
+    pub fn finish(self, size_bytes_total: usize) -> Performer<C> {
+        let schema = self.schema_builder.finish(size_bytes_total);
+
         Performer {
             inner: Inner::new(
                 schema,
-                lru_cache,
-                defrag_queues
-                    .map(|config| Defrag {
-                        queues: config.queues,
-                        in_progress_tasks_count: 0,
-                        in_progress_tasks_limit: config.in_progress_tasks_limit,
-                    }),
+                self.lru_cache,
+                self.defrag,
             ),
         }
     }
+}
 
+impl<C> Performer<C> where C: Context {
     pub fn next(self) -> Op<C> {
         self.inner.incoming_poke()
     }

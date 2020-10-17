@@ -19,6 +19,8 @@ use crate::{
 use super::{
     OpenParams,
     CreateParams,
+    WheelOpenStatus,
+    WheelData,
 };
 
 #[test]
@@ -28,12 +30,12 @@ fn create_read_empty() {
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_create_read_empty";
     runtime.block_on(async {
-        let _gen_server = GenServer::create(CreateParams {
+        let _wheel_data = GenServer::create(CreateParams {
             wheel_filename,
             work_block_size_bytes: 64 * 1024,
             init_wheel_size_bytes: 256 * 1024,
         }).await.map_err(Error::Create)?;
-        let _gen_server = GenServer::open(OpenParams {
+        let _wheel_open_status = GenServer::open(OpenParams {
             wheel_filename,
             work_block_size_bytes: 64 * 1024,
         }).await.map_err(Error::Open)?;
@@ -389,16 +391,16 @@ async fn with_gen_server<F, FF>(
     body: F,
 )
     -> Result<(), Error>
-where F: FnOnce(Pid, schema::Schema) -> FF,
+where F: FnOnce(Pid) -> FF,
       FF: Future<Output = Result<(), Error>>,
 {
     let pid = gen_server.pid();
-    let (schema, interpreter_run) = gen_server.run();
+    let interpreter_run = gen_server.run();
     let (interpreter_task, interpreter_handle) = interpreter_run.remote_handle();
     let interpreter_handle_fused = interpreter_handle.fuse();
     pin_mut!(interpreter_handle_fused);
     tokio::spawn(interpreter_task);
-    let body_task = body(pid, schema);
+    let body_task = body(pid);
     let body_task_fused = body_task.fuse();
     pin_mut!(body_task_fused);
 
