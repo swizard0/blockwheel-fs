@@ -233,6 +233,9 @@ pub struct PerformerBuilder<C> where C: Context {
 impl<C> PerformerBuilder<C> where C: Context {
 
     pub fn push_block(&mut self, offset: u64, block_header: storage::BlockHeader) {
+
+        println!(" ;; pushing block {:?} @ {}", block_header, offset);
+
         self.schema_builder.push_block(offset, block_header);
     }
 
@@ -256,6 +259,11 @@ impl<C> PerformerBuilder<C> where C: Context {
 impl<C> Performer<C> where C: Context {
     pub fn next(self) -> Op<C> {
         self.inner.incoming_poke()
+    }
+
+    #[cfg(test)]
+    pub fn decompose(self) -> schema::Schema {
+        self.inner.schema
     }
 }
 

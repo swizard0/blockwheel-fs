@@ -102,15 +102,7 @@ pub struct DeleteBlockTaskDoneDefragPerform {
 }
 
 impl Schema {
-    pub fn new(storage_layout: storage::Layout) -> Schema {
-        Schema {
-            next_block_id: block::Id::init(),
-            storage_layout,
-            blocks_index: blocks::Index::new(),
-            gaps_index: gaps::Index::new(),
-        }
-    }
-
+    #[cfg(test)]
     pub fn storage_layout(&self) -> &storage::Layout {
         &self.storage_layout
     }
@@ -1122,6 +1114,7 @@ mod tests {
     use super::{
         block,
         storage,
+        Builder,
         BlockEntry,
         SpaceKey,
         Environs,
@@ -1145,9 +1138,7 @@ mod tests {
 
     fn init() -> Schema {
         let storage_layout = storage::Layout::calculate(&mut Vec::new()).unwrap();
-        let mut schema = Schema::new(storage_layout);
-        schema.initialize_empty(160);
-        schema
+        Builder::new(storage_layout).finish(160)
     }
 
     fn sample_hello_world() -> block::Bytes {

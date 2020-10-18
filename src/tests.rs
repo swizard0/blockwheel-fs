@@ -32,7 +32,7 @@ fn stress() {
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
-    let work_block_size_bytes = 32 * 1024;
+    let work_block_size_bytes = 1 * 1024 * 1024; //32 * 1024;
     let init_wheel_size_bytes = 1 * 1024 * 1024;
 
     let params = Params {
@@ -44,9 +44,14 @@ fn stress() {
         ..Default::default()
     };
 
+    // let limits = Limits {
+    //     active_tasks: 256,
+    //     actions: 3072,
+    //     block_size_bytes: work_block_size_bytes - 256,
+    // };
     let limits = Limits {
         active_tasks: 256,
-        actions: 3072,
+        actions: 256,
         block_size_bytes: work_block_size_bytes - 256,
     };
 
@@ -61,7 +66,6 @@ fn stress() {
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
     // next load existing wheel and repeat stress with blocks
-    fs::remove_file(wheel_filename).ok();
     counter.clear();
     runtime.block_on(stress_loop(params.clone(), &mut blocks, &mut counter, &limits)).unwrap();
 

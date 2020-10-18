@@ -3,7 +3,6 @@ use super::{
     task,
     block,
     proto,
-    schema,
     Op,
     Event,
     InfoOp,
@@ -18,6 +17,7 @@ use super::{
     DeleteBlockOp,
     InterpretTask,
     DefragConfig,
+    PerformerBuilderInit,
     Context as BaseContext,
     super::{
         storage,
@@ -50,14 +50,10 @@ fn init() -> Performer<Context> {
 }
 
 fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Context> {
-    let storage_layout = storage::Layout::calculate(&mut Vec::new()).unwrap();
-    let mut schema = schema::Schema::new(storage_layout);
-    schema.initialize_empty(160);
-    Performer::new(
-        schema,
-        lru::Cache::new(16),
-        defrag_config,
-    )
+    let (performer_builder, _work_block) = PerformerBuilderInit::new(lru::Cache::new(16), defrag_config, 1024)
+        .unwrap()
+        .start_fill();
+    performer_builder.finish(160)
 }
 
 fn hello_world_bytes() -> block::Bytes {

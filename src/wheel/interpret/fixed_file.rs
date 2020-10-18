@@ -292,14 +292,14 @@ impl<C> GenServer<C> where C: Context {
                 error,
             })?;
 
-        let work_block_size_bytes = performer_builder
-            .work_block()
-            .capacity();
+        let wheel_header_size = performer_builder
+            .storage_layout()
+            .wheel_header_size;
 
         // read wheel header
         performer_builder
             .work_block_cleared()
-            .extend((0 .. work_block_size_bytes).map(|_| 0));
+            .extend((0 .. wheel_header_size).map(|_| 0));
         wheel_file.read_exact(performer_builder.work_block()).await
             .map_err(WheelOpenError::HeaderRead)?;
         let wheel_header: storage::WheelHeader = bincode::deserialize_from(&performer_builder.work_block()[..])
@@ -326,11 +326,14 @@ impl<C> GenServer<C> where C: Context {
         // read blocks and gaps
         let (mut builder, mut work_block) = performer_builder.start_fill();
 
-        let mut cursor = work_block.len() as u64;
-        assert_eq!(cursor, builder.storage_layout().wheel_header_size as u64);
+        work_block.clear();
+        let mut cursor = wheel_header_size as u64;
 
+        let work_block_size_bytes = work_block.capacity();
         work_block.resize(work_block_size_bytes, 0);
         let mut offset = 0;
+
+        println!(" ;; starting read @ cursor = {}, offset = {}", cursor, offset);
 
         loop {
             let bytes_read = match wheel_file.read(&mut work_block[offset ..]).await {
@@ -344,6 +347,9 @@ impl<C> GenServer<C> where C: Context {
                     return Err(WheelOpenError::LocateBlock(error)),
             };
             offset += bytes_read;
+
+            println!(" ;; read continue, {} bytes read @ cursor = {}, offset = {}", bytes_read, cursor, offset);
+
             let mut start = 0;
             while offset - start >= builder.storage_layout().block_header_size {
                 let area = &work_block[start .. start + builder.storage_layout().block_header_size];
