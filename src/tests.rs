@@ -32,7 +32,7 @@ fn stress() {
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
-    let work_block_size_bytes = 1 * 1024 * 1024; //32 * 1024;
+    let work_block_size_bytes = 32 * 1024;
     let init_wheel_size_bytes = 1 * 1024 * 1024;
 
     let params = Params {
@@ -44,14 +44,9 @@ fn stress() {
         ..Default::default()
     };
 
-    // let limits = Limits {
-    //     active_tasks: 256,
-    //     actions: 3072,
-    //     block_size_bytes: work_block_size_bytes - 256,
-    // };
     let limits = Limits {
         active_tasks: 256,
-        actions: 256,
+        actions: 3072,
         block_size_bytes: work_block_size_bytes - 256,
     };
 
@@ -308,7 +303,9 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
     println!("// flushing ...");
     let Flushed = pid.flush().await
         .map_err(|ero::NoProcError| Error::WheelGoneDuringFlush)?;
-    println!("// flushed");
+    let info = pid.info().await
+        .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
+    println!("// flushed, final info: {:?}", info);
 
     Ok::<_, Error>(())
 }

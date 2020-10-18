@@ -236,15 +236,31 @@ impl<C> PerformerBuilder<C> where C: Context {
 
         println!(" ;; pushing block {:?} @ {}", block_header, offset);
 
-        self.schema_builder.push_block(offset, block_header);
+        let defrag_op = self.schema_builder.push_block(offset, block_header);
+        if let Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }) = self.defrag.as_mut() {
+            match defrag_op {
+                schema::DefragOp::Queue { defrag_gaps, moving_block_id, } =>
+                    tasks.push(defrag_gaps, moving_block_id),
+                schema::DefragOp::None =>
+                    (),
+            }
+        }
     }
 
     pub fn storage_layout(&self) -> &storage::Layout {
         self.schema_builder.storage_layout()
     }
 
-    pub fn finish(self, size_bytes_total: usize) -> Performer<C> {
-        let schema = self.schema_builder.finish(size_bytes_total);
+    pub fn finish(mut self, size_bytes_total: usize) -> Performer<C> {
+        let (defrag_op, schema) = self.schema_builder.finish(size_bytes_total);
+        if let Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }) = self.defrag.as_mut() {
+            match defrag_op {
+                schema::DefragOp::Queue { defrag_gaps, moving_block_id, } =>
+                    tasks.push(defrag_gaps, moving_block_id),
+                schema::DefragOp::None =>
+                    (),
+            }
+        }
 
         Performer {
             inner: Inner::new(
@@ -417,24 +433,12 @@ impl<C> Inner<C> where C: Context {
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 while let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
                     self.blocks_pool.repay(read_block.block_bytes.freeze());
-                    match read_block.context {
-                        task::ReadBlockContext::External(context) => {
-                            self.done_task = DoneTask::DeleteBlockDefrag {
-                                block_id: block_id.clone(),
-                                block_bytes: block_bytes.clone(),
-                                freed_space_key,
-                            };
-                            return Op::Event(Event {
-                                op: EventOp::ReadBlock(TaskDoneOp {
-                                    context,
-                                    op: ReadBlockOp::Done { block_bytes, },
-                                }),
-                                performer: Performer { inner: self, },
-                            });
-                            },
-                        task::ReadBlockContext::Defrag { .. } =>
-                            unreachable!(),
-                    }
+                    self.done_task = DoneTask::DeleteBlockDefrag {
+                        block_id: block_id.clone(),
+                        block_bytes: block_bytes.clone(),
+                        freed_space_key,
+                    };
+                    return self.proceed_read_block_task_done(block_id, block_bytes, read_block.context)
                 }
                 lens.enqueue(self.schema.block_get());
                 self.flush_defrag_pending_queue(Some(freed_space_key));

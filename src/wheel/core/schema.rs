@@ -971,6 +971,7 @@ pub struct Builder {
 
 struct BlocksTracker {
     prev_block_id: block::Id,
+    prev_block_left_env: LeftEnvirons,
     prev_block_offset: u64,
     prev_block_size: usize,
     max_block_id: block::Id,
@@ -990,7 +991,7 @@ impl Builder {
         &self.storage_layout
     }
 
-    pub fn push_block(&mut self, offset: u64, block_header: storage::BlockHeader) -> &mut Self {
+    pub fn push_block(&mut self, offset: u64, block_header: storage::BlockHeader) -> DefragOp {
         let (left, max_block_id) = match self.tracker.take() {
             None => {
                 assert!(offset >= self.storage_layout.wheel_header_size as u64);
@@ -1019,7 +1020,7 @@ impl Builder {
                         }).unwrap();
                         (
                             LeftEnvirons::Block { block_id: tracker.prev_block_id.clone(), },
-                            block_header.block_id.clone().max(tracker.prev_block_id),
+                            block_header.block_id.clone().max(tracker.max_block_id),
                         )
                     },
                     space_available => {
@@ -1035,18 +1036,46 @@ impl Builder {
                         }).unwrap();
                         (
                             LeftEnvirons::Space { space_key, },
-                            block_header.block_id.clone().max(tracker.prev_block_id),
+                            block_header.block_id.clone().max(tracker.max_block_id),
                         )
                     },
                 }
             },
         };
+        let defrag_op = match self.tracker {
+            Some(BlocksTracker { prev_block_left_env: LeftEnvirons::Space { space_key: space_key_left, }, ref prev_block_id, .. }) =>
+                match left {
+                    LeftEnvirons::Start =>
+                        unreachable!(),
+                    LeftEnvirons::Space { space_key: space_key_right, } =>
+                        DefragOp::Queue {
+                            defrag_gaps: DefragGaps::Both { space_key_left, space_key_right, },
+                            moving_block_id: prev_block_id.clone(),
+                        },
+                    LeftEnvirons::Block { .. } =>
+                        DefragOp::Queue {
+                            defrag_gaps: DefragGaps::OnlyLeft { space_key_left, },
+                            moving_block_id: prev_block_id.clone(),
+                        },
+                },
+            Some(..) | None =>
+                DefragOp::None,
+        };
+
+        println!(
+            "   ;;; block {:?} @ {} pushed, now max_block_id = {:?} (prev was = {:?})",
+            block_header.block_id,
+            offset,
+            max_block_id,
+            self.tracker.as_ref().map(|tracker| &tracker.max_block_id),
+        );
+
         self.tracker = Some(BlocksTracker {
             prev_block_id: block_header.block_id.clone(),
+            prev_block_left_env: left.clone(),
             prev_block_offset: offset,
-            prev_block_size: self.storage_layout.block_header_size
-                + block_header.block_size
-                + self.storage_layout.commit_tag_size,
+            prev_block_size: self.storage_layout.data_size_block_min()
+                + block_header.block_size,
             max_block_id,
         });
         self.blocks_index.insert(
@@ -1058,12 +1087,13 @@ impl Builder {
                 tasks_head: Default::default(),
             },
         );
-        self
+
+        defrag_op
     }
 
-    pub fn finish(mut self, size_bytes_total: usize) -> Schema {
+    pub fn finish(mut self, size_bytes_total: usize) -> (DefragOp, Schema) {
         let total_service_size = self.storage_layout.service_size_min();
-        let next_block_id = match self.tracker {
+        let (defrag_op, next_block_id) = match self.tracker {
             None => {
                 if size_bytes_total > total_service_size {
                     let space_available = size_bytes_total - total_service_size;
@@ -1072,7 +1102,7 @@ impl Builder {
                         gaps::GapBetween::StartAndEnd,
                     );
                 }
-                block::Id::init()
+                (DefragOp::None, block::Id::init())
             },
             Some(tracker) => {
                 let space_total = (size_bytes_total - total_service_size) as u64;
@@ -1080,8 +1110,19 @@ impl Builder {
                 assert!(space_total >= prev_block_end_offset);
                 match space_total - prev_block_end_offset {
                     0 =>
-                    // do nothing: there should be already RightEnvirons::End set
-                        (),
+                    // set nothing: there should be already RightEnvirons::End set
+                        (
+                            match tracker.prev_block_left_env {
+                                LeftEnvirons::Start | LeftEnvirons::Block { .. } =>
+                                    DefragOp::None,
+                                LeftEnvirons::Space { space_key: space_key_left, } =>
+                                    DefragOp::Queue {
+                                        defrag_gaps: DefragGaps::OnlyLeft { space_key_left, },
+                                        moving_block_id: tracker.prev_block_id,
+                                    },
+                            },
+                            tracker.max_block_id.next(),
+                        ),
                     space_available => {
                         let space_key = self.gaps_index.insert(
                             space_available as usize,
@@ -1094,18 +1135,30 @@ impl Builder {
                                 space_key,
                             };
                         }).unwrap();
+                        (
+                            match tracker.prev_block_left_env {
+                                LeftEnvirons::Start | LeftEnvirons::Block { .. } =>
+                                    DefragOp::None,
+                                LeftEnvirons::Space { space_key: space_key_left, } =>
+                                    DefragOp::Queue {
+                                        defrag_gaps: DefragGaps::Both { space_key_left, space_key_right: space_key, },
+                                        moving_block_id: tracker.prev_block_id,
+                                    },
+                            },
+                            tracker.max_block_id.next(),
+                        )
                     },
                 }
-                tracker.max_block_id.next()
             },
         };
 
-        Schema {
+        let schema = Schema {
             next_block_id,
             storage_layout: self.storage_layout,
             blocks_index: self.blocks_index,
             gaps_index: self.gaps_index,
-        }
+        };
+        (defrag_op, schema)
     }
 }
 
@@ -1138,7 +1191,7 @@ mod tests {
 
     fn init() -> Schema {
         let storage_layout = storage::Layout::calculate(&mut Vec::new()).unwrap();
-        Builder::new(storage_layout).finish(160)
+        Builder::new(storage_layout).finish(160).1
     }
 
     fn sample_hello_world() -> block::Bytes {

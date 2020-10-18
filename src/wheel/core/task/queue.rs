@@ -132,7 +132,13 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
                 println!("    ---- enqueued trigger for {:?}; tasks_head = {:?}", self.block_id, block_entry.tasks_head);
 
                 let prev = self.queue.triggers.insert(block_entry.offset, self.block_id.clone());
-                assert!(prev.is_none(), "inconsistent scenario: prev value = {:?} for offset = {}", prev, block_entry.offset);
+                assert!(
+                    prev.is_none(),
+                    "inconsistent scenario: prev value = {:?} for block_id = {:?} offset = {}",
+                    prev,
+                    self.block_id,
+                    block_entry.offset,
+                );
                 block_entry.tasks_head.queue_state = QueueState::Scheduled;
             }
         }
