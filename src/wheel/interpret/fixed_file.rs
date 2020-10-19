@@ -40,6 +40,7 @@ use super::{
     Request,
     RequestTask,
     RequestReplyRx,
+    DoneTask,
 };
 
 #[cfg(test)]
@@ -558,7 +559,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(task_done) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, }) {
                     break;
                 }
             },
@@ -622,7 +623,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(task_done) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, }) {
                     break;
                 }
             },
@@ -649,7 +650,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(task_done) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, }) {
                     break;
                 }
             },

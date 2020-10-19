@@ -272,7 +272,9 @@ mod blockwheel_context {
     use super::{
         block,
         context,
-        wheel::core::task,
+        wheel::{
+            interpret,
+        },
         Deleted,
         Flushed,
         Info,
@@ -287,7 +289,7 @@ mod blockwheel_context {
         type WriteBlock = oneshot::Sender<Result<block::Id, RequestWriteBlockError>>;
         type ReadBlock = oneshot::Sender<Result<block::Bytes, RequestReadBlockError>>;
         type DeleteBlock = oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>;
-        type Interpreter = future::Fuse<oneshot::Receiver<task::Done<Self>>>;
+        type Interpreter = future::Fuse<interpret::RequestReplyRx<Self>>;
     }
 
     #[derive(Clone, PartialEq, Eq, Debug)]
