@@ -32,7 +32,7 @@ fn stress() {
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
-    let work_block_size_bytes = 256 * 1024;
+    let work_block_size_bytes = 16 * 1024;
     let init_wheel_size_bytes = 8 * 1024 * 1024;
 
     let params = Params {
@@ -46,7 +46,7 @@ fn stress() {
 
     let limits = Limits {
         active_tasks: 384,
-        actions: 8192,
+        actions: 16384,
         block_size_bytes: work_block_size_bytes - 256,
     };
 
