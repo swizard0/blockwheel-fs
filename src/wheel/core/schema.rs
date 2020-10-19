@@ -1062,14 +1062,6 @@ impl Builder {
                 DefragOp::None,
         };
 
-        println!(
-            "   ;;; block {:?} @ {} pushed, now max_block_id = {:?} (prev was = {:?})",
-            block_header.block_id,
-            offset,
-            max_block_id,
-            self.tracker.as_ref().map(|tracker| &tracker.max_block_id),
-        );
-
         self.tracker = Some(BlocksTracker {
             prev_block_id: block_header.block_id.clone(),
             prev_block_left_env: left.clone(),

@@ -231,11 +231,7 @@ pub struct PerformerBuilder<C> where C: Context {
 }
 
 impl<C> PerformerBuilder<C> where C: Context {
-
     pub fn push_block(&mut self, offset: u64, block_header: storage::BlockHeader) {
-
-        println!(" ;; pushing block {:?} @ {}", block_header, offset);
-
         let defrag_op = self.schema_builder.push_block(offset, block_header);
         if let Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }) = self.defrag.as_mut() {
             match defrag_op {
@@ -375,7 +371,6 @@ impl<C> Inner<C> where C: Context {
                             unreachable!(),
                         task::WriteBlockContext::Defrag { .. } => {
                             // cancel defrag write task
-                            println!("   /// DEFRAG write task CANCEL for {:?} after DeleteBlockRegular", block_id);
                             cancel_defrag_task(self.defrag.as_mut().unwrap());
                         },
                     }
@@ -399,7 +394,6 @@ impl<C> Inner<C> where C: Context {
                         },
                         task::ReadBlockContext::Defrag { .. } => {
                             // cancel defrag read task
-                            println!("   /// DEFRAG read task CANCEL for {:?} after DeleteBlockRegular", block_id);
                             cancel_defrag_task(self.defrag.as_mut().unwrap());
                         },
                     }
@@ -422,7 +416,6 @@ impl<C> Inner<C> where C: Context {
                         },
                         task::DeleteBlockContext::Defrag { .. } => {
                             // cancel defrag delete task
-                            println!("   /// DEFRAG delete task CANCEL for {:?} after DeleteBlockRegular", block_id);
                             cancel_defrag_task(self.defrag.as_mut().unwrap());
                         },
                     }
@@ -453,14 +446,6 @@ impl<C> Inner<C> where C: Context {
                 if let Some((defrag_gaps, moving_block_id)) = defrag.queues.tasks.pop(self.schema.block_get()) {
                     let mut block_get = self.schema.block_get();
                     let block_entry = block_get.by_id(&moving_block_id).unwrap();
-
-                    println!(
-                        "   /// DEFRAG {} scheduling read for {:?} defrag_gaps = {:?}",
-                        defrag.in_progress_tasks_count,
-                        block_entry.header.block_id,
-                        defrag_gaps,
-                    );
-
                     let block_bytes = self.blocks_pool.lend();
                     let mut lens = self.tasks_queue.focus_block_id(block_entry.header.block_id.clone());
                     lens.push_task(
@@ -701,9 +686,6 @@ impl<C> Inner<C> where C: Context {
                             performer: Performer { inner: self, },
                         }),
                     task::WriteBlockContext::Defrag => {
-
-                        println!("   /// DEFRAG write task done for {:?}", block_id);
-
                         let defrag = self.defrag.as_mut().unwrap();
                         assert!(defrag.in_progress_tasks_count > 0);
                         defrag.in_progress_tasks_count -= 1;
@@ -761,9 +743,6 @@ impl<C> Inner<C> where C: Context {
                     task::DeleteBlockContext::Defrag { block_bytes, .. } =>
                         match self.schema.process_delete_block_task_done_defrag(block_id.clone()) {
                             schema::DeleteBlockTaskDoneDefragOp::Perform(task_op) => {
-
-                                println!("   /// DEFRAG delete task done for {:?}, scheduling write", block_id);
-
                                 if let Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }) = self.defrag.as_mut() {
                                     match task_op.defrag_op {
                                         schema::DefragOp::Queue { defrag_gaps, moving_block_id, } =>
@@ -819,7 +798,6 @@ impl<C> Inner<C> where C: Context {
                         let block_entry = block_get.by_id(&block_id).unwrap();
                         let mut block_entry_get = BlockEntryGet::new(block_entry);
                         if defrag_gaps.is_still_relevant(&block_id, &mut block_entry_get) {
-                            println!("   /// DEFRAG read task done for {:?}, scheduling delete", block_id);
                             self.tasks_queue.focus_block_id(block_id.clone())
                                 .push_task(
                                     task::Task {
@@ -831,12 +809,6 @@ impl<C> Inner<C> where C: Context {
                                     &mut block_entry_get,
                                 );
                         } else {
-                            println!(
-                                "   /// DEFRAG read task CANCEL for {:?} (not relevant for {:?}, env: {:?})",
-                                block_id,
-                                defrag_gaps,
-                                block_entry.environs,
-                            );
                             cancel_defrag_task(self.defrag.as_mut().unwrap());
                         }
                         Op::Idle(Performer { inner: self, })
@@ -894,14 +866,6 @@ impl<C> Inner<C> where C: Context {
                         (),
                     task::TaskKind::DeleteBlock(task::DeleteBlock { context: task::DeleteBlockContext::Defrag { defrag_gaps, .. }, }) =>
                         if !defrag_gaps.is_still_relevant(lens.block_id(), self.schema.block_get()) {
-
-                            println!(
-                                "   /// DEFRAG read task CANCEL on run for {:?} (not relevant for {:?}, env: {:?})",
-                                lens.block_id(),
-                                defrag_gaps,
-                                { let mut block_get = self.schema.block_get(); block_get.by_id(lens.block_id()).as_ref().unwrap().environs.clone() },
-                            );
-
                             cancel_defrag_task(self.defrag.as_mut().unwrap());
                             lens.finish(self.schema.block_get());
                             lens.enqueue(self.schema.block_get());

@@ -128,9 +128,6 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
     pub fn enqueue<'a, B>(self, mut block_get: B) where B: BlockGet {
         if let Some(block_entry) = block_get.by_id(&self.block_id) {
             if (block_entry.tasks_head.queue_state == QueueState::Vacant) && !block_entry.tasks_head.is_empty() {
-
-                println!("    ---- enqueued trigger for {:?}; tasks_head = {:?}", self.block_id, block_entry.tasks_head);
-
                 let prev = self.queue.triggers.insert(block_entry.offset, self.block_id.clone());
                 assert!(
                     prev.is_none(),
