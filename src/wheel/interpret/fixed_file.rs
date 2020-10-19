@@ -25,6 +25,7 @@ use tokio::{
 };
 
 use crate::{
+    InterpretStats,
     context::Context,
     wheel::{
         block,
@@ -513,15 +514,26 @@ async fn busyloop<C>(
     -> Result<(), Error>
 where C: Context + Send,
 {
+    let mut stats = InterpretStats::default();
+
     let mut cursor = storage_layout.wheel_header_size as u64;
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
 
     while let Some(Request { offset, task, reply_tx, }) = request_rx.next().await {
+        stats.count_total += 1;
+
         if cursor != offset {
+            if cursor < offset {
+                stats.count_seek_forward += 1;
+            } else if cursor > offset {
+                stats.count_seek_backward += 1;
+            }
             wheel_file.seek(io::SeekFrom::Start(offset)).await
                 .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
             cursor = offset;
+        } else {
+            stats.count_no_seek += 1;
         }
 
         match task.kind {
@@ -559,7 +571,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, }) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
                     break;
                 }
             },
@@ -623,7 +635,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, }) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
                     break;
                 }
             },
@@ -650,7 +662,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, }) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
                     break;
                 }
             },

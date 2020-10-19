@@ -143,6 +143,15 @@ pub struct Info {
     pub data_bytes_used: usize,
     pub defrag_write_pending_bytes: usize,
     pub bytes_free: usize,
+    pub interpret_stats: InterpretStats,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
+pub struct InterpretStats {
+    pub count_total: usize,
+    pub count_no_seek: usize,
+    pub count_seek_forward: usize,
+    pub count_seek_backward: usize,
 }
 
 impl Pid {

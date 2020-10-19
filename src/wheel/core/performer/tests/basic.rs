@@ -17,6 +17,8 @@ use super::{
     ExpectTaskDeleteBlock,
 };
 
+use crate::InterpretStats;
+
 #[test]
 fn script_basic() {
     let performer = init();
@@ -309,6 +311,12 @@ fn script_basic() {
                 data_bytes_used: 26,
                 defrag_write_pending_bytes: 0,
                 bytes_free: 14,
+                interpret_stats: InterpretStats {
+                    count_total: 0,
+                    count_no_seek: 0,
+                    count_seek_forward: 0,
+                    count_seek_backward: 0,
+                },
             },
             expect_context: "ectx0b",
         }),

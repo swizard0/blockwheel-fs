@@ -506,7 +506,7 @@ async fn request_reply(
 {
     let reply_rx = pid.push_request(offset, task::Task { block_id, kind, }).await
         .map_err(|ero::NoProcError| Error::InterpreterDetach)?;
-    let super::DoneTask { task_done, } = reply_rx.await.map_err(|_| Error::InterpreterDetach)?;
+    let super::DoneTask { task_done, .. } = reply_rx.await.map_err(|_| Error::InterpreterDetach)?;
     Ok(task_done)
 }
 

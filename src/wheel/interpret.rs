@@ -5,6 +5,7 @@ use futures::{
 };
 
 use crate::{
+    InterpretStats,
     context::Context,
     wheel::core::task,
 };
@@ -19,8 +20,8 @@ struct Request<C> where C: Context {
 
 pub struct DoneTask<C> where C: Context {
     pub task_done: task::Done<C>,
+    pub stats: InterpretStats,
 }
-
 
 pub type RequestTask<C> = task::Task<C>;
 pub type RequestReplyRx<C> = oneshot::Receiver<DoneTask<C>>;

@@ -122,6 +122,7 @@ impl Schema {
             wheel_size_bytes: service_bytes_used
                 + data_bytes_used
                 + bytes_free,
+            ..Default::default()
         }
     }
 

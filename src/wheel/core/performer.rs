@@ -1,24 +1,25 @@
 use std::mem;
 
-use super::{
-    super::{
-        super::{
-            Info,
-            context::Context,
-        },
+use crate::{
+    Info,
+    InterpretStats,
+    proto,
+    storage,
+    context::Context,
+    wheel::{
         lru,
         pool,
-        proto,
-        storage,
+        core::{
+            task,
+            block,
+            schema,
+            defrag,
+            SpaceKey,
+            BlockGet,
+            BlockEntry,
+            BlockEntryGet,
+        },
     },
-    task,
-    block,
-    schema,
-    defrag,
-    SpaceKey,
-    BlockGet,
-    BlockEntry,
-    BlockEntryGet,
 };
 
 #[cfg(test)]
@@ -32,6 +33,7 @@ struct Inner<C> where C: Context {
     bg_task: BackgroundTask<C::Interpreter>,
     tasks_queue: task::queue::Queue<C>,
     done_task: DoneTask,
+    interpret_stats: InterpretStats,
 }
 
 struct Defrag<C> {
@@ -290,7 +292,13 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         self.inner.incoming_request(request)
     }
 
+    #[cfg(test)]
     pub fn incoming_task_done(self, task_done: task::Done<C>) -> Op<C> {
+        self.inner.incoming_interpreter(task_done)
+    }
+
+    pub fn incoming_task_done_stats(mut self, task_done: task::Done<C>, stats: InterpretStats) -> Op<C> {
+        self.inner.interpret_stats = stats;
         self.inner.incoming_interpreter(task_done)
     }
 }
@@ -342,6 +350,7 @@ impl<C> Inner<C> where C: Context {
                 state: BackgroundTaskState::Idle,
             },
             done_task: DoneTask::None,
+            interpret_stats: InterpretStats::default(),
         }
     }
 
@@ -514,6 +523,7 @@ impl<C> Inner<C> where C: Context {
 
     fn incoming_request_info(self, proto::RequestInfo { context, }: proto::RequestInfo<C::Info>) -> Op<C> {
         let mut info = self.schema.info();
+        info.interpret_stats = self.interpret_stats;
         if let Some(defrag) = self.defrag.as_ref() {
             info.defrag_write_pending_bytes = defrag.queues.pending.pending_bytes();
             assert!(
