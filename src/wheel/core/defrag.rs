@@ -31,10 +31,6 @@ impl<C> Queues<C> {
             tasks: TaskQueue::new(),
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.tasks.is_empty()
-    }
 }
 
 pub struct PendingQueue<C> {
@@ -50,10 +46,6 @@ impl<C> PendingQueue<C> {
             requests: Forest1::new(),
             bytes: 0,
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
     }
 
     pub fn push(&mut self, request_write_block: proto::RequestWriteBlock<C>, block_bytes_len: usize) {
@@ -104,10 +96,6 @@ impl TaskQueue {
         TaskQueue {
             queue: BinaryHeap::new(),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
     }
 
     pub fn push(&mut self, defrag_gaps: DefragGaps, moving_block_id: block::Id) {

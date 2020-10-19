@@ -482,7 +482,7 @@ impl<C> Inner<C> where C: Context {
             }
         }
 
-        if self.tasks_queue.is_empty_tasks() && self.defrag.as_ref().map_or(true, |defrag| defrag.queues.is_empty()) {
+        if self.tasks_queue.is_empty_tasks() && self.defrag.as_ref().map_or(true, |defrag| defrag.in_progress_tasks_count == 0) {
             if let Some(task::Flush { context, }) = self.tasks_queue.pop_flush() {
                 return Op::Event(Event {
                     op: EventOp::Flush(TaskDoneOp { context, op: FlushOp::Flushed, }),

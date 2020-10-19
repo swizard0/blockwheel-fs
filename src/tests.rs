@@ -32,21 +32,21 @@ fn stress() {
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
-    let work_block_size_bytes = 32 * 1024;
-    let init_wheel_size_bytes = 1 * 1024 * 1024;
+    let work_block_size_bytes = 256 * 1024;
+    let init_wheel_size_bytes = 8 * 1024 * 1024;
 
     let params = Params {
         wheel_filename: wheel_filename.into(),
         init_wheel_size_bytes,
         work_block_size_bytes,
         lru_cache_size_bytes: 0,
-        defrag_parallel_tasks_limit: 4,
+        defrag_parallel_tasks_limit: 32,
         ..Default::default()
     };
 
     let limits = Limits {
-        active_tasks: 256,
-        actions: 3072,
+        active_tasks: 384,
+        actions: 8192,
         block_size_bytes: work_block_size_bytes - 256,
     };
 
