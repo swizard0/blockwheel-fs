@@ -284,8 +284,14 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
 
             let mut blockwheel_pid = pid.clone();
             spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
+
+                println!("  /// SPAWNED read task of id = {:?}", block_id);
+
                 let block_bytes_read = blockwheel_pid.read_block(block_id.clone()).await
                     .map_err(Error::ReadBlock)?;
+
+                println!("  /// succeeded read block task of id = {:?} done", block_id);
+
                 let expected_crc = block::crc(&block_bytes);
                 let provided_crc = block::crc(&block_bytes_read);
                 if expected_crc != provided_crc {

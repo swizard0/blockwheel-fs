@@ -603,9 +603,7 @@ where C: Context + Send,
                         block_size_actual: block_header.block_size,
                     }));
                 }
-
                 read_block.block_bytes.extend(work_block[block_buffer_start .. block_buffer_end].iter());
-
                 let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[block_buffer_end ..])
                     .map_err(Error::CommitTagDeserialize)?;
                 if commit_tag.block_id != read_block.block_header.block_id {
