@@ -1,5 +1,7 @@
 use std::mem::drop;
 
+use alloc_pool::bytes::Bytes;
+
 use super::{
     gaps,
     block,
@@ -122,12 +124,13 @@ impl Schema {
             wheel_size_bytes: service_bytes_used
                 + data_bytes_used
                 + bytes_free,
+            ..Default::default()
         }
     }
 
     pub fn process_write_block_request(
         &mut self,
-        block_bytes: &block::Bytes,
+        block_bytes: &Bytes,
         defrag_pending_bytes: Option<usize>,
     )
         -> WriteBlockOp
@@ -1062,14 +1065,6 @@ impl Builder {
                 DefragOp::None,
         };
 
-        println!(
-            "   ;;; block {:?} @ {} pushed, now max_block_id = {:?} (prev was = {:?})",
-            block_header.block_id,
-            offset,
-            max_block_id,
-            self.tracker.as_ref().map(|tracker| &tracker.max_block_id),
-        );
-
         self.tracker = Some(BlocksTracker {
             prev_block_id: block_header.block_id.clone(),
             prev_block_left_env: left.clone(),
@@ -1164,6 +1159,11 @@ impl Builder {
 
 #[cfg(test)]
 mod tests {
+    use alloc_pool::bytes::{
+        Bytes,
+        BytesMut,
+    };
+
     use super::{
         block,
         storage,
@@ -1194,8 +1194,8 @@ mod tests {
         Builder::new(storage_layout).finish(160).1
     }
 
-    fn sample_hello_world() -> block::Bytes {
-        let mut block_bytes_mut = block::BytesMut::new_detached();
+    fn sample_hello_world() -> Bytes {
+        let mut block_bytes_mut = BytesMut::new_detached(Vec::new());
         block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
         block_bytes_mut.freeze()
     }

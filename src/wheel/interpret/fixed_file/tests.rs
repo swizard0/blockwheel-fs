@@ -7,6 +7,12 @@ use futures::{
     FutureExt,
 };
 
+use alloc_pool::bytes::{
+    Bytes,
+    BytesMut,
+    BytesPool,
+};
+
 use crate::{
     block,
     context::Context,
@@ -41,6 +47,7 @@ fn create_read_empty() {
             },
             performer::PerformerBuilderInit::new(
                 lru::Cache::new(0),
+                BytesPool::new(),
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
@@ -51,6 +58,7 @@ fn create_read_empty() {
             },
             performer::PerformerBuilderInit::new(
                 lru::Cache::new(0),
+                BytesPool::new(),
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
@@ -75,6 +83,7 @@ fn create_read_one() {
             },
             performer::PerformerBuilderInit::new(
                 lru::Cache::new(0),
+                BytesPool::new(),
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
@@ -112,6 +121,7 @@ fn create_read_one() {
             },
             performer::PerformerBuilderInit::new(
                 lru::Cache::new(0),
+                BytesPool::new(),
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
@@ -134,7 +144,7 @@ fn create_read_one() {
                         block_header.block_id.clone(),
                         task::TaskKind::ReadBlock(task::ReadBlock {
                             block_header: block_header.clone(),
-                            block_bytes: block::BytesMut::new_detached(),
+                            block_bytes: BytesMut::new_detached(Vec::new()),
                             context: task::ReadBlockContext::External(context),
                         }),
                     ).await?;
@@ -148,7 +158,7 @@ fn create_read_one() {
                                 }),
                             },
                             ..
-                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &**hello_world_bytes() =>
                             Ok(()),
                         other_done_task =>
                             Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
@@ -181,6 +191,7 @@ fn create_write_overlap_read_one() {
             },
             performer::PerformerBuilderInit::new(
                 lru::Cache::new(0),
+                BytesPool::new(),
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
@@ -216,6 +227,7 @@ fn create_write_overlap_read_one() {
             },
             performer::PerformerBuilderInit::new(
                 lru::Cache::new(0),
+                BytesPool::new(),
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
@@ -246,7 +258,7 @@ fn create_write_overlap_read_one() {
                         block_header.block_id.clone(),
                         task::TaskKind::ReadBlock(task::ReadBlock {
                             block_header: block_header.clone(),
-                            block_bytes: block::BytesMut::new_detached(),
+                            block_bytes: BytesMut::new_detached(Vec::new()),
                             context: task::ReadBlockContext::External(context),
                         }),
                     ).await?;
@@ -260,7 +272,7 @@ fn create_write_overlap_read_one() {
                                 }),
                             },
                             ..
-                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &**hello_world_bytes() =>
                             Ok(()),
                         other_done_task =>
                             Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
@@ -293,6 +305,7 @@ fn create_write_delete_read_one() {
             },
             performer::PerformerBuilderInit::new(
                 lru::Cache::new(0),
+                BytesPool::new(),
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
@@ -350,6 +363,7 @@ fn create_write_delete_read_one() {
             },
             performer::PerformerBuilderInit::new(
                 lru::Cache::new(0),
+                BytesPool::new(),
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
@@ -381,7 +395,7 @@ fn create_write_delete_read_one() {
                         block_header.block_id.clone(),
                         task::TaskKind::ReadBlock(task::ReadBlock {
                             block_header: block_header.clone(),
-                            block_bytes: block::BytesMut::new_detached(),
+                            block_bytes: BytesMut::new_detached(Vec::new()),
                             context: task::ReadBlockContext::External(context),
                         }),
                     ).await?;
@@ -395,7 +409,7 @@ fn create_write_delete_read_one() {
                                 }),
                             },
                             ..
-                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &*hello_world_bytes() =>
+                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &**hello_world_bytes() =>
                             Ok(()),
                         other_done_task =>
                             Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
@@ -453,7 +467,6 @@ type C = &'static str;
 impl Context for LocalContext {
     type Info = C;
     type Flush = C;
-    type LendBlock = C;
     type WriteBlock = C;
     type ReadBlock = C;
     type DeleteBlock = C;
@@ -506,11 +519,12 @@ async fn request_reply(
 {
     let reply_rx = pid.push_request(offset, task::Task { block_id, kind, }).await
         .map_err(|ero::NoProcError| Error::InterpreterDetach)?;
-    reply_rx.await.map_err(|_| Error::InterpreterDetach)
+    let super::DoneTask { task_done, .. } = reply_rx.await.map_err(|_| Error::InterpreterDetach)?;
+    Ok(task_done)
 }
 
-fn hello_world_bytes() -> block::Bytes {
-    let mut block_bytes_mut = block::BytesMut::new_detached();
+fn hello_world_bytes() -> Bytes {
+    let mut block_bytes_mut = BytesMut::new_detached(Vec::new());
     block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
     block_bytes_mut.freeze()
 }

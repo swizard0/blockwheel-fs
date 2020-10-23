@@ -9,6 +9,11 @@ use futures::{
     channel::mpsc,
 };
 
+use alloc_pool::bytes::{
+    Bytes,
+    BytesPool,
+};
+
 use ero::{
     supervisor::{
         SupervisorPid,
@@ -40,7 +45,7 @@ fn stress() {
         init_wheel_size_bytes,
         work_block_size_bytes,
         lru_cache_size_bytes: 0,
-        defrag_parallel_tasks_limit: 32,
+        defrag_parallel_tasks_limit: 8,
         ..Default::default()
     };
 
@@ -99,7 +104,7 @@ impl Counter {
 #[derive(Clone, Debug)]
 struct BlockTank {
     block_id: block::Id,
-    block_bytes: block::Bytes,
+    block_bytes: Bytes,
 }
 
 async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Counter, limits: &Limits) -> Result<(), Error> {
@@ -107,10 +112,12 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
     let mut supervisor_pid = supervisor_gen_server.pid();
     tokio::spawn(supervisor_gen_server.run());
 
+    let blocks_pool = BytesPool::new();
+
     let gen_server = GenServer::new();
     let mut pid = gen_server.pid();
     supervisor_pid.spawn_link_permanent(
-        gen_server.run(supervisor_pid.clone(), params),
+        gen_server.run(supervisor_pid.clone(), blocks_pool.clone(), params),
     );
 
     let mut rng = rand::thread_rng();
@@ -214,6 +221,7 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
             if blocks.is_empty() || dice < write_prob {
                 // write task
                 let mut blockwheel_pid = pid.clone();
+                let blocks_pool = blocks_pool.clone();
                 let amount = rng.gen_range(1, limits.block_size_bytes);
 
                 println!(
@@ -227,8 +235,7 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
                 );
 
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-                    let mut block = blockwheel_pid.lend_block().await
-                        .map_err(|ero::NoProcError| Error::WheelGoneDuringLendBlock)?;
+                    let mut block = blocks_pool.lend();
                     block.extend((0 .. amount).map(|_| 0));
                     rand::thread_rng().fill(&mut block[..]);
                     let block_bytes = block.freeze();
@@ -237,8 +244,6 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
 
                             println!(" // DONE write task of size = {}, id = {:?} (success)", block_bytes.len(), block_id);
 
-                            blockwheel_pid.repay_block(block_bytes.clone()).await
-                                .map_err(|ero::NoProcError| Error::WheelGoneDuringRepayBlock)?;
                             Ok(TaskDone::WriteBlock(BlockTank { block_id, block_bytes, }))
                         },
                         Err(super::WriteBlockError::NoSpaceLeft) => {
@@ -315,8 +320,6 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
 enum Error {
     WheelGoneDuringInfo,
     WheelGoneDuringFlush,
-    WheelGoneDuringLendBlock,
-    WheelGoneDuringRepayBlock,
     WriteBlock(super::WriteBlockError),
     DeleteBlock(super::DeleteBlockError),
     ReadBlock(super::ReadBlockError),

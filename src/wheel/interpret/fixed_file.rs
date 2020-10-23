@@ -25,6 +25,7 @@ use tokio::{
 };
 
 use crate::{
+    InterpretStats,
     context::Context,
     wheel::{
         block,
@@ -40,6 +41,7 @@ use super::{
     Request,
     RequestTask,
     RequestReplyRx,
+    DoneTask,
 };
 
 #[cfg(test)]
@@ -332,9 +334,6 @@ impl<C> GenServer<C> where C: Context {
         let work_block_size_bytes = work_block.capacity();
         work_block.resize(work_block_size_bytes, 0);
         let mut offset = 0;
-
-        println!(" ;; starting read @ cursor = {}, offset = {}", cursor, offset);
-
         loop {
             let bytes_read = match wheel_file.read(&mut work_block[offset ..]).await {
                 Ok(0) =>
@@ -347,9 +346,6 @@ impl<C> GenServer<C> where C: Context {
                     return Err(WheelOpenError::LocateBlock(error)),
             };
             offset += bytes_read;
-
-            println!(" ;; read continue, {} bytes read @ cursor = {}, offset = {}", bytes_read, cursor, offset);
-
             let mut start = 0;
             while offset - start >= builder.storage_layout().block_header_size {
                 let area = &work_block[start .. start + builder.storage_layout().block_header_size];
@@ -460,8 +456,6 @@ async fn try_read_block(
 )
     -> Result<ReadBlockStatus, WheelOpenError>
 {
-    println!("   ;;; trying to read block header {:?} @ {}", block_header, cursor);
-
     // seek to commit tag position
     wheel_file.seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64 + block_header.block_size as u64)).await
         .map_err(WheelOpenError::BlockSeekCommitTag)?;
@@ -476,9 +470,6 @@ async fn try_read_block(
         let next_cursor = cursor + 1;
         wheel_file.seek(io::SeekFrom::Start(next_cursor)).await
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
-
-        println!("   ;;; => not a block {:?} (bad commit tag magic)", block_header.block_id);
-
         return Ok(ReadBlockStatus::NotABlock { next_cursor, });
     }
     if commit_tag.block_id != block_header.block_id {
@@ -486,9 +477,6 @@ async fn try_read_block(
         let next_cursor = cursor + 1;
         wheel_file.seek(io::SeekFrom::Start(next_cursor)).await
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
-
-        println!("   ;;; => not a block {:?} (bad commit tag block id)", block_header.block_id);
-
         return Ok(ReadBlockStatus::NotABlock { next_cursor, });
     }
     if block_header.block_size > work_block.capacity() {
@@ -514,9 +502,6 @@ async fn try_read_block(
     // seek to the end of commit tag
     let next_cursor = wheel_file.seek(io::SeekFrom::Current(storage_layout.commit_tag_size as i64)).await
         .map_err(WheelOpenError::BlockSeekEnd)?;
-
-    println!("   ;;; => block {:?} accepted, next_cursor = {}", block_header.block_id, next_cursor);
-
     Ok(ReadBlockStatus::BlockFound { next_cursor, })
 }
 
@@ -529,15 +514,26 @@ async fn busyloop<C>(
     -> Result<(), Error>
 where C: Context + Send,
 {
+    let mut stats = InterpretStats::default();
+
     let mut cursor = storage_layout.wheel_header_size as u64;
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
 
     while let Some(Request { offset, task, reply_tx, }) = request_rx.next().await {
+        stats.count_total += 1;
+
         if cursor != offset {
+            if cursor < offset {
+                stats.count_seek_forward += 1;
+            } else if cursor > offset {
+                stats.count_seek_backward += 1;
+            }
             wheel_file.seek(io::SeekFrom::Start(offset)).await
                 .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
             cursor = offset;
+        } else {
+            stats.count_no_seek += 1;
         }
 
         match task.kind {
@@ -575,7 +571,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(task_done) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
                     break;
                 }
             },
@@ -639,7 +635,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(task_done) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
                     break;
                 }
             },
@@ -666,7 +662,7 @@ where C: Context + Send,
                         }),
                     },
                 };
-                if let Err(_send_error) = reply_tx.send(task_done) {
+                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
                     break;
                 }
             },

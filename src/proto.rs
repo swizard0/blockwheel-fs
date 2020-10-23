@@ -1,3 +1,5 @@
+use alloc_pool::bytes::Bytes;
+
 use super::{
     block,
     context::Context,
@@ -7,8 +9,6 @@ use super::{
 pub enum Request<C> where C: Context {
     Info(RequestInfo<C::Info>),
     Flush(RequestFlush<C::Flush>),
-    LendBlock(RequestLendBlock<C::LendBlock>),
-    RepayBlock(RequestRepayBlock),
     WriteBlock(RequestWriteBlock<C::WriteBlock>),
     ReadBlock(RequestReadBlock<C::ReadBlock>),
     DeleteBlock(RequestDeleteBlock<C::DeleteBlock>),
@@ -25,18 +25,8 @@ pub struct RequestFlush<C> {
 }
 
 #[derive(Debug)]
-pub struct RequestLendBlock<C> {
-    pub context: C,
-}
-
-#[derive(Debug)]
-pub struct RequestRepayBlock {
-    pub block_bytes: block::Bytes,
-}
-
-#[derive(Debug)]
 pub struct RequestWriteBlock<C> {
-    pub block_bytes: block::Bytes,
+    pub block_bytes: Bytes,
     pub context: C,
 }
 

@@ -15,6 +15,8 @@ use ero::{
     supervisor::SupervisorPid,
 };
 
+use alloc_pool::bytes::BytesPool;
+
 use super::{
     block,
     proto,
@@ -30,9 +32,9 @@ use self::core::{
     performer,
 };
 
+pub mod interpret;
+
 mod lru;
-mod pool;
-mod interpret;
 
 #[derive(Debug)]
 pub enum Error {
@@ -47,6 +49,7 @@ type Request = proto::Request<Context>;
 
 pub struct State {
     pub parent_supervisor: SupervisorPid,
+    pub blocks_pool: BytesPool,
     pub fused_request_rx: stream::Fuse<mpsc::Receiver<Request>>,
     pub params: Params,
 }
@@ -54,6 +57,7 @@ pub struct State {
 pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> Result<(), ErrorSeverity<State, Error>> {
     let performer_builder = performer::PerformerBuilderInit::new(
         lru::Cache::new(state.params.lru_cache_size_bytes),
+        state.blocks_pool.clone(),
         if state.params.defrag_parallel_tasks_limit == 0 {
             None
         } else {
@@ -63,7 +67,6 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
     )
         .map_err(Error::InterpreterInit)
         .map_err(ErrorSeverity::Fatal)?;
-
 
     let open_async = interpret::fixed_file::GenServer::open(
         interpret::fixed_file::OpenParams {
@@ -143,8 +146,8 @@ async fn busyloop(
                 match source {
                     Source::Pid(Some(request)) =>
                         poll.next.incoming_request(request, fused_interpret_result_rx),
-                    Source::InterpreterDone(Ok(task_done)) =>
-                        poll.next.incoming_task_done(task_done),
+                    Source::InterpreterDone(Ok(interpret::DoneTask { task_done, stats, })) =>
+                        poll.next.incoming_task_done_stats(task_done, stats),
                     Source::Pid(None) => {
                         log::debug!("all Pid frontends have been terminated");
                         return Ok(());
@@ -221,18 +224,6 @@ async fn busyloop(
             }) => {
                 if let Err(_send_error) = reply_tx.send(Flushed) {
                     log::warn!("Pid is gone during Flush query result send");
-                }
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::LendBlock(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::LendBlockOp::Success { block_bytes, }, },
-                ),
-                performer,
-            }) => {
-                if let Err(_send_error) = reply_tx.send(block_bytes) {
-                    log::warn!("Pid is gone during LendBlock query result send");
                 }
                 performer.next()
             },

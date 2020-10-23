@@ -1,3 +1,9 @@
+use alloc_pool::bytes::{
+    Bytes,
+    BytesMut,
+    BytesPool,
+};
+
 use super::{
     lru,
     task,
@@ -11,7 +17,6 @@ use super::{
     EventOp,
     Performer,
     TaskDoneOp,
-    LendBlockOp,
     ReadBlockOp,
     WriteBlockOp,
     DeleteBlockOp,
@@ -38,7 +43,6 @@ type C = &'static str;
 impl BaseContext for Context {
     type Info = C;
     type Flush = C;
-    type LendBlock = C;
     type WriteBlock = C;
     type ReadBlock = C;
     type DeleteBlock = C;
@@ -50,22 +54,27 @@ fn init() -> Performer<Context> {
 }
 
 fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Context> {
-    let (performer_builder, _work_block) = PerformerBuilderInit::new(lru::Cache::new(16), defrag_config, 1024)
+    let (performer_builder, _work_block) = PerformerBuilderInit::new(
+        lru::Cache::new(16),
+        BytesPool::new(),
+        defrag_config,
+        1024,
+    )
         .unwrap()
         .start_fill();
     performer_builder.finish(160)
 }
 
-fn hello_world_bytes() -> block::Bytes {
-    let mut block_bytes_mut = block::BytesMut::new_detached();
+fn hello_world_bytes() -> BytesMut {
+    let mut block_bytes_mut = BytesMut::new_detached(Vec::new());
     block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
-    block_bytes_mut.freeze()
+    block_bytes_mut
 }
 
-fn hello_bytes() -> block::Bytes {
-    let mut block_bytes_mut = block::BytesMut::new_detached();
+fn hello_bytes() -> BytesMut {
+    let mut block_bytes_mut = BytesMut::new_detached(Vec::new());
     block_bytes_mut.extend("hello!".as_bytes().iter().cloned());
-    block_bytes_mut.freeze()
+    block_bytes_mut
 }
 
 #[derive(Debug)]
@@ -82,11 +91,10 @@ enum ExpectOp {
     InterpretTask { expect_offset: u64, expect_task: ExpectTask, },
     InfoSuccess { expect_info: Info, expect_context: C, },
     FlushSuccess { expect_context: C, },
-    LendBlockSuccess { expect_context: C, },
     WriteBlockNoSpaceLeft { expect_context: C, },
     WriteBlockDone { expect_block_id: block::Id, expect_context: C, },
     ReadBlockNotFound { expect_context: C, },
-    ReadBlockDone { expect_block_bytes: block::Bytes, expect_context: C, },
+    ReadBlockDone { expect_block_bytes: Bytes, expect_context: C, },
     DeleteBlockNotFound { expect_context: C, },
     DeleteBlockDone { expect_block_id: block::Id, expect_context: C, },
 }
@@ -114,7 +122,7 @@ enum ExpectTaskKind {
 
 #[derive(Debug)]
 struct ExpectTaskWriteBlock {
-    block_bytes: block::Bytes,
+    block_bytes: Bytes,
     context: task::WriteBlockContext<C>,
 }
 
@@ -242,19 +250,6 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                     Some(other_op) =>
                         panic!(
                             "expecting exact ExpectOp::FlushSuccess for FlushOp::Flushed but got {:?} @ {}",
-                            other_op, script_len - script.len(),
-                        ),
-                },
-
-            Op::Event(Event { op: EventOp::LendBlock(TaskDoneOp { context, op: LendBlockOp::Success { .. }, }), performer, }) =>
-                match script.pop() {
-                    None =>
-                        panic!("unexpected script end on LendBlockOp::Success, expecting ExpectOp::LendBlockSuccess @ {}", script_len - script.len()),
-                    Some(ScriptOp::Expect(ExpectOp::LendBlockSuccess { expect_context, })) if expect_context == context =>
-                        performer.next(),
-                    Some(other_op) =>
-                        panic!(
-                            "expecting exact ExpectOp::LendBlockSuccess for LendBlockOp::Success but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },

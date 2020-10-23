@@ -15,6 +15,11 @@ use futures::{
     SinkExt,
 };
 
+use alloc_pool::bytes::{
+    Bytes,
+    BytesPool,
+};
+
 use ero::{
     restart,
     RestartStrategy,
@@ -81,7 +86,7 @@ impl GenServer {
         }
     }
 
-    pub async fn run(self, parent_supervisor: SupervisorPid, params: Params) {
+    pub async fn run(self, parent_supervisor: SupervisorPid, blocks_pool: BytesPool, params: Params) {
         let terminate_result = restart::restartable(
             ero::Params {
                 name: format!("ero-blockwheel on {:?}", params.wheel_filename),
@@ -91,6 +96,7 @@ impl GenServer {
             },
             wheel::State {
                 parent_supervisor,
+                blocks_pool,
                 fused_request_rx: self.fused_request_rx,
                 params,
             },
@@ -108,8 +114,6 @@ impl GenServer {
         }
     }
 }
-
-
 
 #[derive(Debug)]
 pub enum WriteBlockError {
@@ -143,6 +147,15 @@ pub struct Info {
     pub data_bytes_used: usize,
     pub defrag_write_pending_bytes: usize,
     pub bytes_free: usize,
+    pub interpret_stats: InterpretStats,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
+pub struct InterpretStats {
+    pub count_total: usize,
+    pub count_no_seek: usize,
+    pub count_seek_forward: usize,
+    pub count_seek_backward: usize,
 }
 
 impl Pid {
@@ -174,27 +187,7 @@ impl Pid {
         }
     }
 
-    pub async fn lend_block(&mut self) -> Result<block::BytesMut, ero::NoProcError> {
-        loop {
-            let (reply_tx, reply_rx) = oneshot::channel();
-            self.request_tx.send(proto::Request::LendBlock(proto::RequestLendBlock { context: reply_tx, })).await
-                .map_err(|_send_error| ero::NoProcError)?;
-            match reply_rx.await {
-                Ok(block) =>
-                    return Ok(block),
-                Err(oneshot::Canceled) =>
-                    (),
-            }
-        }
-    }
-
-    pub async fn repay_block(&mut self, block_bytes: block::Bytes) -> Result<(), ero::NoProcError> {
-        self.request_tx.send(proto::Request::RepayBlock(proto::RequestRepayBlock { block_bytes, })).await
-            .map_err(|_send_error| ero::NoProcError)
-    }
-
-
-    pub async fn write_block(&mut self, block_bytes: block::Bytes) -> Result<block::Id, WriteBlockError> {
+    pub async fn write_block(&mut self, block_bytes: Bytes) -> Result<block::Id, WriteBlockError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
@@ -216,7 +209,7 @@ impl Pid {
         }
     }
 
-    pub async fn read_block(&mut self, block_id: block::Id) -> Result<block::Bytes, ReadBlockError> {
+    pub async fn read_block(&mut self, block_id: block::Id) -> Result<Bytes, ReadBlockError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
@@ -269,10 +262,14 @@ mod blockwheel_context {
         future,
     };
 
+    use alloc_pool::bytes::Bytes;
+
     use super::{
         block,
         context,
-        wheel::core::task,
+        wheel::{
+            interpret,
+        },
         Deleted,
         Flushed,
         Info,
@@ -283,11 +280,10 @@ mod blockwheel_context {
     impl context::Context for Context {
         type Info = oneshot::Sender<Info>;
         type Flush = oneshot::Sender<Flushed>;
-        type LendBlock = oneshot::Sender<block::BytesMut>;
         type WriteBlock = oneshot::Sender<Result<block::Id, RequestWriteBlockError>>;
-        type ReadBlock = oneshot::Sender<Result<block::Bytes, RequestReadBlockError>>;
+        type ReadBlock = oneshot::Sender<Result<Bytes, RequestReadBlockError>>;
         type DeleteBlock = oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>;
-        type Interpreter = future::Fuse<oneshot::Receiver<task::Done<Self>>>;
+        type Interpreter = future::Fuse<interpret::RequestReplyRx<Self>>;
     }
 
     #[derive(Clone, PartialEq, Eq, Debug)]
