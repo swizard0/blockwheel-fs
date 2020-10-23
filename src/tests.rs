@@ -38,7 +38,7 @@ fn stress() {
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
     let work_block_size_bytes = 16 * 1024;
-    let init_wheel_size_bytes = 8 * 1024 * 1024;
+    let init_wheel_size_bytes = 1 * 1024 * 1024;
 
     let params = Params {
         wheel_filename: wheel_filename.into(),
@@ -50,8 +50,8 @@ fn stress() {
     };
 
     let limits = Limits {
-        active_tasks: 384,
-        actions: 16384,
+        active_tasks: 128,
+        actions: 1024,
         block_size_bytes: work_block_size_bytes - 256,
     };
 
@@ -62,14 +62,12 @@ fn stress() {
     fs::remove_file(wheel_filename).ok();
     runtime.block_on(stress_loop(params.clone(), &mut blocks, &mut counter, &limits)).unwrap();
 
-    println!(" // CREATE: counter_reads = {}, counter_writes = {}, counter_deletes = {}", counter.reads, counter.writes, counter.deletes);
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
     // next load existing wheel and repeat stress with blocks
     counter.clear();
     runtime.block_on(stress_loop(params.clone(), &mut blocks, &mut counter, &limits)).unwrap();
 
-    println!(" // LOAD: counter_reads = {}, counter_writes = {}, counter_deletes = {}", counter.reads, counter.writes, counter.deletes);
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
     fs::remove_file(wheel_filename).ok();
@@ -173,18 +171,6 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
             std::mem::drop(done_tx);
 
             while active_tasks_counter.sum() > 0 {
-
-                println!(
-                    " // termination await of {} active tasks ({}/{} / {}/{} / {}/{})",
-                    active_tasks_counter.sum(),
-                    counter.reads,
-                    active_tasks_counter.reads,
-                    counter.writes,
-                    active_tasks_counter.writes,
-                    counter.deletes,
-                    active_tasks_counter.deletes,
-                );
-
                 process(done_rx.next().await.unwrap()?, blocks, counter, &mut active_tasks_counter);
             }
             break;
@@ -223,35 +209,16 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
                 let mut blockwheel_pid = pid.clone();
                 let blocks_pool = blocks_pool.clone();
                 let amount = rng.gen_range(1, limits.block_size_bytes);
-
-                println!(
-                    " // write task {} prob = {}/{}/{} of {} bytes when {:?}",
-                    actions_counter,
-                    write_prob,
-                    dice,
-                    blocks.len(),
-                    amount,
-                    info,
-                );
-
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                     let mut block = blocks_pool.lend();
                     block.extend((0 .. amount).map(|_| 0));
                     rand::thread_rng().fill(&mut block[..]);
                     let block_bytes = block.freeze();
                     match blockwheel_pid.write_block(block_bytes.clone()).await {
-                        Ok(block_id) => {
-
-                            println!(" // DONE write task of size = {}, id = {:?} (success)", block_bytes.len(), block_id);
-
-                            Ok(TaskDone::WriteBlock(BlockTank { block_id, block_bytes, }))
-                        },
-                        Err(super::WriteBlockError::NoSpaceLeft) => {
-
-                            println!(" // DONE write task of size = {} (no space)", block_bytes.len());
-
-                            Ok(TaskDone::WriteBlockNoSpace)
-                        },
+                        Ok(block_id) =>
+                            Ok(TaskDone::WriteBlock(BlockTank { block_id, block_bytes, })),
+                        Err(super::WriteBlockError::NoSpaceLeft) =>
+                            Ok(TaskDone::WriteBlockNoSpace),
                         Err(error) =>
                             Err(Error::WriteBlock(error))
                     }
@@ -261,16 +228,10 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
                 // delete task
                 let block_index = rng.gen_range(0, blocks.len());
                 let BlockTank { block_id, .. } = blocks.swap_remove(block_index);
-
-                println!(" // delete task {} of id = {:?} when {:?}", actions_counter, block_id, info);
-
                 let mut blockwheel_pid = pid.clone();
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                     let Deleted = blockwheel_pid.delete_block(block_id.clone()).await
                         .map_err(Error::DeleteBlock)?;
-
-                    println!(" // DONE delete task {} of id = {:?}", actions_counter, block_id);
-
                     Ok(TaskDone::DeleteBlock)
                 });
                 active_tasks_counter.deletes += 1;
@@ -279,27 +240,15 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
             // read task
             let block_index = rng.gen_range(0, blocks.len());
             let BlockTank { block_id, block_bytes, } = blocks[block_index].clone();
-
-            println!(" // read task {} of id = {:?} when {:?}", actions_counter, block_id, info);
-
             let mut blockwheel_pid = pid.clone();
             spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-
-                println!("  /// SPAWNED read task of id = {:?}", block_id);
-
                 let block_bytes_read = blockwheel_pid.read_block(block_id.clone()).await
                     .map_err(Error::ReadBlock)?;
-
-                println!("  /// succeeded read block task of id = {:?} done", block_id);
-
                 let expected_crc = block::crc(&block_bytes);
                 let provided_crc = block::crc(&block_bytes_read);
                 if expected_crc != provided_crc {
                     Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, })
                 } else {
-
-                    println!(" // DONE read task of id = {:?}", block_id);
-
                     Ok(TaskDone::ReadBlock)
                 }
             });
@@ -308,15 +257,12 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
         actions_counter += 1;
     }
 
-    println!("// dropping tx");
     assert!(done_rx.next().await.is_none());
 
-    println!("// flushing ...");
     let Flushed = pid.flush().await
         .map_err(|ero::NoProcError| Error::WheelGoneDuringFlush)?;
-    let info = pid.info().await
+    let _info = pid.info().await
         .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
-    println!("// flushed, final info: {:?}", info);
 
     Ok::<_, Error>(())
 }
