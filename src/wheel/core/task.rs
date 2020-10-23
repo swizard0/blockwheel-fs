@@ -1,3 +1,8 @@
+use alloc_pool::bytes::{
+    Bytes,
+    BytesMut,
+};
+
 use super::{
     block,
     storage,
@@ -23,7 +28,7 @@ pub enum TaskKind<C> where C: Context {
 
 #[derive(Debug)]
 pub struct WriteBlock<C> {
-    pub block_bytes: block::Bytes,
+    pub block_bytes: Bytes,
     pub context: WriteBlockContext<C>,
 }
 
@@ -36,7 +41,7 @@ pub enum WriteBlockContext<C> {
 #[derive(Debug)]
 pub struct ReadBlock<C> {
     pub block_header: storage::BlockHeader,
-    pub block_bytes: block::BytesMut,
+    pub block_bytes: BytesMut,
     pub context: ReadBlockContext<C>,
 }
 
@@ -56,7 +61,7 @@ pub enum DeleteBlockContext<C> {
     External(C),
     Defrag {
         defrag_gaps: DefragGaps,
-        block_bytes: block::Bytes,
+        block_bytes: Bytes,
     },
 }
 
@@ -91,7 +96,7 @@ pub struct TaskDoneWriteBlock<C> {
 
 #[derive(Debug)]
 pub struct TaskDoneReadBlock<C> {
-    pub block_bytes: block::BytesMut,
+    pub block_bytes: BytesMut,
     pub context: ReadBlockContext<C>,
 }
 

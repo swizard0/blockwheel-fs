@@ -5,6 +5,8 @@ use std::{
     },
 };
 
+use alloc_pool::bytes::Bytes;
+
 use super::{
     block,
 };
@@ -18,7 +20,7 @@ pub struct Cache {
 
 #[derive(Debug)]
 struct Entry {
-    block_bytes: block::Bytes,
+    block_bytes: Bytes,
     list_prev: block::Id,
     list_next: block::Id,
 }
@@ -33,7 +35,7 @@ impl Cache {
         }
     }
 
-    pub fn insert(&mut self, block_id: block::Id, block_bytes: block::Bytes) {
+    pub fn insert(&mut self, block_id: block::Id, block_bytes: Bytes) {
         if self.entries.contains_key(&block_id) {
             return;
         }
@@ -85,7 +87,7 @@ impl Cache {
         self.total_bytes += block_size;
     }
 
-    pub fn get(&mut self, block_id: &block::Id) -> Option<&block::Bytes> {
+    pub fn get(&mut self, block_id: &block::Id) -> Option<&Bytes> {
         self.access(block_id)
             .map(|block_entry| &block_entry.block_bytes)
     }
@@ -145,13 +147,18 @@ impl Cache {
 
 #[cfg(test)]
 mod tests {
+    use alloc_pool::bytes::{
+        Bytes,
+        BytesMut,
+    };
+
     use super::{
         block,
         Cache,
     };
 
-    fn sample_hello_world() -> block::Bytes {
-        let mut block_bytes_mut = block::BytesMut::new_detached();
+    fn sample_hello_world() -> Bytes {
+        let mut block_bytes_mut = BytesMut::new_detached(Vec::new());
         block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
         block_bytes_mut.freeze()
     }

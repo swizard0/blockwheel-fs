@@ -28,7 +28,7 @@ fn script_simple_defrag() {
     let script = vec![
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ectx00", }),
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx00", }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -36,7 +36,7 @@ fn script_simple_defrag() {
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes(),
+                    block_bytes: hello_world_bytes().freeze(),
                     context: task::WriteBlockContext::External("ectx00"),
                 }),
             },
@@ -46,7 +46,7 @@ fn script_simple_defrag() {
             expect_context: "ictx00",
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ectx01", }),
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx01", }),
             interpreter_context: "ictx01",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
@@ -73,7 +73,7 @@ fn script_simple_defrag() {
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes(),
+                    block_bytes: hello_world_bytes().freeze(),
                     context: task::WriteBlockContext::External("ectx01"),
                 }),
             },
@@ -160,7 +160,7 @@ fn script_simple_defrag() {
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                        block_bytes: hello_world_bytes().into_mut().unwrap(),
+                        block_bytes: hello_world_bytes(),
                         context: task::ReadBlockContext::Defrag {
                             defrag_gaps: DefragGaps::OnlyLeft {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
@@ -180,7 +180,7 @@ fn script_simple_defrag() {
                         defrag_gaps: DefragGaps::OnlyLeft {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
                         },
-                        block_bytes: hello_world_bytes(),
+                        block_bytes: hello_world_bytes().freeze(),
                     },
                 }),
             },
@@ -199,7 +199,7 @@ fn script_simple_defrag() {
                             defrag_gaps: DefragGaps::OnlyLeft {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
                             },
-                            block_bytes: hello_world_bytes(),
+                            block_bytes: hello_world_bytes().freeze(),
                         },
                     }),
                 },
@@ -211,7 +211,7 @@ fn script_simple_defrag() {
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes(),
+                    block_bytes: hello_world_bytes().freeze(),
                     context: task::WriteBlockContext::Defrag,
                 }),
             },
@@ -234,7 +234,7 @@ fn script_simple_defrag() {
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes(), context: "ectx03", }),
+            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx03", }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -242,7 +242,7 @@ fn script_simple_defrag() {
             expect_task: ExpectTask {
                 block_id: block::Id::init().next().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes(),
+                    block_bytes: hello_world_bytes().freeze(),
                     context: task::WriteBlockContext::External("ectx03"),
                 }),
             },
