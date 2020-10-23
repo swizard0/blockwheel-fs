@@ -8,7 +8,7 @@ edition = "2018"
 [dependencies]
 ero = { git = "https://github.com/swizard0/ero.git", branch = "tokio_03" }
 o1 = { git = "https://github.com/swizard0/o1.git" }
-alloc-pool = { git = "https://github.com/swizard0/alloc-pool.git" }
+alloc-pool = { git = "https://github.com/swizard0/alloc-pool.git", branch = "debug_output" }
 
 log = "^0.4"
 crc = "^1.8"
