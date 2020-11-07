@@ -160,7 +160,7 @@ fn script_simple_defrag() {
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                        block_bytes: hello_world_bytes(),
+                        block_bytes: hello_world_bytes().freeze(),
                         context: task::ReadBlockContext::Defrag {
                             defrag_gaps: DefragGaps::OnlyLeft {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },

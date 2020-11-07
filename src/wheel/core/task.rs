@@ -96,7 +96,7 @@ pub struct TaskDoneWriteBlock<C> {
 
 #[derive(Debug)]
 pub struct TaskDoneReadBlock<C> {
-    pub block_bytes: BytesMut,
+    pub block_bytes: Bytes,
     pub context: ReadBlockContext<C>,
 }
 

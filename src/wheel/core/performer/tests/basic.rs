@@ -141,7 +141,7 @@ fn script_basic() {
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                        block_bytes: hello_world_bytes(),
+                        block_bytes: hello_world_bytes().freeze(),
                         context: task::ReadBlockContext::External("ectx03"),
                     }),
                 },
@@ -277,7 +277,7 @@ fn script_basic() {
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                        block_bytes: hello_world_bytes(),
+                        block_bytes: hello_world_bytes().freeze(),
                         context: task::ReadBlockContext::External("ectx0a"),
                     }),
                 },

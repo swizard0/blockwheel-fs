@@ -59,8 +59,10 @@ pub enum Error {
     CommitTagSerialize(bincode::Error),
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
+    BlockWriteCrc(block::CrcError),
     BlockFlush(io::Error),
     BlockRead(io::Error),
+    BlockReadCrc(block::CrcError),
     BlockHeaderDeserialize(bincode::Error),
     CommitTagDeserialize(bincode::Error),
     CorruptedData(CorruptedDataError),
@@ -549,7 +551,8 @@ where C: Context + Send,
                 work_block.extend(write_block.block_bytes.iter());
                 let commit_tag = storage::CommitTag {
                     block_id: task.block_id.clone(),
-                    crc: block::crc(&write_block.block_bytes),
+                    crc: block::crc_bytes(write_block.block_bytes.clone()).await
+                        .map_err(Error::BlockWriteCrc)?,
                     ..Default::default()
                 };
                 bincode::serialize_into(&mut work_block, &commit_tag)
@@ -603,7 +606,7 @@ where C: Context + Send,
                         block_size_actual: block_header.block_size,
                     }));
                 }
-                read_block.block_bytes.extend(work_block[block_buffer_start .. block_buffer_end].iter());
+                read_block.block_bytes.extend_from_slice(&work_block[block_buffer_start .. block_buffer_end]);
                 let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[block_buffer_end ..])
                     .map_err(Error::CommitTagDeserialize)?;
                 if commit_tag.block_id != read_block.block_header.block_id {
@@ -613,10 +616,13 @@ where C: Context + Send,
                         block_id_actual: commit_tag.block_id,
                     }));
                 }
-                if commit_tag.crc != block::crc(&read_block.block_bytes) {
+                let block_bytes = read_block.block_bytes.freeze();
+                let crc_expected = block::crc_bytes(block_bytes.clone()).await
+                    .map_err(Error::BlockReadCrc)?;
+                if commit_tag.crc != crc_expected {
                     return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
                         offset,
-                        crc_expected: block::crc(&read_block.block_bytes),
+                        crc_expected,
                         crc_actual: commit_tag.crc,
                     }));
                 }
@@ -628,7 +634,7 @@ where C: Context + Send,
                     task: task::TaskDone {
                         block_id: read_block.block_header.block_id,
                         kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                            block_bytes: read_block.block_bytes,
+                            block_bytes,
                             context: read_block.context,
                         }),
                     },

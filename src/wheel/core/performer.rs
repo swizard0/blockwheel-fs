@@ -700,13 +700,12 @@ impl<C> Inner<C> where C: Context {
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
                 self.tasks_queue.focus_block_id(block_id.clone())
                     .finish(self.schema.block_get());
-                let block_bytes = read_block.block_bytes.freeze();
-                self.lru_cache.insert(block_id.clone(), block_bytes.clone());
+                self.lru_cache.insert(block_id.clone(), read_block.block_bytes.clone());
                 self.done_task = DoneTask::ReadBlock {
                     block_id: block_id.clone(),
-                    block_bytes: block_bytes.clone(),
+                    block_bytes: read_block.block_bytes.clone(),
                 };
-                self.proceed_read_block_task_done(block_id, block_bytes, read_block.context)
+                self.proceed_read_block_task_done(block_id, read_block.block_bytes, read_block.context)
             },
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::DeleteBlock(delete_block), }, } => {
