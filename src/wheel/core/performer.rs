@@ -146,11 +146,13 @@ pub struct IterBlocksItemOp<C> {
     pub iter_blocks_state: IterBlocksState<C>,
 }
 
+#[derive(Debug)]
 pub struct IterBlocksState<C> {
     pub iter_blocks_stream_context: C,
     pub iter_blocks_cursor: IterBlocksCursor,
 }
 
+#[derive(Debug)]
 pub struct IterBlocksCursor {
     block_id: block::Id,
 }

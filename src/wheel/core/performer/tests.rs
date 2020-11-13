@@ -20,6 +20,9 @@ use super::{
     ReadBlockOp,
     WriteBlockOp,
     DeleteBlockOp,
+    IterBlocksItemOp,
+    IterBlocksFinishOp,
+    IterBlocksState,
     InterpretTask,
     DefragConfig,
     PerformerBuilderInit,
@@ -90,6 +93,7 @@ enum ExpectOp {
     Idle,
     PollRequest,
     PollRequestAndInterpreter { expect_context: C, },
+    MakeIterBlocksStream,
     InterpretTask { expect_offset: u64, expect_task: ExpectTask, },
     InfoSuccess { expect_info: Info, expect_context: C, },
     FlushSuccess { expect_context: C, },
@@ -99,14 +103,20 @@ enum ExpectOp {
     ReadBlockDone { expect_block_bytes: Bytes, expect_context: C, },
     DeleteBlockNotFound { expect_context: C, },
     DeleteBlockDone { expect_block_id: block::Id, expect_context: C, },
+    IterBlocksItem { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: C, },
+    IterBlocksFinish { expect_context: C, },
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum DoOp {
     RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, interpreter_context: C, },
     RequestAndInterpreterIncomingTaskDone { task_done: task::Done<Context>, },
+    RequestAndInterpreterIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, interpreter_context: C, },
     RequestIncomingRequest { request: proto::Request<Context>, },
+    RequestIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, },
     TaskAccept { interpreter_context: C, },
+    StreamReady { iter_context: C, },
 }
 
 #[derive(Debug)]
@@ -131,7 +141,7 @@ struct ExpectTaskWriteBlock {
 #[derive(Debug)]
 struct ExpectTaskReadBlock {
     block_header: storage::BlockHeader,
-    context: task::ReadBlockContext<C>,
+    context: task::ReadBlockContext<Context>,
 }
 
 #[derive(Debug)]
@@ -173,6 +183,8 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 poll.next.incoming_request(request, interpreter_context),
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone { task_done, })) =>
                                 poll.next.incoming_task_done(task_done),
+                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingIterBlocks { iter_blocks_state, interpreter_context, })) =>
+                                poll.next.incoming_iter_blocks(iter_blocks_state, interpreter_context),
                             Some(other_op) =>
                                 panic!("expected DoOp::RequestAndInterpreterIncoming* but got {:?} @ {}", other_op, script_len - script.len()),
                         },
@@ -193,11 +205,39 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 break,
                             Some(ScriptOp::Do(DoOp::RequestIncomingRequest { request, })) =>
                                 poll.next.incoming_request(request),
+                            Some(ScriptOp::Do(DoOp::RequestIncomingIterBlocks { iter_blocks_state, })) =>
+                                poll.next.incoming_iter_blocks(iter_blocks_state),
                             Some(other_op) =>
                                 panic!("expected DoOp::RequestIncoming* but got {:?} @ {}", other_op, script_len - script.len()),
                         },
                     Some(other_op) =>
                         panic!("expecting exact ExpectOp::PollRequest for PollRequest but got {:?} @ {}", other_op, script_len - script.len()),
+                },
+
+            Op::Query(QueryOp::MakeIterBlocksStream(make_iter_block_stream)) =>
+                match script.pop() {
+                    None =>
+                        panic!(
+                            "unexpected script end on MakeIterBlocksStream, expecting ExpectOp::MakeIterBlocksStream @ {}",
+                            script_len - script.len(),
+                        ),
+                    Some(ScriptOp::Expect(ExpectOp::MakeIterBlocksStream)) =>
+                        match script.pop() {
+                            None =>
+                                panic!(
+                                    "unexpected script end on ExpectOp::MakeIterBlocksStream, expecting DoOp::StreamReady @ {}",
+                                    script_len - script.len(),
+                                ),
+                            Some(ScriptOp::Do(DoOp::StreamReady { iter_context, })) =>
+                                make_iter_block_stream.next.stream_ready(iter_context),
+                            Some(other_op) =>
+                                panic!("expected DoOp::StreamReady but got {:?} @ {}", other_op, script_len - script.len()),
+                        },
+                    Some(other_op) =>
+                        panic!(
+                            "expecting exact ExpectOp::MakeIterBlocksStream for MakeIterBlocksStream but got {:?} @ {}",
+                            other_op, script_len - script.len(),
+                        ),
                 },
 
             Op::Query(QueryOp::InterpretTask(InterpretTask { offset, task, next, })) =>
@@ -338,7 +378,7 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         ),
                 },
 
-            Op::Event(Event { op: EventOp::DeleteBlock(TaskDoneOp { context, op: DeleteBlockOp::Done { block_id, }, }), performer,}) =>
+            Op::Event(Event { op: EventOp::DeleteBlock(TaskDoneOp { context, op: DeleteBlockOp::Done { block_id, }, }), performer, }) =>
                 match script.pop() {
                     None =>
                         panic!(
@@ -351,6 +391,46 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                     Some(other_op) =>
                         panic!(
                             "expecting exact ExpectOp::DeleteBlockDone for DeleteBlockOp::Done but got {:?} @ {}",
+                            other_op, script_len - script.len(),
+                        ),
+                },
+
+            Op::Event(Event {
+                op: EventOp::IterBlocksItem(IterBlocksItemOp {
+                    block_id,
+                    block_bytes,
+                    iter_blocks_state: IterBlocksState { iter_blocks_stream_context, .. },
+                }),
+                performer,
+            }) =>
+                match script.pop() {
+                    None =>
+                        panic!(
+                            "unexpected script end on IterBlocksItemOp, expecting ExpectOp::IterBlocksItem @ {}",
+                            script_len - script.len(),
+                        ),
+                    Some(ScriptOp::Expect(ExpectOp::IterBlocksItem { expect_block_id, expect_block_bytes, expect_context, }))
+                        if expect_block_id == block_id && expect_block_bytes == block_bytes && expect_context == iter_blocks_stream_context =>
+                        performer.next(),
+                    Some(other_op) =>
+                        panic!(
+                            "expecting exact ExpectOp::IterBlocksItem for IterBlocksItemOp but got {:?} @ {}",
+                            other_op, script_len - script.len(),
+                        ),
+                },
+
+            Op::Event(Event { op: EventOp::IterBlocksFinish(IterBlocksFinishOp { iter_blocks_stream_context, }, ), performer, }) =>
+                match script.pop() {
+                    None =>
+                        panic!(
+                            "unexpected script end on IterBlocksFinishOp, expecting ExpectOp::IterBlocksFinish @ {}",
+                            script_len - script.len(),
+                        ),
+                    Some(ScriptOp::Expect(ExpectOp::IterBlocksFinish { expect_context, })) if expect_context == iter_blocks_stream_context =>
+                        performer.next(),
+                    Some(other_op) =>
+                        panic!(
+                            "expecting exact ExpectOp::IterBlocksFinish for IterBlocksFinishOp but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
@@ -387,8 +467,8 @@ impl PartialEq<task::WriteBlock<C>> for ExpectTaskWriteBlock {
     }
 }
 
-impl PartialEq<task::ReadBlock<C>> for ExpectTaskReadBlock {
-    fn eq(&self, task: &task::ReadBlock<C>) -> bool {
+impl PartialEq<task::ReadBlock<Context>> for ExpectTaskReadBlock {
+    fn eq(&self, task: &task::ReadBlock<Context>) -> bool {
         self.block_header == task.block_header
             && self.context == task.context
     }
