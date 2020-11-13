@@ -29,6 +29,7 @@ use super::{
     GenServer,
     Flushed,
     Deleted,
+    IterBlocksItem,
 };
 
 #[test]
@@ -261,8 +262,44 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
 
     let Flushed = pid.flush().await
         .map_err(|ero::NoProcError| Error::WheelGoneDuringFlush)?;
-    let _info = pid.info().await
+    let info = pid.info().await
         .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
+
+    // backwards check with iterator
+    let mut iter_blocks = pid.iter_blocks().await
+        .map_err(Error::IterBlocks)?;
+    if iter_blocks.blocks_total_count != info.blocks_count {
+        return Err(Error::BlocksCountMismatch {
+            blocks_count_iter: iter_blocks.blocks_total_count,
+            blocks_count_info: info.blocks_count,
+        });
+    }
+    if iter_blocks.blocks_total_size != info.data_bytes_used {
+        return Err(Error::BlocksSizeMismatch {
+            blocks_size_iter: iter_blocks.blocks_total_size,
+            blocks_size_info: info.data_bytes_used,
+        });
+    }
+    loop {
+        match iter_blocks.blocks_rx.next().await {
+            None =>
+                return Err(Error::IterBlocksRxDropped),
+            Some(IterBlocksItem::Block { block_id, block_bytes, }) =>
+                match blocks.iter().find(|tank| tank.block_id == block_id) {
+                    None =>
+                        return Err(Error::IterBlocksUnexpectedBlockReceived { block_id, }),
+                    Some(tank) => {
+                        let expected_crc = block::crc(&tank.block_bytes);
+                        let provided_crc = block::crc(&block_bytes);
+                        if expected_crc != provided_crc {
+                            return Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, });
+                        }
+                    },
+                },
+            Some(IterBlocksItem::NoMoreBlocks) =>
+                break,
+        }
+    }
 
     Ok::<_, Error>(())
 }
@@ -279,5 +316,18 @@ enum Error {
         block_id: block::Id,
         expected_crc: u64,
         provided_crc: u64,
+    },
+    IterBlocks(super::IterBlocksError),
+    BlocksCountMismatch {
+        blocks_count_iter: usize,
+        blocks_count_info: usize,
+    },
+    BlocksSizeMismatch {
+        blocks_size_iter: usize,
+        blocks_size_info: usize,
+    },
+    IterBlocksRxDropped,
+    IterBlocksUnexpectedBlockReceived {
+        block_id: block::Id,
     },
 }
