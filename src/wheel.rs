@@ -1,11 +1,15 @@
 use futures::{
     future,
     select,
-    stream,
+    stream::{
+        self,
+        FuturesUnordered,
+    },
     channel::{
         mpsc,
         oneshot,
     },
+    SinkExt,
     StreamExt,
     FutureExt,
 };
@@ -15,15 +19,21 @@ use ero::{
     supervisor::SupervisorPid,
 };
 
-use alloc_pool::bytes::BytesPool;
+use alloc_pool::bytes::{
+    Bytes,
+    BytesPool,
+};
 
 use super::{
     block,
     proto,
     storage,
+    context,
     Params,
     Flushed,
     Deleted,
+    IterBlocks,
+    IterBlocksItem,
     blockwheel_context::Context,
 };
 
@@ -120,6 +130,8 @@ async fn busyloop(
 )
     -> Result<(), ErrorSeverity<State, Error>>
 {
+    let mut iter_tasks = FuturesUnordered::new();
+
     let mut op = performer.next();
     loop {
         op = match op {
@@ -128,72 +140,130 @@ async fn busyloop(
                 performer.next(),
 
             performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
-                enum Source<A, B, C> {
+                enum Source<A, B, C, D> {
                     Pid(A),
                     InterpreterDone(B),
                     InterpreterError(C),
+                    IterTask(D),
                 }
 
                 let mut fused_interpret_result_rx = poll.interpreter_context;
-                let source = select! {
-                    result = state.fused_request_rx.next() =>
-                        Source::Pid(result),
-                    result = fused_interpret_result_rx =>
-                        Source::InterpreterDone(result),
-                    result = fused_interpret_error_rx =>
-                        Source::InterpreterError(result),
-                };
-                match source {
-                    Source::Pid(Some(request)) =>
-                        poll.next.incoming_request(request, fused_interpret_result_rx),
-                    Source::InterpreterDone(Ok(interpret::DoneTask { task_done, stats, })) =>
-                        poll.next.incoming_task_done_stats(task_done, stats),
-                    Source::Pid(None) => {
-                        log::debug!("all Pid frontends have been terminated");
-                        return Ok(());
-                    },
-                    Source::InterpreterDone(Err(oneshot::Canceled)) => {
-                        log::debug!("interpreter reply channel closed: shutting down");
-                        return Ok(());
-                    },
-                    Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-                        return Err(ErrorSeverity::Recoverable { state, }),
-                    Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-                        return Err(ErrorSeverity::Fatal(error)),
-                    Source::InterpreterError(Err(oneshot::Canceled)) => {
-                        log::debug!("interpreter error channel closed: shutting down");
-                        return Ok(());
-                    },
+                loop {
+                    let source = if iter_tasks.is_empty() {
+                        select! {
+                            result = state.fused_request_rx.next() =>
+                                Source::Pid(result),
+                            result = fused_interpret_result_rx =>
+                                Source::InterpreterDone(result),
+                            result = fused_interpret_error_rx =>
+                                Source::InterpreterError(result),
+                        }
+                    } else {
+                        select! {
+                            result = state.fused_request_rx.next() =>
+                                Source::Pid(result),
+                            result = fused_interpret_result_rx =>
+                                Source::InterpreterDone(result),
+                            result = fused_interpret_error_rx =>
+                                Source::InterpreterError(result),
+                            result = iter_tasks.next() => match result {
+                                None =>
+                                    unreachable!(),
+                                Some(iter_task_done) =>
+                                    Source::IterTask(iter_task_done),
+                            },
+                        }
+                    };
+                    break match source {
+                        Source::Pid(Some(request)) =>
+                            poll.next.incoming_request(request, fused_interpret_result_rx),
+                        Source::InterpreterDone(Ok(interpret::DoneTask { task_done, stats, })) =>
+                            poll.next.incoming_task_done_stats(task_done, stats),
+                        Source::Pid(None) => {
+                            log::debug!("all Pid frontends have been terminated");
+                            return Ok(());
+                        },
+                        Source::InterpreterDone(Err(oneshot::Canceled)) => {
+                            log::debug!("interpreter reply channel closed: shutting down");
+                            return Ok(());
+                        },
+                        Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+                            return Err(ErrorSeverity::Recoverable { state, }),
+                        Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+                            return Err(ErrorSeverity::Fatal(error)),
+                        Source::InterpreterError(Err(oneshot::Canceled)) => {
+                            log::debug!("interpreter error channel closed: shutting down");
+                            return Ok(());
+                        },
+                        Source::IterTask(IterTaskDone::PeerLost) => {
+                            log::debug!("client closed iteration channel");
+                            continue;
+                        },
+                        Source::IterTask(IterTaskDone::ItemSent(iter_block_state)) =>
+                            poll.next.incoming_iter_blocks(iter_block_state, fused_interpret_result_rx),
+                        Source::IterTask(IterTaskDone::Finished) => {
+                            log::debug!("iteration finished");
+                            continue;
+                        },
+                    }
                 }
             },
 
             performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
-                enum Source<A, B> {
+                enum Source<A, B, C> {
                     Pid(A),
                     InterpreterError(B),
+                    IterTask(C),
                 }
 
-                let source = select! {
-                    result = state.fused_request_rx.next() =>
-                        Source::Pid(result),
-                    result = fused_interpret_error_rx =>
-                        Source::InterpreterError(result),
-                };
-                match source {
-                    Source::Pid(Some(request)) =>
-                        poll.next.incoming_request(request),
-                    Source::Pid(None) => {
-                        log::debug!("all Pid frontends have been terminated");
-                        return Ok(());
-                    },
-                    Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-                        return Err(ErrorSeverity::Recoverable { state, }),
-                    Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-                        return Err(ErrorSeverity::Fatal(error)),
-                    Source::InterpreterError(Err(oneshot::Canceled)) => {
-                        log::debug!("interpreter error channel closed: shutting down");
-                        return Ok(());
-                    },
+                loop {
+                    let source = if iter_tasks.is_empty() {
+                        select! {
+                            result = state.fused_request_rx.next() =>
+                                Source::Pid(result),
+                            result = fused_interpret_error_rx =>
+                                Source::InterpreterError(result),
+                        }
+                    } else {
+                        select! {
+                            result = state.fused_request_rx.next() =>
+                                Source::Pid(result),
+                            result = fused_interpret_error_rx =>
+                                Source::InterpreterError(result),
+                            result = iter_tasks.next() => match result {
+                                None =>
+                                    unreachable!(),
+                                Some(iter_task_done) =>
+                                    Source::IterTask(iter_task_done),
+                            },
+                        }
+                    };
+                    break match source {
+                        Source::Pid(Some(request)) =>
+                            poll.next.incoming_request(request),
+                        Source::Pid(None) => {
+                            log::debug!("all Pid frontends have been terminated");
+                            return Ok(());
+                        },
+                        Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+                            return Err(ErrorSeverity::Recoverable { state, }),
+                        Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+                            return Err(ErrorSeverity::Fatal(error)),
+                        Source::InterpreterError(Err(oneshot::Canceled)) => {
+                            log::debug!("interpreter error channel closed: shutting down");
+                            return Ok(());
+                        },
+                        Source::IterTask(IterTaskDone::PeerLost) => {
+                            log::debug!("client closed iteration channel");
+                            continue;
+                        },
+                        Source::IterTask(IterTaskDone::ItemSent(iter_block_state)) =>
+                            poll.next.incoming_iter_blocks(iter_block_state),
+                        Source::IterTask(IterTaskDone::Finished) => {
+                            log::debug!("iteration finished");
+                            continue;
+                        },
+                    }
                 }
             },
 
@@ -202,6 +272,24 @@ async fn busyloop(
                     .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
                 let performer = next.task_accepted(reply_rx.fuse());
                 performer.next()
+            },
+
+            performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
+                blocks_total_count,
+                blocks_total_size,
+                iter_blocks_context: reply_tx,
+                next,
+            })) => {
+                let (iter_blocks_tx, iter_blocks_rx) = mpsc::channel(0);
+                let iter_blocks = IterBlocks {
+                    blocks_total_count,
+                    blocks_total_size,
+                    blocks_rx: iter_blocks_rx,
+                };
+                if let Err(_send_error) = reply_tx.send(iter_blocks) {
+                    log::warn!("Pid is gone during IterBlocks query result send");
+                }
+                next.stream_ready(iter_blocks_tx)
             },
 
             performer::Op::Event(performer::Event {
@@ -300,6 +388,81 @@ async fn busyloop(
                 performer.next()
             },
 
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::IterBlocksItem(
+                    performer::IterBlocksItemOp {
+                        block_id,
+                        block_bytes,
+                        iter_blocks_state: performer::IterBlocksState {
+                            iter_blocks_stream_context: blocks_tx,
+                            iter_blocks_cursor,
+                        },
+                    },
+                ),
+                performer,
+            }) => {
+                iter_tasks.push(push_iter_blocks_item(
+                    blocks_tx,
+                    IterTask::Item {
+                        block_id,
+                        block_bytes,
+                        iter_blocks_cursor,
+                    },
+                ));
+                performer.next()
+            },
+
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::IterBlocksFinish(
+                    performer::IterBlocksFinishOp {
+                        iter_blocks_stream_context: blocks_tx,
+                    },
+                ),
+                performer,
+            }) => {
+                iter_tasks.push(push_iter_blocks_item(blocks_tx, IterTask::Finish));
+                performer.next()
+            },
+
         };
+    }
+}
+
+enum IterTask {
+    Item {
+        block_id: block::Id,
+        block_bytes: Bytes,
+        iter_blocks_cursor: performer::IterBlocksCursor,
+    },
+    Finish,
+}
+
+enum IterTaskDone {
+    PeerLost,
+    ItemSent(performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>),
+    Finished,
+}
+
+async fn push_iter_blocks_item(mut blocks_tx: mpsc::Sender<IterBlocksItem>, task: IterTask) -> IterTaskDone {
+    match task {
+        IterTask::Item { block_id, block_bytes, iter_blocks_cursor, } => {
+            let item = IterBlocksItem::Block { block_id, block_bytes, };
+            match blocks_tx.send(item).await {
+                Ok(()) =>
+                    IterTaskDone::ItemSent(performer::IterBlocksState {
+                        iter_blocks_stream_context: blocks_tx,
+                        iter_blocks_cursor,
+                    }),
+                Err(_send_error) =>
+                    IterTaskDone::PeerLost,
+            }
+        },
+        IterTask::Finish =>
+            match blocks_tx.send(IterBlocksItem::NoMoreBlocks).await {
+                Ok(()) =>
+                    IterTaskDone::Finished,
+                Err(_send_error) =>
+                    IterTaskDone::PeerLost,
+            }
     }
 }

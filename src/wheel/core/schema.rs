@@ -941,6 +941,10 @@ impl Schema {
         BlockGet { blocks_index: &mut self.blocks_index, }
     }
 
+    pub fn next_block_id_from(&self, offset: block::Id) -> Option<block::Id> {
+        self.blocks_index.next_block_id_from(offset)
+    }
+
     fn make_defrag_op(&mut self, space_key_left: SpaceKey, moving_block_id: block::Id) -> DefragOp {
         let defrag_gaps = self.blocks_index.with_mut(&moving_block_id, |block_entry| {
             match block_entry.environs.right {

@@ -12,6 +12,7 @@ pub enum Request<C> where C: Context {
     WriteBlock(RequestWriteBlock<C::WriteBlock>),
     ReadBlock(RequestReadBlock<C::ReadBlock>),
     DeleteBlock(RequestDeleteBlock<C::DeleteBlock>),
+    IterBlocks(RequestIterBlocks<C::IterBlocks>),
 }
 
 #[derive(Debug)]
@@ -39,5 +40,10 @@ pub struct RequestReadBlock<C> {
 #[derive(Debug)]
 pub struct RequestDeleteBlock<C> {
     pub block_id: block::Id,
+    pub context: C,
+}
+
+#[derive(Debug)]
+pub struct RequestIterBlocks<C> {
     pub context: C,
 }

@@ -133,6 +133,11 @@ pub enum DeleteBlockError {
     NotFound,
 }
 
+#[derive(Debug)]
+pub enum IterBlocksError {
+    GenServer(ero::NoProcError),
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Deleted;
 
@@ -156,6 +161,17 @@ pub struct InterpretStats {
     pub count_no_seek: usize,
     pub count_seek_forward: usize,
     pub count_seek_backward: usize,
+}
+
+pub struct IterBlocks {
+    pub blocks_total_count: usize,
+    pub blocks_total_size: usize,
+    pub blocks_rx: mpsc::Receiver<IterBlocksItem>,
+}
+
+pub enum IterBlocksItem {
+    Block { block_id: block::Id, block_bytes: Bytes, },
+    NoMoreBlocks,
 }
 
 impl Pid {
@@ -252,11 +268,28 @@ impl Pid {
             }
         }
     }
+
+    pub async fn iter_blocks(&mut self) -> Result<IterBlocks, IterBlocksError> {
+        loop {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            self.request_tx
+                .send(proto::Request::IterBlocks(proto::RequestIterBlocks { context: reply_tx, })).await
+                .map_err(|_send_error| IterBlocksError::GenServer(ero::NoProcError))?;
+
+            match reply_rx.await {
+                Ok(iter_blocks) =>
+                    return Ok(iter_blocks),
+                Err(oneshot::Canceled) =>
+                    (),
+            }
+        }
+    }
 }
 
 mod blockwheel_context {
     use futures::{
         channel::{
+            mpsc,
             oneshot,
         },
         future,
@@ -270,9 +303,11 @@ mod blockwheel_context {
         wheel::{
             interpret,
         },
+        Info,
         Deleted,
         Flushed,
-        Info,
+        IterBlocks,
+        IterBlocksItem,
     };
 
     pub struct Context;
@@ -283,6 +318,8 @@ mod blockwheel_context {
         type WriteBlock = oneshot::Sender<Result<block::Id, RequestWriteBlockError>>;
         type ReadBlock = oneshot::Sender<Result<Bytes, RequestReadBlockError>>;
         type DeleteBlock = oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>;
+        type IterBlocks = oneshot::Sender<IterBlocks>;
+        type IterBlocksStream = mpsc::Sender<IterBlocksItem>;
         type Interpreter = future::Fuse<interpret::RequestReplyRx<Self>>;
     }
 

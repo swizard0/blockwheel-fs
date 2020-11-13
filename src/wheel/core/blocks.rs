@@ -1,6 +1,6 @@
 use std::{
     collections::{
-        HashMap,
+        BTreeMap,
     },
 };
 
@@ -13,14 +13,14 @@ use super::{
 
 #[derive(Debug)]
 pub struct Index {
-    index: HashMap<block::Id, BlockEntry>,
+    index: BTreeMap<block::Id, BlockEntry>,
     blocks_total_size: usize,
 }
 
 impl Index {
     pub fn new() -> Index {
         Index {
-            index: HashMap::new(),
+            index: BTreeMap::new(),
             blocks_total_size: 0,
         }
     }
@@ -31,6 +31,11 @@ impl Index {
 
     pub fn blocks_total_size(&self) -> usize {
         self.blocks_total_size
+    }
+
+    pub fn next_block_id_from(&self, offset: block::Id) -> Option<block::Id> {
+        self.index.range(offset ..).next()
+            .map(|kv| kv.0.clone())
     }
 
     pub fn insert(&mut self, block_id: block::Id, block_entry: BlockEntry) {

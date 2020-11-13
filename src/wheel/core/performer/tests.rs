@@ -46,6 +46,8 @@ impl BaseContext for Context {
     type WriteBlock = C;
     type ReadBlock = C;
     type DeleteBlock = C;
+    type IterBlocks = C;
+    type IterBlocksStream = C;
     type Interpreter = C;
 }
 

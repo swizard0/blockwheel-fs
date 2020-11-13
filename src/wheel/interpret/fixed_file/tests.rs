@@ -470,6 +470,8 @@ impl Context for LocalContext {
     type WriteBlock = C;
     type ReadBlock = C;
     type DeleteBlock = C;
+    type IterBlocks = C;
+    type IterBlocksStream = C;
     type Interpreter = C;
 }
 

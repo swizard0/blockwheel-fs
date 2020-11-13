@@ -158,7 +158,7 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
         self.queue.tasks.pop_write(&mut block_entry.tasks_head)
     }
 
-    pub fn pop_read_task<'a, B>(&mut self, mut block_get: B) -> Option<ReadBlock<C::ReadBlock>> where B: BlockGet {
+    pub fn pop_read_task<'a, B>(&mut self, mut block_get: B) -> Option<ReadBlock<C>> where B: BlockGet {
         let block_entry = block_get.by_id(&self.block_id)?;
         self.queue.tasks.pop_read(&mut block_entry.tasks_head)
     }

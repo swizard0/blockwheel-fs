@@ -18,7 +18,7 @@ use super::{
 
 pub struct Tasks<C> where C: Context {
     tasks_write: Set<WriteBlock<C::WriteBlock>>,
-    tasks_read: Forest1<ReadBlock<C::ReadBlock>>,
+    tasks_read: Forest1<ReadBlock<C>>,
     tasks_delete: Forest1<DeleteBlock<C::DeleteBlock>>,
     tasks_flush: Vec<Flush<C::Flush>>,
 }
@@ -93,7 +93,7 @@ impl<C> Tasks<C> where C: Context {
         }
     }
 
-    pub fn pop_read(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C::ReadBlock>> {
+    pub fn pop_read(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C>> {
         if let Some(node_ref) = tasks_head.head_read.take() {
             let node = self.tasks_read.remove(node_ref).unwrap();
             tasks_head.head_read = node.parent;
