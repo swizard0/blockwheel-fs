@@ -487,7 +487,7 @@ where F: FnOnce(Pid) -> FF,
       FF: Future<Output = Result<(), Error>>,
 {
     let pid = gen_server.pid();
-    let interpreter_run = gen_server.run();
+    let interpreter_run = gen_server.run(64);
     let (interpreter_task, interpreter_handle) = interpreter_run.remote_handle();
     let interpreter_handle_fused = interpreter_handle.fuse();
     pin_mut!(interpreter_handle_fused);

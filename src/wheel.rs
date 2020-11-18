@@ -108,7 +108,7 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
     };
 
     let interpreter_pid = interpreter_gen_server.pid();
-    let interpreter_task = interpreter_gen_server.run();
+    let interpreter_task = interpreter_gen_server.run(state.params.wheel_task_tasks_limit);
     let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
     supervisor_pid.spawn_link_permanent(
         async move {

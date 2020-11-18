@@ -7,10 +7,14 @@ use std::{
 };
 
 use futures::{
+    stream::{
+        FuturesUnordered,
+    },
     channel::{
         mpsc,
         oneshot,
     },
+    select,
     SinkExt,
     StreamExt,
 };
@@ -66,6 +70,7 @@ pub enum Error {
     BlockHeaderDeserialize(bincode::Error),
     CommitTagDeserialize(bincode::Error),
     CorruptedData(CorruptedDataError),
+    WheelPeerLost,
 }
 
 #[derive(Debug)]
@@ -418,12 +423,13 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub async fn run(self) -> Result<(), Error> where C: Send {
+    pub async fn run(self, restore_block_tasks_limit: usize) -> Result<(), Error> where C: Send {
         busyloop(
             self.request_rx,
             self.wheel_file,
             self.work_block,
             self.storage_layout,
+            restore_block_tasks_limit,
         ).await
     }
 }
@@ -508,168 +514,224 @@ async fn try_read_block(
 }
 
 async fn busyloop<C>(
-    mut request_rx: mpsc::Receiver<Request<C>>,
+    request_rx: mpsc::Receiver<Request<C>>,
     mut wheel_file: fs::File,
     mut work_block: Vec<u8>,
     storage_layout: storage::Layout,
+    restore_block_tasks_limit: usize,
 )
     -> Result<(), Error>
 where C: Context + Send,
 {
     let mut stats = InterpretStats::default();
+    let mut tasks = FuturesUnordered::new();
+    let mut tasks_count = 0;
+
+    let mut fused_request_rx = request_rx.fuse();
 
     let mut cursor = storage_layout.wheel_header_size as u64;
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
 
-    while let Some(Request { offset, task, reply_tx, }) = request_rx.next().await {
-        stats.count_total += 1;
+    loop {
+        enum Event<R, T> { Request(R), Task(T), }
 
-        if cursor != offset {
-            if cursor < offset {
-                stats.count_seek_forward += 1;
-            } else if cursor > offset {
-                stats.count_seek_backward += 1;
-            }
-            wheel_file.seek(io::SeekFrom::Start(offset)).await
-                .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
-            cursor = offset;
-        } else {
-            stats.count_no_seek += 1;
-        }
-
-        match task.kind {
-            task::TaskKind::WriteBlock(write_block) => {
-                let block_header = storage::BlockHeader {
-                    block_id: task.block_id.clone(),
-                    block_size: write_block.block_bytes.len(),
-                    ..Default::default()
-                };
-                work_block.clear();
-                bincode::serialize_into(&mut work_block, &block_header)
-                    .map_err(Error::BlockHeaderSerialize)?;
-                work_block.extend(write_block.block_bytes.iter());
-                let commit_tag = storage::CommitTag {
-                    block_id: task.block_id.clone(),
-                    crc: block::crc_bytes(write_block.block_bytes.clone()).await
-                        .map_err(Error::BlockWriteCrc)?,
-                    ..Default::default()
-                };
-                bincode::serialize_into(&mut work_block, &commit_tag)
-                    .map_err(Error::CommitTagSerialize)?;
-
-                wheel_file.write_all(&work_block).await
-                    .map_err(Error::BlockWrite)?;
-                wheel_file.flush().await
-                    .map_err(Error::BlockFlush)?;
-
-                cursor += work_block.len() as u64;
-
-                let task_done = task::Done {
-                    current_offset: cursor,
-                    task: task::TaskDone {
-                        block_id: task.block_id,
-                        kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
-                            context: write_block.context,
-                        }),
+        let event = match tasks_count {
+            0 =>
+                Event::Request(fused_request_rx.next().await),
+            count if count < restore_block_tasks_limit =>
+                select! {
+                    result = fused_request_rx.next() =>
+                        Event::Request(result),
+                    result = tasks.next() => match result {
+                        None =>
+                            unreachable!(),
+                        Some(task) => {
+                            tasks_count -= 1;
+                            Event::Task(task)
+                        },
                     },
-                };
-                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
-                    break;
+                },
+            _ =>
+                match tasks.next().await {
+                    None =>
+                        unreachable!(),
+                    Some(task) => {
+                        tasks_count -= 1;
+                        Event::Task(task)
+                    },
+                },
+        };
+
+        match event {
+
+            Event::Request(None) =>
+                break,
+
+            Event::Request(Some(Request { offset, task, reply_tx, })) => {
+                stats.count_total += 1;
+
+                if cursor != offset {
+                    if cursor < offset {
+                        stats.count_seek_forward += 1;
+                    } else if cursor > offset {
+                        stats.count_seek_backward += 1;
+                    }
+                    wheel_file.seek(io::SeekFrom::Start(offset)).await
+                        .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
+                    cursor = offset;
+                } else {
+                    stats.count_no_seek += 1;
+                }
+
+                match task.kind {
+                    task::TaskKind::WriteBlock(write_block) => {
+                        let block_header = storage::BlockHeader {
+                            block_id: task.block_id.clone(),
+                            block_size: write_block.block_bytes.len(),
+                            ..Default::default()
+                        };
+                        work_block.clear();
+                        bincode::serialize_into(&mut work_block, &block_header)
+                            .map_err(Error::BlockHeaderSerialize)?;
+                        work_block.extend(write_block.block_bytes.iter());
+                        let commit_tag = storage::CommitTag {
+                            block_id: task.block_id.clone(),
+                            crc: block::crc_bytes(write_block.block_bytes.clone()).await
+                                .map_err(Error::BlockWriteCrc)?,
+                            ..Default::default()
+                        };
+                        bincode::serialize_into(&mut work_block, &commit_tag)
+                            .map_err(Error::CommitTagSerialize)?;
+
+                        wheel_file.write_all(&work_block).await
+                            .map_err(Error::BlockWrite)?;
+                        wheel_file.flush().await
+                            .map_err(Error::BlockFlush)?;
+
+                        cursor += work_block.len() as u64;
+
+                        let task_done = task::Done {
+                            current_offset: cursor,
+                            task: task::TaskDone {
+                                block_id: task.block_id,
+                                kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                    context: write_block.context,
+                                }),
+                            },
+                        };
+                        if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
+                            break;
+                        }
+                    },
+
+                    task::TaskKind::ReadBlock(mut read_block) => {
+                        let total_chunk_size = storage_layout.data_size_block_min()
+                            + read_block.block_header.block_size;
+                        work_block.resize(total_chunk_size, 0);
+                        wheel_file.read_exact(&mut work_block).await
+                            .map_err(Error::BlockRead)?;
+
+                        let block_buffer_start = storage_layout.block_header_size;
+                        let block_buffer_end = work_block.len() - storage_layout.commit_tag_size;
+
+                        let block_header: storage::BlockHeader = bincode::deserialize_from(&work_block[.. block_buffer_start])
+                            .map_err(Error::BlockHeaderDeserialize)?;
+                        if block_header.block_id != read_block.block_header.block_id {
+                            return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
+                                offset,
+                                block_id_expected: read_block.block_header.block_id,
+                                block_id_actual: block_header.block_id,
+                            }));
+                        }
+                        if block_header.block_size != read_block.block_header.block_size {
+                            return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
+                                offset,
+                                block_id: block_header.block_id,
+                                block_size_expected: read_block.block_header.block_size,
+                                block_size_actual: block_header.block_size,
+                            }));
+                        }
+                        read_block.block_bytes.extend_from_slice(&work_block[block_buffer_start .. block_buffer_end]);
+                        let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[block_buffer_end ..])
+                            .map_err(Error::CommitTagDeserialize)?;
+                        if commit_tag.block_id != read_block.block_header.block_id {
+                            return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
+                                offset,
+                                block_id_expected: read_block.block_header.block_id,
+                                block_id_actual: commit_tag.block_id,
+                            }));
+                        }
+                        let block_bytes = read_block.block_bytes.freeze();
+                        let block_id = read_block.block_header.block_id;
+                        let context = read_block.context;
+
+                        // moving block restore to separate task, unlock main loop
+                        tasks.push(async move {
+                            let crc_expected = block::crc_bytes(block_bytes.clone()).await
+                                .map_err(Error::BlockReadCrc)?;
+                            if commit_tag.crc != crc_expected {
+                                return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
+                                    offset,
+                                    crc_expected,
+                                    crc_actual: commit_tag.crc,
+                                }));
+                            }
+
+                            let task_done = task::Done {
+                                current_offset: cursor,
+                                task: task::TaskDone {
+                                    block_id,
+                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                        block_bytes,
+                                        context,
+                                    }),
+                                },
+                            };
+
+                            reply_tx.send(DoneTask { task_done, stats, })
+                                .map_err(|_send_error| Error::WheelPeerLost)
+                        });
+                        tasks_count += 1;
+                        cursor += work_block.len() as u64;
+                    },
+
+                    task::TaskKind::DeleteBlock(delete_block) => {
+                        let tombstone_tag = storage::TombstoneTag::default();
+                        work_block.clear();
+                        bincode::serialize_into(&mut work_block, &tombstone_tag)
+                            .map_err(Error::TombstoneTagSerialize)?;
+
+                        wheel_file.write_all(&work_block).await
+                            .map_err(Error::BlockWrite)?;
+                        wheel_file.flush().await
+                            .map_err(Error::BlockFlush)?;
+
+                        cursor += work_block.len() as u64;
+
+                        let task_done = task::Done {
+                            current_offset: cursor,
+                            task: task::TaskDone {
+                                block_id: task.block_id,
+                                kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
+                                    context: delete_block.context,
+                                }),
+                            },
+                        };
+                        if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
+                            break;
+                        }
+                    },
                 }
             },
 
-            task::TaskKind::ReadBlock(mut read_block) => {
-                let total_chunk_size = storage_layout.data_size_block_min()
-                    + read_block.block_header.block_size;
-                work_block.resize(total_chunk_size, 0);
-                wheel_file.read_exact(&mut work_block).await
-                    .map_err(Error::BlockRead)?;
+            Event::Task(Err(Error::WheelPeerLost)) =>
+                break,
 
-                let block_buffer_start = storage_layout.block_header_size;
-                let block_buffer_end = work_block.len() - storage_layout.commit_tag_size;
-
-                let block_header: storage::BlockHeader = bincode::deserialize_from(&work_block[.. block_buffer_start])
-                    .map_err(Error::BlockHeaderDeserialize)?;
-                if block_header.block_id != read_block.block_header.block_id {
-                    return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
-                        offset,
-                        block_id_expected: read_block.block_header.block_id,
-                        block_id_actual: block_header.block_id,
-                    }));
-                }
-                if block_header.block_size != read_block.block_header.block_size {
-                    return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
-                        offset,
-                        block_id: block_header.block_id,
-                        block_size_expected: read_block.block_header.block_size,
-                        block_size_actual: block_header.block_size,
-                    }));
-                }
-                read_block.block_bytes.extend_from_slice(&work_block[block_buffer_start .. block_buffer_end]);
-                let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[block_buffer_end ..])
-                    .map_err(Error::CommitTagDeserialize)?;
-                if commit_tag.block_id != read_block.block_header.block_id {
-                    return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
-                        offset,
-                        block_id_expected: read_block.block_header.block_id,
-                        block_id_actual: commit_tag.block_id,
-                    }));
-                }
-                let block_bytes = read_block.block_bytes.freeze();
-                let crc_expected = block::crc_bytes(block_bytes.clone()).await
-                    .map_err(Error::BlockReadCrc)?;
-                if commit_tag.crc != crc_expected {
-                    return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
-                        offset,
-                        crc_expected,
-                        crc_actual: commit_tag.crc,
-                    }));
-                }
-
-                cursor += work_block.len() as u64;
-
-                let task_done = task::Done {
-                    current_offset: cursor,
-                    task: task::TaskDone {
-                        block_id: read_block.block_header.block_id,
-                        kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                            block_bytes,
-                            context: read_block.context,
-                        }),
-                    },
-                };
-                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
-                    break;
-                }
+            Event::Task(task_result) => {
+                let () = task_result?;
             },
 
-            task::TaskKind::DeleteBlock(delete_block) => {
-                let tombstone_tag = storage::TombstoneTag::default();
-                work_block.clear();
-                bincode::serialize_into(&mut work_block, &tombstone_tag)
-                    .map_err(Error::TombstoneTagSerialize)?;
-
-                wheel_file.write_all(&work_block).await
-                    .map_err(Error::BlockWrite)?;
-                wheel_file.flush().await
-                    .map_err(Error::BlockFlush)?;
-
-                cursor += work_block.len() as u64;
-
-                let task_done = task::Done {
-                    current_offset: cursor,
-                    task: task::TaskDone {
-                        block_id: task.block_id,
-                        kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
-                            context: delete_block.context,
-                        }),
-                    },
-                };
-                if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
-                    break;
-                }
-            },
         }
     }
 
