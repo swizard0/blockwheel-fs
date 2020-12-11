@@ -1,12 +1,12 @@
 [package]
 name = "ero-blockwheel-fs"
-version = "0.10.3"
+version = "0.10.4"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Persistent binary blocks with rotating wheel like access."
 edition = "2018"
 
 [dependencies]
-ero = { git = "https://github.com/swizard0/ero.git", branch = "tokio_03" }
+ero = { git = "https://github.com/swizard0/ero.git" }
 o1 = { git = "https://github.com/swizard0/o1.git" }
 alloc-pool = { git = "https://github.com/swizard0/alloc-pool.git" }
 
