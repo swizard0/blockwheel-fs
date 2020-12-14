@@ -64,7 +64,7 @@ pub enum Error {
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockWriteCrc(block::CrcError),
-    BlockFlush(io::Error),
+    // BlockFlush(io::Error),
     BlockRead(io::Error),
     BlockReadCrc(block::CrcError),
     BlockHeaderDeserialize(bincode::Error),
@@ -606,8 +606,8 @@ where C: Context + Send,
 
                         wheel_file.write_all(&work_block).await
                             .map_err(Error::BlockWrite)?;
-                        wheel_file.flush().await
-                            .map_err(Error::BlockFlush)?;
+                        // wheel_file.flush().await
+                        //     .map_err(Error::BlockFlush)?;
 
                         cursor += work_block.len() as u64;
 
@@ -704,8 +704,8 @@ where C: Context + Send,
 
                         wheel_file.write_all(&work_block).await
                             .map_err(Error::BlockWrite)?;
-                        wheel_file.flush().await
-                            .map_err(Error::BlockFlush)?;
+                        // wheel_file.flush().await
+                        //     .map_err(Error::BlockFlush)?;
 
                         cursor += work_block.len() as u64;
 
