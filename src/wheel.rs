@@ -310,6 +310,8 @@ async fn busyloop(
                 ),
                 performer,
             }) => {
+                let interpret::fixed_file::Synced = interpreter_pid.device_sync().await
+                    .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
                 if let Err(_send_error) = reply_tx.send(Flushed) {
                     log::warn!("Pid is gone during Flush query result send");
                 }

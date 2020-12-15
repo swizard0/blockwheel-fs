@@ -64,13 +64,13 @@ pub enum Error {
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockWriteCrc(block::CrcError),
-    // BlockFlush(io::Error),
     BlockRead(io::Error),
     BlockReadCrc(block::CrcError),
     BlockHeaderDeserialize(bincode::Error),
     CommitTagDeserialize(bincode::Error),
     CorruptedData(CorruptedDataError),
     WheelPeerLost,
+    DeviceSyncFlush(io::Error),
 }
 
 #[derive(Debug)]
@@ -183,8 +183,8 @@ pub struct OpenParams<P> {
 pub struct GenServer<C> where C: Context {
     wheel_file: fs::File,
     work_block: Vec<u8>,
-    request_tx: mpsc::Sender<Request<C>>,
-    request_rx: mpsc::Receiver<Request<C>>,
+    request_tx: mpsc::Sender<Command<C>>,
+    request_rx: mpsc::Receiver<Command<C>>,
     storage_layout: storage::Layout,
 }
 
@@ -436,18 +436,39 @@ impl<C> GenServer<C> where C: Context {
 
 #[derive(Clone)]
 pub struct Pid<C> where C: Context {
-    request_tx: mpsc::Sender<Request<C>>,
+    request_tx: mpsc::Sender<Command<C>>,
 }
 
 impl<C> Pid<C> where C: Context {
     pub async fn push_request(&mut self, offset: u64, task: RequestTask<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.request_tx
-            .send(Request { offset, task, reply_tx, })
+            .send(Command::Request(Request { offset, task, reply_tx, }))
             .await
             .map_err(|_send_error| ero::NoProcError)?;
         Ok(reply_rx)
     }
+
+    pub async fn device_sync(&mut self) -> Result<Synced, ero::NoProcError> {
+        loop {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            self.request_tx.send(Command::DeviceSync { reply_tx, }).await
+                .map_err(|_send_error| ero::NoProcError)?;
+            match reply_rx.await {
+                Ok(Synced) =>
+                    return Ok(Synced),
+                Err(oneshot::Canceled) =>
+                    (),
+            }
+        }
+    }
+}
+
+pub struct Synced;
+
+enum Command<C> where C: Context {
+    Request(Request<C>),
+    DeviceSync { reply_tx: oneshot::Sender<Synced>, },
 }
 
 enum ReadBlockStatus {
@@ -514,7 +535,7 @@ async fn try_read_block(
 }
 
 async fn busyloop<C>(
-    request_rx: mpsc::Receiver<Request<C>>,
+    request_rx: mpsc::Receiver<Command<C>>,
     mut wheel_file: fs::File,
     mut work_block: Vec<u8>,
     storage_layout: storage::Layout,
@@ -534,15 +555,15 @@ where C: Context + Send,
         .map_err(Error::WheelFileInitialSeek)?;
 
     loop {
-        enum Event<R, T> { Request(R), Task(T), }
+        enum Event<C, T> { Command(C), Task(T), }
 
         let event = match tasks_count {
             0 =>
-                Event::Request(fused_request_rx.next().await),
+                Event::Command(fused_request_rx.next().await),
             count if count < restore_block_tasks_limit =>
                 select! {
                     result = fused_request_rx.next() =>
-                        Event::Request(result),
+                        Event::Command(result),
                     result = tasks.next() => match result {
                         None =>
                             unreachable!(),
@@ -565,10 +586,10 @@ where C: Context + Send,
 
         match event {
 
-            Event::Request(None) =>
+            Event::Command(None) =>
                 break,
 
-            Event::Request(Some(Request { offset, task, reply_tx, })) => {
+            Event::Command(Some(Command::Request(Request { offset, task, reply_tx, }))) => {
                 stats.count_total += 1;
 
                 if cursor != offset {
@@ -606,8 +627,6 @@ where C: Context + Send,
 
                         wheel_file.write_all(&work_block).await
                             .map_err(Error::BlockWrite)?;
-                        // wheel_file.flush().await
-                        //     .map_err(Error::BlockFlush)?;
 
                         cursor += work_block.len() as u64;
 
@@ -704,8 +723,6 @@ where C: Context + Send,
 
                         wheel_file.write_all(&work_block).await
                             .map_err(Error::BlockWrite)?;
-                        // wheel_file.flush().await
-                        //     .map_err(Error::BlockFlush)?;
 
                         cursor += work_block.len() as u64;
 
@@ -722,6 +739,14 @@ where C: Context + Send,
                             break;
                         }
                     },
+                }
+            },
+
+            Event::Command(Some(Command::DeviceSync { reply_tx, })) => {
+                wheel_file.flush().await
+                    .map_err(Error::DeviceSyncFlush)?;
+                if let Err(_send_error) = reply_tx.send(Synced) {
+                    break;
                 }
             },
 
