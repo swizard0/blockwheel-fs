@@ -63,7 +63,6 @@ pub enum Error {
     CommitTagSerialize(bincode::Error),
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
-    BlockWriteCrc(block::CrcError),
     BlockRead(io::Error),
     BlockReadCrc(block::CrcError),
     BlockHeaderDeserialize(bincode::Error),
@@ -618,8 +617,7 @@ where C: Context + Send,
                         work_block.extend(write_block.block_bytes.iter());
                         let commit_tag = storage::CommitTag {
                             block_id: task.block_id.clone(),
-                            crc: block::crc_bytes(write_block.block_bytes.clone()).await
-                                .map_err(Error::BlockWriteCrc)?,
+                            crc: write_block.block_crc,
                             ..Default::default()
                         };
                         bincode::serialize_into(&mut work_block, &commit_tag)
