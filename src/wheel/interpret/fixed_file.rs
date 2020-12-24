@@ -4,6 +4,10 @@ use std::{
         Path,
         PathBuf,
     },
+    time::{
+        Instant,
+        Duration,
+    },
 };
 
 use futures::{
@@ -533,6 +537,16 @@ async fn try_read_block(
     Ok(ReadBlockStatus::BlockFound { next_cursor, })
 }
 
+#[derive(Debug, Default)]
+struct Timings {
+    event_wait: Duration,
+    seek: Duration,
+    write_write: Duration,
+    read: Duration,
+    write_delete: Duration,
+    total: Duration,
+}
+
 async fn busyloop<C>(
     request_rx: mpsc::Receiver<Command<C>>,
     mut wheel_file: fs::File,
@@ -553,7 +567,10 @@ where C: Context + Send,
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
 
+    let mut timings = Timings::default();
     loop {
+        let now_loop = Instant::now();
+
         enum Event<C, T> { Command(C), Task(T), }
 
         let event = match tasks_count {
@@ -582,6 +599,7 @@ where C: Context + Send,
                     },
                 },
         };
+        timings.event_wait += now_loop.elapsed();
 
         match event {
 
@@ -597,8 +615,10 @@ where C: Context + Send,
                     } else if cursor > offset {
                         stats.count_seek_backward += 1;
                     }
+                    let now = Instant::now();
                     wheel_file.seek(io::SeekFrom::Start(offset)).await
                         .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
+                    timings.seek += now.elapsed();
                     cursor = offset;
                 } else {
                     stats.count_no_seek += 1;
@@ -623,8 +643,10 @@ where C: Context + Send,
                         bincode::serialize_into(&mut work_block, &commit_tag)
                             .map_err(Error::CommitTagSerialize)?;
 
+                        let now = Instant::now();
                         wheel_file.write_all(&work_block).await
                             .map_err(Error::BlockWrite)?;
+                        timings.write_write += now.elapsed();
 
                         cursor += work_block.len() as u64;
 
@@ -646,8 +668,10 @@ where C: Context + Send,
                         let total_chunk_size = storage_layout.data_size_block_min()
                             + read_block.block_header.block_size;
                         work_block.resize(total_chunk_size, 0);
+                        let now = Instant::now();
                         wheel_file.read_exact(&mut work_block).await
                             .map_err(Error::BlockRead)?;
+                        timings.read += now.elapsed();
 
                         let block_buffer_start = storage_layout.block_header_size;
                         let block_buffer_end = work_block.len() - storage_layout.commit_tag_size;
@@ -720,9 +744,10 @@ where C: Context + Send,
                         bincode::serialize_into(&mut work_block, &tombstone_tag)
                             .map_err(Error::TombstoneTagSerialize)?;
 
+                        let now = Instant::now();
                         wheel_file.write_all(&work_block).await
                             .map_err(Error::BlockWrite)?;
-
+                        timings.write_delete += now.elapsed();
                         cursor += work_block.len() as u64;
 
                         let task_done = task::Done {
@@ -747,6 +772,7 @@ where C: Context + Send,
                 if let Err(_send_error) = reply_tx.send(Synced) {
                     break;
                 }
+                log::info!("current timings: {:?}", timings);
             },
 
             Event::Task(Err(Error::WheelPeerLost)) =>
@@ -757,6 +783,7 @@ where C: Context + Send,
             },
 
         }
+        timings.total += now_loop.elapsed();
     }
 
     log::debug!("master channel closed in interpret_loop, shutting down");
