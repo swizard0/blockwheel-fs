@@ -5,6 +5,7 @@ use super::{
     storage,
     with_defrag_config,
     hello_world_bytes,
+    hello_world_write_req,
     interpret,
     ScriptOp,
     ExpectOp,
@@ -28,7 +29,7 @@ fn script_simple_defrag() {
     let script = vec![
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx00", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx00")),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -46,7 +47,7 @@ fn script_simple_defrag() {
             expect_context: "ictx00",
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx01", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx01")),
             interpreter_context: "ictx01",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
@@ -161,6 +162,7 @@ fn script_simple_defrag() {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                         block_bytes: hello_world_bytes().freeze(),
+                        block_crc: block::crc(&hello_world_bytes()),
                         context: task::ReadBlockContext::Defrag {
                             defrag_gaps: DefragGaps::OnlyLeft {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
@@ -181,6 +183,7 @@ fn script_simple_defrag() {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
                         },
                         block_bytes: hello_world_bytes().freeze(),
+                        block_crc: block::crc(&hello_world_bytes()),
                     },
                 }),
             },
@@ -200,6 +203,7 @@ fn script_simple_defrag() {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
                             },
                             block_bytes: hello_world_bytes().freeze(),
+                            block_crc: block::crc(&hello_world_bytes()),
                         },
                     }),
                 },
@@ -234,7 +238,7 @@ fn script_simple_defrag() {
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx03", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx03")),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {

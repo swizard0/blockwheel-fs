@@ -42,6 +42,7 @@ impl<C> fmt::Debug for TaskKind<C> where C: Context {
 
 pub struct WriteBlock<C> {
     pub block_bytes: Bytes,
+    pub block_crc: u64,
     pub context: WriteBlockContext<C>,
 }
 
@@ -128,6 +129,7 @@ pub enum DeleteBlockContext<C> {
     Defrag {
         defrag_gaps: DefragGaps,
         block_bytes: Bytes,
+        block_crc: u64,
     },
 }
 
@@ -192,6 +194,7 @@ impl<C> fmt::Debug for TaskDoneWriteBlock<C> {
 
 pub struct TaskDoneReadBlock<C> where C: Context {
     pub block_bytes: Bytes,
+    pub block_crc: u64,
     pub context: ReadBlockContext<C>,
 }
 

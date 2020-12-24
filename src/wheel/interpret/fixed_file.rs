@@ -703,6 +703,7 @@ where C: Context + Send,
                                     block_id,
                                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                                         block_bytes,
+                                        block_crc: crc_expected,
                                         context,
                                     }),
                                 },

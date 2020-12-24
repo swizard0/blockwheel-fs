@@ -6,6 +6,8 @@ use super::{
     init,
     interpret,
     hello_world_bytes,
+    hello_world_write_req,
+    hello_world_read_done,
     Info,
     ScriptOp,
     ExpectOp,
@@ -42,7 +44,7 @@ fn script_basic() {
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx02", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx02")),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -76,7 +78,7 @@ fn script_basic() {
             expect_context: "ictx02",
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx05", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx05")),
             interpreter_context: "ictx03",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
@@ -148,13 +150,7 @@ fn script_basic() {
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 85,
-                task: task::TaskDone {
-                    block_id: block::Id::init(),
-                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                        block_bytes: hello_world_bytes().freeze(),
-                        context: task::ReadBlockContext::External("ectx03"),
-                    }),
-                },
+                task: hello_world_read_done(block::Id::init(), "ectx03"),
             },
         }),
         ScriptOp::Expect(ExpectOp::ReadBlockDone {
@@ -213,7 +209,7 @@ fn script_basic() {
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx08", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx08")),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -231,7 +227,7 @@ fn script_basic() {
             expect_context: "ictx08",
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx09", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx09")),
             interpreter_context: "ictx09",
         }),
         ScriptOp::Expect(ExpectOp::WriteBlockNoSpaceLeft {
@@ -284,13 +280,7 @@ fn script_basic() {
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 85,
-                task: task::TaskDone {
-                    block_id: block::Id::init().next(),
-                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                        block_bytes: hello_world_bytes().freeze(),
-                        context: task::ReadBlockContext::External("ectx0a"),
-                    }),
-                },
+                task: hello_world_read_done(block::Id::init().next(), "ectx0a"),
             },
         }),
         ScriptOp::Expect(ExpectOp::ReadBlockDone {
@@ -336,7 +326,7 @@ fn script_iter() {
     let script = vec![
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx00", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx00")),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -354,7 +344,7 @@ fn script_iter() {
             expect_context: "ictx00",
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
-            request: proto::Request::WriteBlock(proto::RequestWriteBlock { block_bytes: hello_world_bytes().freeze(), context: "ectx01", }),
+            request: proto::Request::WriteBlock(hello_world_write_req("ectx01")),
             interpreter_context: "ictx01",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
@@ -442,6 +432,7 @@ fn script_iter() {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                         block_bytes: hello_world_bytes().freeze(),
+                        block_crc: block::crc(&hello_world_bytes()),
                         context: task::ReadBlockContext::IterBlocks {
                             iter_blocks_stream_context: "sctx00",
                             next_block_id: block::Id::init().next(),
@@ -493,6 +484,7 @@ fn script_iter() {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                         block_bytes: hello_world_bytes().freeze(),
+                        block_crc: block::crc(&hello_world_bytes()),
                         context: task::ReadBlockContext::IterBlocks {
                             iter_blocks_stream_context: "sctx00",
                             next_block_id: block::Id::init().next().next(),

@@ -120,6 +120,7 @@ impl GenServer {
 #[derive(Debug)]
 pub enum WriteBlockError {
     GenServer(ero::NoProcError),
+    CrcCalc(block::CrcError),
     NoSpaceLeft,
 }
 
@@ -206,11 +207,14 @@ impl Pid {
     }
 
     pub async fn write_block(&mut self, block_bytes: Bytes) -> Result<block::Id, WriteBlockError> {
+        let block_crc = block::crc_bytes(block_bytes.clone()).await
+            .map_err(WriteBlockError::CrcCalc)?;
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
                 .send(proto::Request::WriteBlock(proto::RequestWriteBlock {
                     block_bytes: block_bytes.clone(),
+                    block_crc,
                     context: reply_tx,
                 }))
                 .await

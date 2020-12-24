@@ -96,6 +96,7 @@ fn create_read_one() {
                 block::Id::init(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
+                    block_crc: block::crc(&hello_world_bytes()),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -155,6 +156,7 @@ fn create_read_one() {
                                 kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                                     block_bytes,
                                     context: task::ReadBlockContext::External(ctx),
+                                    ..
                                 }),
                             },
                             ..
@@ -205,6 +207,7 @@ fn create_write_overlap_read_one() {
                 block::Id::init(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
+                    block_crc: block::crc(&hello_world_bytes()),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -216,6 +219,7 @@ fn create_write_overlap_read_one() {
                 block::Id::init().next(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
+                    block_crc: block::crc(&hello_world_bytes()),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -269,6 +273,7 @@ fn create_write_overlap_read_one() {
                                 kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                                     block_bytes,
                                     context: task::ReadBlockContext::External(ctx),
+                                    ..
                                 }),
                             },
                             ..
@@ -319,6 +324,7 @@ fn create_write_delete_read_one() {
                 block::Id::init(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
+                    block_crc: block::crc(&hello_world_bytes()),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -329,6 +335,7 @@ fn create_write_delete_read_one() {
                 block::Id::init().next(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
+                    block_crc: block::crc(&hello_world_bytes()),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -406,6 +413,7 @@ fn create_write_delete_read_one() {
                                 kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                                     block_bytes,
                                     context: task::ReadBlockContext::External(ctx),
+                                    ..
                                 }),
                             },
                             ..

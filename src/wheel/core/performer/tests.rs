@@ -70,6 +70,25 @@ fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Conte
     performer_builder.finish(160)
 }
 
+fn hello_world_write_req(context: C) -> proto::RequestWriteBlock<C> {
+    let block_bytes = hello_world_bytes().freeze();
+    let block_crc = block::crc(&block_bytes);
+    proto::RequestWriteBlock { block_bytes, block_crc, context, }
+}
+
+fn hello_world_read_done(block_id: block::Id, context: C) -> task::TaskDone<Context> {
+    let block_bytes = hello_world_bytes().freeze();
+    let block_crc = block::crc(&block_bytes);
+    task::TaskDone {
+        block_id,
+        kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+            block_bytes,
+            block_crc,
+            context: task::ReadBlockContext::External(context),
+        }),
+    }
+}
+
 fn hello_world_bytes() -> BytesMut {
     let mut block_bytes_mut = BytesMut::new_detached(Vec::new());
     block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
