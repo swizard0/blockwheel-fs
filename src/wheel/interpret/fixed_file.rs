@@ -68,7 +68,7 @@ pub enum Error {
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockRead(io::Error),
-    BlockReadCrc(block::CrcError),
+    BlockReadProcessJoin(tokio::task::JoinError),
     BlockHeaderDeserialize(bincode::Error),
     CommitTagDeserialize(bincode::Error),
     CorruptedData(CorruptedDataError),
@@ -664,60 +664,67 @@ where C: Context + Send,
                         }
                     },
 
-                    task::TaskKind::ReadBlock(mut read_block) => {
+                    task::TaskKind::ReadBlock(task::ReadBlock { block_header, mut block_bytes, context, }) => {
                         let total_chunk_size = storage_layout.data_size_block_min()
-                            + read_block.block_header.block_size;
-                        work_block.resize(total_chunk_size, 0);
+                            + block_header.block_size;
+                        block_bytes.resize(total_chunk_size, 0);
                         let now = Instant::now();
-                        wheel_file.read_exact(&mut work_block).await
+                        wheel_file.read_exact(&mut block_bytes).await
                             .map_err(Error::BlockRead)?;
                         timings.read += now.elapsed();
 
-                        let block_buffer_start = storage_layout.block_header_size;
-                        let block_buffer_end = work_block.len() - storage_layout.commit_tag_size;
+                        let storage_layout = storage_layout.clone();
 
-                        let block_header: storage::BlockHeader = bincode::deserialize_from(&work_block[.. block_buffer_start])
-                            .map_err(Error::BlockHeaderDeserialize)?;
-                        if block_header.block_id != read_block.block_header.block_id {
-                            return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
-                                offset,
-                                block_id_expected: read_block.block_header.block_id,
-                                block_id_actual: block_header.block_id,
-                            }));
-                        }
-                        if block_header.block_size != read_block.block_header.block_size {
-                            return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
-                                offset,
-                                block_id: block_header.block_id,
-                                block_size_expected: read_block.block_header.block_size,
-                                block_size_actual: block_header.block_size,
-                            }));
-                        }
-                        read_block.block_bytes.extend_from_slice(&work_block[block_buffer_start .. block_buffer_end]);
-                        let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[block_buffer_end ..])
-                            .map_err(Error::CommitTagDeserialize)?;
-                        if commit_tag.block_id != read_block.block_header.block_id {
-                            return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
-                                offset,
-                                block_id_expected: read_block.block_header.block_id,
-                                block_id_actual: commit_tag.block_id,
-                            }));
-                        }
-                        let block_bytes = read_block.block_bytes.freeze();
-                        let block_id = read_block.block_header.block_id;
-                        let context = read_block.context;
-
-                        // moving block restore to separate task, unlock main loop
+                        // moving block process to separate task, unlock main loop
                         tasks.push(async move {
-                            let crc_expected = block::crc_bytes(block_bytes.clone()).await
-                                .map_err(Error::BlockReadCrc)?;
-                            if commit_tag.crc != crc_expected {
-                                return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
-                                    offset,
-                                    crc_expected,
-                                    crc_actual: commit_tag.crc,
-                                }));
-                            }
+                            let block_process_task = tokio::task::spawn_blocking(move || {
+                                let block_buffer_start = storage_layout.block_header_size;
+                                let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
+
+                                let storage_block_header: storage::BlockHeader = bincode::deserialize_from(
+                                    &block_bytes[.. block_buffer_start],
+                                ).map_err(Error::BlockHeaderDeserialize)?;
+                                if storage_block_header.block_id != block_header.block_id {
+                                    return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
+                                        offset,
+                                        block_id_expected: block_header.block_id,
+                                        block_id_actual: storage_block_header.block_id,
+                                    }));
+                                }
+                                if storage_block_header.block_size != block_header.block_size {
+                                    return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
+                                        offset,
+                                        block_id: block_header.block_id,
+                                        block_size_expected: block_header.block_size,
+                                        block_size_actual: storage_block_header.block_size,
+                                    }));
+                                }
+                                let commit_tag: storage::CommitTag = bincode::deserialize_from(
+                                    &block_bytes[block_buffer_end ..],
+                                ).map_err(Error::CommitTagDeserialize)?;
+                                if commit_tag.block_id != block_header.block_id {
+                                    return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
+                                        offset,
+                                        block_id_expected: block_header.block_id,
+                                        block_id_actual: commit_tag.block_id,
+                                    }));
+                                }
+                                let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
+                                let block_id = block_header.block_id;
+
+                                let crc_expected = block::crc(&block_bytes);
+                                if commit_tag.crc != crc_expected {
+                                    return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
+                                        offset,
+                                        crc_expected,
+                                        crc_actual: commit_tag.crc,
+                                    }));
+                                }
+
+                                Ok((block_id, block_bytes, crc_expected))
+                            });
+                            let (block_id, block_bytes, crc_expected) = block_process_task.await
+                                .map_err(Error::BlockReadProcessJoin)??;
 
                             let task_done = task::Done {
                                 current_offset: cursor,
