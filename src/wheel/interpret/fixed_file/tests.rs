@@ -160,7 +160,7 @@ fn create_read_one() {
                                 }),
                             },
                             ..
-                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &**hello_world_bytes() =>
+                        } if block_id == block_header.block_id && ctx == context && &*block_bytes == &*hello_world_bytes() =>
                             Ok(()),
                         other_done_task =>
                             Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
@@ -277,7 +277,7 @@ fn create_write_overlap_read_one() {
                                 }),
                             },
                             ..
-                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &**hello_world_bytes() =>
+                        } if block_id == block_header.block_id && ctx == context && &*block_bytes == &*hello_world_bytes() =>
                             Ok(()),
                         other_done_task =>
                             Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
@@ -417,7 +417,7 @@ fn create_write_delete_read_one() {
                                 }),
                             },
                             ..
-                        } if block_id == block_header.block_id && ctx == context && &**block_bytes == &**hello_world_bytes() =>
+                        } if block_id == block_header.block_id && ctx == context && &*block_bytes == &*hello_world_bytes() =>
                             Ok(()),
                         other_done_task =>
                             Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
