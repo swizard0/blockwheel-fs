@@ -72,7 +72,7 @@ fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Conte
 
 fn hello_world_write_req(context: C) -> proto::RequestWriteBlock<C> {
     let block_bytes = hello_world_bytes().freeze();
-    let block_crc = block::crc(&block_bytes);
+    let block_crc = Some(block::crc(&block_bytes));
     proto::RequestWriteBlock { block_bytes, block_crc, context, }
 }
 

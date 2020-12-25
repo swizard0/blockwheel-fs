@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use futures::{
     future,
     select,
@@ -53,12 +55,14 @@ pub enum Error {
     InterpreterCreate(interpret::fixed_file::WheelCreateError),
     InterpreterRun(interpret::fixed_file::Error),
     InterpreterCrash,
+    ThreadPoolGone,
 }
 
 type Request = proto::Request<Context>;
 
 pub struct State {
     pub parent_supervisor: SupervisorPid,
+    pub thread_pool: Arc<rayon::ThreadPool>,
     pub blocks_pool: BytesPool,
     pub fused_request_rx: stream::Fuse<mpsc::Receiver<Request>>,
     pub params: Params,
@@ -108,7 +112,7 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
     };
 
     let interpreter_pid = interpreter_gen_server.pid();
-    let interpreter_task = interpreter_gen_server.run(state.params.wheel_task_tasks_limit);
+    let interpreter_task = interpreter_gen_server.run(state.thread_pool.clone());
     let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
     supervisor_pid.spawn_link_permanent(
         async move {
@@ -130,6 +134,7 @@ async fn busyloop(
 )
     -> Result<(), ErrorSeverity<State, Error>>
 {
+    let mut crc_tasks = FuturesUnordered::new();
     let mut iter_tasks = FuturesUnordered::new();
 
     let mut op = performer.next();
@@ -140,41 +145,83 @@ async fn busyloop(
                 performer.next(),
 
             performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
-                enum Source<A, B, C, D> {
+                enum Source<A, B, C, D, E> {
                     Pid(A),
                     InterpreterDone(B),
                     InterpreterError(C),
                     IterTask(D),
+                    CrcTask(E),
                 }
 
                 let mut fused_interpret_result_rx = poll.interpreter_context;
                 loop {
-                    let source = if iter_tasks.is_empty() {
-                        select! {
-                            result = state.fused_request_rx.next() =>
-                                Source::Pid(result),
-                            result = fused_interpret_result_rx =>
-                                Source::InterpreterDone(result),
-                            result = fused_interpret_error_rx =>
-                                Source::InterpreterError(result),
-                        }
-                    } else {
-                        select! {
-                            result = state.fused_request_rx.next() =>
-                                Source::Pid(result),
-                            result = fused_interpret_result_rx =>
-                                Source::InterpreterDone(result),
-                            result = fused_interpret_error_rx =>
-                                Source::InterpreterError(result),
-                            result = iter_tasks.next() => match result {
-                                None =>
-                                    unreachable!(),
-                                Some(iter_task_done) =>
-                                    Source::IterTask(iter_task_done),
+                    let source = match (iter_tasks.is_empty(), crc_tasks.is_empty()) {
+                        (true, true) =>
+                            select! {
+                                result = state.fused_request_rx.next() =>
+                                    Source::Pid(result),
+                                result = fused_interpret_result_rx =>
+                                    Source::InterpreterDone(result),
+                                result = fused_interpret_error_rx =>
+                                    Source::InterpreterError(result),
                             },
-                        }
+                        (false, true) =>
+                            select! {
+                                result = state.fused_request_rx.next() =>
+                                    Source::Pid(result),
+                                result = fused_interpret_result_rx =>
+                                    Source::InterpreterDone(result),
+                                result = fused_interpret_error_rx =>
+                                    Source::InterpreterError(result),
+                                result = iter_tasks.next() => match result {
+                                    None =>
+                                        unreachable!(),
+                                    Some(iter_task_done) =>
+                                        Source::IterTask(iter_task_done),
+                                },
+                            },
+                        (true, false) =>
+                            select! {
+                                result = state.fused_request_rx.next() =>
+                                    Source::Pid(result),
+                                result = fused_interpret_result_rx =>
+                                    Source::InterpreterDone(result),
+                                result = fused_interpret_error_rx =>
+                                    Source::InterpreterError(result),
+                                result = crc_tasks.next() => match result {
+                                    None =>
+                                        unreachable!(),
+                                    Some(crc_task_done) =>
+                                        Source::CrcTask(crc_task_done),
+                                },
+                            },
+                        (false, false) =>
+                            select! {
+                                result = state.fused_request_rx.next() =>
+                                    Source::Pid(result),
+                                result = fused_interpret_result_rx =>
+                                    Source::InterpreterDone(result),
+                                result = fused_interpret_error_rx =>
+                                    Source::InterpreterError(result),
+                                result = iter_tasks.next() => match result {
+                                    None =>
+                                        unreachable!(),
+                                    Some(iter_task_done) =>
+                                        Source::IterTask(iter_task_done),
+                                },
+                                result = crc_tasks.next() => match result {
+                                    None =>
+                                        unreachable!(),
+                                    Some(crc_task_done) =>
+                                        Source::CrcTask(crc_task_done),
+                                },
+                            },
                     };
                     break match source {
+                        Source::Pid(Some(proto::Request::WriteBlock(request_write_block @ proto::RequestWriteBlock { block_crc: None, .. }))) => {
+                            crc_tasks.push(calculate_write_block_crc(request_write_block, state.thread_pool.clone()));
+                            continue;
+                        },
                         Source::Pid(Some(request)) =>
                             poll.next.incoming_request(request, fused_interpret_result_rx),
                         Source::InterpreterDone(Ok(interpret::DoneTask { task_done, stats, })) =>
@@ -205,40 +252,82 @@ async fn busyloop(
                             log::debug!("iteration finished");
                             continue;
                         },
+                        Source::CrcTask(Ok(request_write_block)) =>
+                            poll.next.incoming_request(Request::WriteBlock(request_write_block), fused_interpret_result_rx),
+                        Source::CrcTask(Err(error)) =>
+                            return Err(ErrorSeverity::Fatal(error)),
                     }
                 }
             },
 
             performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
-                enum Source<A, B, C> {
+                enum Source<A, B, C, D> {
                     Pid(A),
                     InterpreterError(B),
                     IterTask(C),
+                    CrcTask(D),
                 }
 
                 loop {
-                    let source = if iter_tasks.is_empty() {
-                        select! {
-                            result = state.fused_request_rx.next() =>
-                                Source::Pid(result),
-                            result = fused_interpret_error_rx =>
-                                Source::InterpreterError(result),
-                        }
-                    } else {
-                        select! {
-                            result = state.fused_request_rx.next() =>
-                                Source::Pid(result),
-                            result = fused_interpret_error_rx =>
-                                Source::InterpreterError(result),
-                            result = iter_tasks.next() => match result {
-                                None =>
-                                    unreachable!(),
-                                Some(iter_task_done) =>
-                                    Source::IterTask(iter_task_done),
+                    let source = match (iter_tasks.is_empty(), crc_tasks.is_empty()) {
+                        (true, true) =>
+                            select! {
+                                result = state.fused_request_rx.next() =>
+                                    Source::Pid(result),
+                                result = fused_interpret_error_rx =>
+                                    Source::InterpreterError(result),
                             },
-                        }
+                        (false, true) =>
+                            select! {
+                                result = state.fused_request_rx.next() =>
+                                    Source::Pid(result),
+                                result = fused_interpret_error_rx =>
+                                    Source::InterpreterError(result),
+                                result = iter_tasks.next() => match result {
+                                    None =>
+                                        unreachable!(),
+                                    Some(iter_task_done) =>
+                                        Source::IterTask(iter_task_done),
+                                },
+                            },
+                        (true, false) =>
+                            select! {
+                                result = state.fused_request_rx.next() =>
+                                    Source::Pid(result),
+                                result = fused_interpret_error_rx =>
+                                    Source::InterpreterError(result),
+                                result = crc_tasks.next() => match result {
+                                    None =>
+                                        unreachable!(),
+                                    Some(crc_task_done) =>
+                                        Source::CrcTask(crc_task_done),
+                                },
+                            },
+                        (false, false) =>
+                            select! {
+                                result = state.fused_request_rx.next() =>
+                                    Source::Pid(result),
+                                result = fused_interpret_error_rx =>
+                                    Source::InterpreterError(result),
+                                result = iter_tasks.next() => match result {
+                                    None =>
+                                        unreachable!(),
+                                    Some(iter_task_done) =>
+                                        Source::IterTask(iter_task_done),
+                                },
+                                result = crc_tasks.next() => match result {
+                                    None =>
+                                        unreachable!(),
+                                    Some(crc_task_done) =>
+                                        Source::CrcTask(crc_task_done),
+                                },
+                            },
                     };
                     break match source {
+                        Source::Pid(Some(proto::Request::WriteBlock(request_write_block @ proto::RequestWriteBlock { block_crc: None, .. }))) => {
+                            crc_tasks.push(calculate_write_block_crc(request_write_block, state.thread_pool.clone()));
+                            continue;
+                        },
                         Source::Pid(Some(request)) =>
                             poll.next.incoming_request(request),
                         Source::Pid(None) => {
@@ -263,6 +352,10 @@ async fn busyloop(
                             log::debug!("iteration finished");
                             continue;
                         },
+                        Source::CrcTask(Ok(request_write_block)) =>
+                            poll.next.incoming_request(Request::WriteBlock(request_write_block)),
+                        Source::CrcTask(Err(error)) =>
+                            return Err(ErrorSeverity::Fatal(error)),
                     }
                 }
             },
@@ -467,4 +560,22 @@ async fn push_iter_blocks_item(mut blocks_tx: mpsc::Sender<IterBlocksItem>, task
                     IterTaskDone::PeerLost,
             }
     }
+}
+
+async fn calculate_write_block_crc<C>(
+    mut request_write_block: proto::RequestWriteBlock<C>,
+    thread_pool: Arc<rayon::ThreadPool>,
+)
+    -> Result<proto::RequestWriteBlock<C>, Error>
+where C: Send
+{
+    let (reply_tx, reply_rx) = oneshot::channel();
+    thread_pool.install(move || {
+        let crc = block::crc(&request_write_block.block_bytes);
+        request_write_block.block_crc = Some(crc);
+        reply_tx.send(request_write_block).ok();
+    });
+    let request_write_block = reply_rx.await
+        .map_err(|oneshot::Canceled| Error::ThreadPoolGone)?;
+    Ok(request_write_block)
 }

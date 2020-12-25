@@ -8,6 +8,9 @@ use std::{
         Instant,
         Duration,
     },
+    sync::{
+        Arc,
+    },
 };
 
 use futures::{
@@ -68,7 +71,7 @@ pub enum Error {
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockRead(io::Error),
-    BlockReadProcessJoin(tokio::task::JoinError),
+    BlockReadProcessGone,
     BlockHeaderDeserialize(bincode::Error),
     CommitTagDeserialize(bincode::Error),
     CorruptedData(CorruptedDataError),
@@ -426,13 +429,13 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub async fn run(self, restore_block_tasks_limit: usize) -> Result<(), Error> where C: Send {
+    pub async fn run(self, thread_pool: Arc<rayon::ThreadPool>) -> Result<(), Error> where C: Send {
         busyloop(
             self.request_rx,
             self.wheel_file,
             self.work_block,
             self.storage_layout,
-            restore_block_tasks_limit,
+            thread_pool,
         ).await
     }
 }
@@ -553,7 +556,7 @@ async fn busyloop<C>(
     mut wheel_file: fs::File,
     mut work_block: Vec<u8>,
     storage_layout: storage::Layout,
-    restore_block_tasks_limit: usize,
+    thread_pool: Arc<rayon::ThreadPool>,
 )
     -> Result<(), Error>
 where C: Context + Send,
@@ -577,7 +580,7 @@ where C: Context + Send,
         let event = match tasks_count {
             0 =>
                 Event::Command(fused_request_rx.next().await),
-            count if count < restore_block_tasks_limit =>
+            _ =>
                 select! {
                     result = fused_request_rx.next() =>
                         Event::Command(result),
@@ -588,15 +591,6 @@ where C: Context + Send,
                             tasks_count -= 1;
                             Event::Task(task)
                         },
-                    },
-                },
-            _ =>
-                match tasks.next().await {
-                    None =>
-                        unreachable!(),
-                    Some(task) => {
-                        tasks_count -= 1;
-                        Event::Task(task)
                     },
                 },
         };
@@ -636,10 +630,10 @@ where C: Context + Send,
                         work_block.clear();
                         bincode::serialize_into(&mut work_block, &block_header)
                             .map_err(Error::BlockHeaderSerialize)?;
-                        work_block.extend(write_block.block_bytes.iter());
+                        work_block.extend_from_slice(&write_block.block_bytes);
                         let commit_tag = storage::CommitTag {
                             block_id: task.block_id.clone(),
-                            crc: write_block.block_crc,
+                            crc: write_block.block_crc.unwrap(), // must be already calculated
                             ..Default::default()
                         };
                         bincode::serialize_into(&mut work_block, &commit_tag)
@@ -679,55 +673,59 @@ where C: Context + Send,
                         let storage_layout = storage_layout.clone();
 
                         // moving block process to separate task, unlock main loop
+                        let block_process_task = move || {
+                            let block_buffer_start = storage_layout.block_header_size;
+                            let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
+
+                            let storage_block_header: storage::BlockHeader = bincode::deserialize_from(
+                                &block_bytes[.. block_buffer_start],
+                            ).map_err(Error::BlockHeaderDeserialize)?;
+                            if storage_block_header.block_id != block_header.block_id {
+                                return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
+                                    offset,
+                                    block_id_expected: block_header.block_id,
+                                    block_id_actual: storage_block_header.block_id,
+                                }));
+                            }
+                            if storage_block_header.block_size != block_header.block_size {
+                                return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
+                                    offset,
+                                    block_id: block_header.block_id,
+                                    block_size_expected: block_header.block_size,
+                                    block_size_actual: storage_block_header.block_size,
+                                }));
+                            }
+                            let commit_tag: storage::CommitTag = bincode::deserialize_from(
+                                &block_bytes[block_buffer_end ..],
+                            ).map_err(Error::CommitTagDeserialize)?;
+                            if commit_tag.block_id != block_header.block_id {
+                                return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
+                                    offset,
+                                    block_id_expected: block_header.block_id,
+                                    block_id_actual: commit_tag.block_id,
+                                }));
+                            }
+                            let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
+                            let block_id = block_header.block_id;
+
+                            let crc_expected = block::crc(&block_bytes);
+                            if commit_tag.crc != crc_expected {
+                                return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
+                                    offset,
+                                    crc_expected,
+                                    crc_actual: commit_tag.crc,
+                                }));
+                            }
+
+                            Ok((block_id, block_bytes, crc_expected))
+                        };
+
+                        let (block_process_tx, block_process_rx) = oneshot::channel();
+                        thread_pool.install(|| block_process_tx.send(block_process_task()).ok());
+
                         tasks.push(async move {
-                            let block_process_task = tokio::task::spawn_blocking(move || {
-                                let block_buffer_start = storage_layout.block_header_size;
-                                let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
-
-                                let storage_block_header: storage::BlockHeader = bincode::deserialize_from(
-                                    &block_bytes[.. block_buffer_start],
-                                ).map_err(Error::BlockHeaderDeserialize)?;
-                                if storage_block_header.block_id != block_header.block_id {
-                                    return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
-                                        offset,
-                                        block_id_expected: block_header.block_id,
-                                        block_id_actual: storage_block_header.block_id,
-                                    }));
-                                }
-                                if storage_block_header.block_size != block_header.block_size {
-                                    return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
-                                        offset,
-                                        block_id: block_header.block_id,
-                                        block_size_expected: block_header.block_size,
-                                        block_size_actual: storage_block_header.block_size,
-                                    }));
-                                }
-                                let commit_tag: storage::CommitTag = bincode::deserialize_from(
-                                    &block_bytes[block_buffer_end ..],
-                                ).map_err(Error::CommitTagDeserialize)?;
-                                if commit_tag.block_id != block_header.block_id {
-                                    return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
-                                        offset,
-                                        block_id_expected: block_header.block_id,
-                                        block_id_actual: commit_tag.block_id,
-                                    }));
-                                }
-                                let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
-                                let block_id = block_header.block_id;
-
-                                let crc_expected = block::crc(&block_bytes);
-                                if commit_tag.crc != crc_expected {
-                                    return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
-                                        offset,
-                                        crc_expected,
-                                        crc_actual: commit_tag.crc,
-                                    }));
-                                }
-
-                                Ok((block_id, block_bytes, crc_expected))
-                            });
-                            let (block_id, block_bytes, crc_expected) = block_process_task.await
-                                .map_err(Error::BlockReadProcessJoin)??;
+                            let (block_id, block_bytes, crc_expected) = block_process_rx.await
+                                .map_err(|oneshot::Canceled| Error::BlockReadProcessGone)??;
 
                             let task_done = task::Done {
                                 current_offset: cursor,

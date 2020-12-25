@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs,
+    sync::Arc,
+};
 
 use futures::{
     select,
@@ -96,7 +99,7 @@ fn create_read_one() {
                 block::Id::init(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
-                    block_crc: block::crc(&hello_world_bytes()),
+                    block_crc: Some(block::crc(&hello_world_bytes())),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -207,7 +210,7 @@ fn create_write_overlap_read_one() {
                 block::Id::init(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
-                    block_crc: block::crc(&hello_world_bytes()),
+                    block_crc: Some(block::crc(&hello_world_bytes())),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -219,7 +222,7 @@ fn create_write_overlap_read_one() {
                 block::Id::init().next(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
-                    block_crc: block::crc(&hello_world_bytes()),
+                    block_crc: Some(block::crc(&hello_world_bytes())),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -324,7 +327,7 @@ fn create_write_delete_read_one() {
                 block::Id::init(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
-                    block_crc: block::crc(&hello_world_bytes()),
+                    block_crc: Some(block::crc(&hello_world_bytes())),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -335,7 +338,7 @@ fn create_write_delete_read_one() {
                 block::Id::init().next(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
-                    block_crc: block::crc(&hello_world_bytes()),
+                    block_crc: Some(block::crc(&hello_world_bytes())),
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -443,6 +446,7 @@ enum Error {
     Run(super::Error),
     InterpreterDetach,
     Unexpected(UnexpectedError),
+    ThreadPool(rayon::ThreadPoolBuildError),
 }
 
 #[derive(Debug)]
@@ -495,7 +499,10 @@ where F: FnOnce(Pid) -> FF,
       FF: Future<Output = Result<(), Error>>,
 {
     let pid = gen_server.pid();
-    let interpreter_run = gen_server.run(64);
+    let thread_pool = rayon::ThreadPoolBuilder::new()
+        .build()
+        .map_err(Error::ThreadPool)?;
+    let interpreter_run = gen_server.run(Arc::new(thread_pool));
     let (interpreter_task, interpreter_handle) = interpreter_run.remote_handle();
     let interpreter_handle_fused = interpreter_handle.fuse();
     pin_mut!(interpreter_handle_fused);

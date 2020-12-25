@@ -849,7 +849,7 @@ impl<C> Inner<C> where C: Context {
                                             block_id: block_id.clone(),
                                             kind: task::TaskKind::WriteBlock(task::WriteBlock {
                                                 block_bytes: block_bytes.clone(),
-                                                block_crc,
+                                                block_crc: Some(block_crc),
                                                 context: task::WriteBlockContext::Defrag,
                                             }),
                                         },

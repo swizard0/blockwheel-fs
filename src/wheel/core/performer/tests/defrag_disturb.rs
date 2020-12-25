@@ -172,7 +172,7 @@ fn script_defrag_disturb() {
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::WriteBlock(proto::RequestWriteBlock {
                 block_bytes: hello_bytes().freeze(),
-                block_crc: block::crc(&hello_bytes()),
+                block_crc: Some(block::crc(&hello_bytes())),
                 context: "ectx04",
             }),
             interpreter_context: "ictx06",

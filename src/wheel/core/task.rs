@@ -42,7 +42,7 @@ impl<C> fmt::Debug for TaskKind<C> where C: Context {
 
 pub struct WriteBlock<C> {
     pub block_bytes: Bytes,
-    pub block_crc: u64,
+    pub block_crc: Option<u64>,
     pub context: WriteBlockContext<C>,
 }
 

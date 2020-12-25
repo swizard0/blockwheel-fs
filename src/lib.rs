@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    sync::Arc,
     path::PathBuf,
     time::Duration,
 };
@@ -41,7 +42,6 @@ pub struct Params {
     pub wheel_filename: PathBuf,
     pub init_wheel_size_bytes: usize,
     pub wheel_task_restart_sec: usize,
-    pub wheel_task_tasks_limit: usize,
     pub work_block_size_bytes: usize,
     pub lru_cache_size_bytes: usize,
     pub defrag_parallel_tasks_limit: usize,
@@ -53,7 +53,6 @@ impl Default for Params {
             wheel_filename: "wheel".to_string().into(),
             init_wheel_size_bytes: 64 * 1024 * 1024,
             wheel_task_restart_sec: 4,
-            wheel_task_tasks_limit: 64,
             work_block_size_bytes: 8 * 1024 * 1024,
             lru_cache_size_bytes: 16 * 1024 * 1024,
             defrag_parallel_tasks_limit: 1,
@@ -88,7 +87,14 @@ impl GenServer {
         }
     }
 
-    pub async fn run(self, parent_supervisor: SupervisorPid, blocks_pool: BytesPool, params: Params) {
+    pub async fn run(
+        self,
+        parent_supervisor: SupervisorPid,
+        thread_pool: Arc<rayon::ThreadPool>,
+        blocks_pool: BytesPool,
+        params: Params,
+    )
+    {
         let terminate_result = restart::restartable(
             ero::Params {
                 name: format!("ero-blockwheel on {:?}", params.wheel_filename),
@@ -98,6 +104,7 @@ impl GenServer {
             },
             wheel::State {
                 parent_supervisor,
+                thread_pool,
                 blocks_pool,
                 fused_request_rx: self.fused_request_rx,
                 params,
@@ -120,7 +127,6 @@ impl GenServer {
 #[derive(Debug)]
 pub enum WriteBlockError {
     GenServer(ero::NoProcError),
-    CrcCalc(block::CrcError),
     NoSpaceLeft,
 }
 
@@ -207,14 +213,12 @@ impl Pid {
     }
 
     pub async fn write_block(&mut self, block_bytes: Bytes) -> Result<block::Id, WriteBlockError> {
-        let block_crc = block::crc_bytes(block_bytes.clone()).await
-            .map_err(WriteBlockError::CrcCalc)?;
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
                 .send(proto::Request::WriteBlock(proto::RequestWriteBlock {
                     block_bytes: block_bytes.clone(),
-                    block_crc,
+                    block_crc: None,
                     context: reply_tx,
                 }))
                 .await
