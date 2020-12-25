@@ -541,6 +541,7 @@ async fn try_read_block(
 struct Timings {
     event_wait: Duration,
     seek: Duration,
+    write_prepare: Duration,
     write_write: Duration,
     read: Duration,
     write_delete: Duration,
@@ -626,6 +627,7 @@ where C: Context + Send,
 
                 match task.kind {
                     task::TaskKind::WriteBlock(write_block) => {
+                        let now = Instant::now();
                         let block_header = storage::BlockHeader {
                             block_id: task.block_id.clone(),
                             block_size: write_block.block_bytes.len(),
@@ -642,6 +644,7 @@ where C: Context + Send,
                         };
                         bincode::serialize_into(&mut work_block, &commit_tag)
                             .map_err(Error::CommitTagSerialize)?;
+                        timings.write_prepare += now.elapsed();
 
                         let now = Instant::now();
                         wheel_file.write_all(&work_block).await
