@@ -548,6 +548,7 @@ struct Timings {
     write_write: Duration,
     read: Duration,
     write_delete: Duration,
+    flush: Duration,
     total: Duration,
 }
 
@@ -708,14 +709,14 @@ where C: Context + Send,
                             let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
                             let block_id = block_header.block_id;
 
-                            // let crc_expected = block::crc(&block_bytes);
-                            // if commit_tag.crc != crc_expected {
-                            //     return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
-                            //         offset,
-                            //         crc_expected,
-                            //         crc_actual: commit_tag.crc,
-                            //     }));
-                            // }
+                            let crc_expected = block::crc(&block_bytes);
+                            if commit_tag.crc != crc_expected {
+                                return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
+                                    offset,
+                                    crc_expected,
+                                    crc_actual: commit_tag.crc,
+                                }));
+                            }
 
                             Ok((block_id, block_bytes, commit_tag.crc))
                         };
@@ -775,8 +776,10 @@ where C: Context + Send,
             },
 
             Event::Command(Some(Command::DeviceSync { reply_tx, })) => {
+                let now = Instant::now();
                 wheel_file.flush().await
                     .map_err(Error::DeviceSyncFlush)?;
+                timings.flush += now.elapsed();
                 if let Err(_send_error) = reply_tx.send(Synced) {
                     break;
                 }
