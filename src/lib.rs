@@ -30,9 +30,9 @@ use ero::{
     supervisor::SupervisorPid,
 };
 
+pub mod job;
 pub mod block;
 
-mod job;
 mod wheel;
 mod proto;
 mod storage;
