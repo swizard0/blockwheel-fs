@@ -1,6 +1,5 @@
 use std::{
     fs,
-    sync::Arc,
 };
 
 use futures::{
@@ -17,6 +16,7 @@ use alloc_pool::bytes::{
 };
 
 use crate::{
+    job,
     block,
     context::Context,
     wheel::{
@@ -446,7 +446,7 @@ enum Error {
     Run(super::Error),
     InterpreterDetach,
     Unexpected(UnexpectedError),
-    ThreadPool(rayon::ThreadPoolBuildError),
+    ThreadPool(edeltraud::BuildError),
 }
 
 #[derive(Debug)]
@@ -499,10 +499,10 @@ where F: FnOnce(Pid) -> FF,
       FF: Future<Output = Result<(), Error>>,
 {
     let pid = gen_server.pid();
-    let thread_pool = rayon::ThreadPoolBuilder::new()
+    let thread_pool: edeltraud::Edeltraud<job::Job> = edeltraud::Builder::new()
         .build()
         .map_err(Error::ThreadPool)?;
-    let interpreter_run = gen_server.run(Arc::new(thread_pool));
+    let interpreter_run = gen_server.run(thread_pool);
     let (interpreter_task, interpreter_handle) = interpreter_run.remote_handle();
     let interpreter_handle_fused = interpreter_handle.fuse();
     pin_mut!(interpreter_handle_fused);

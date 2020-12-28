@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use futures::{
     future,
     select,
@@ -21,12 +19,17 @@ use ero::{
     supervisor::SupervisorPid,
 };
 
+use edeltraud::{
+    Edeltraud,
+};
+
 use alloc_pool::bytes::{
     Bytes,
     BytesPool,
 };
 
 use super::{
+    job,
     block,
     proto,
     storage,
@@ -60,15 +63,19 @@ pub enum Error {
 
 type Request = proto::Request<Context>;
 
-pub struct State {
+pub struct State<J> where J: edeltraud::Job {
     pub parent_supervisor: SupervisorPid,
-    pub thread_pool: Arc<rayon::ThreadPool>,
+    pub thread_pool: Edeltraud<J>,
     pub blocks_pool: BytesPool,
     pub fused_request_rx: stream::Fuse<mpsc::Receiver<Request>>,
     pub params: Params,
 }
 
-pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> Result<(), ErrorSeverity<State, Error>> {
+pub async fn busyloop_init<J>(mut supervisor_pid: SupervisorPid, state: State<J>) -> Result<(), ErrorSeverity<State<J>, Error>>
+where J: edeltraud::Job + From<job::Job>,
+      J::Output: From<job::JobOutput>,
+      job::JobOutput: From<J::Output>,
+{
     let performer_builder = performer::PerformerBuilderInit::new(
         lru::Cache::new(state.params.lru_cache_size_bytes),
         state.blocks_pool.clone(),
@@ -125,14 +132,17 @@ pub async fn busyloop_init(mut supervisor_pid: SupervisorPid, state: State) -> R
     busyloop(supervisor_pid, interpreter_pid, interpret_error_rx.fuse(), state, performer).await
 }
 
-async fn busyloop(
+async fn busyloop<J>(
     _supervisor_pid: SupervisorPid,
     mut interpreter_pid: interpret::fixed_file::Pid<Context>,
     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
-    mut state: State,
+    mut state: State<J>,
     performer: performer::Performer<Context>,
 )
-    -> Result<(), ErrorSeverity<State, Error>>
+    -> Result<(), ErrorSeverity<State<J>, Error>>
+where J: edeltraud::Job + From<job::Job>,
+      J::Output: From<job::JobOutput>,
+      job::JobOutput: From<J::Output>,
 {
     let mut crc_tasks = FuturesUnordered::new();
     let mut iter_tasks = FuturesUnordered::new();
@@ -219,7 +229,8 @@ async fn busyloop(
                     };
                     break match source {
                         Source::Pid(Some(proto::Request::WriteBlock(request_write_block @ proto::RequestWriteBlock { block_crc: None, .. }))) => {
-                            crc_tasks.push(calculate_write_block_crc(request_write_block, state.thread_pool.clone()));
+                            let task = calculate_write_block_crc(request_write_block, state.thread_pool.clone());
+                            crc_tasks.push(task);
                             continue;
                         },
                         Source::Pid(Some(request)) =>
@@ -562,20 +573,21 @@ async fn push_iter_blocks_item(mut blocks_tx: mpsc::Sender<IterBlocksItem>, task
     }
 }
 
-async fn calculate_write_block_crc<C>(
+async fn calculate_write_block_crc<J, C>(
     mut request_write_block: proto::RequestWriteBlock<C>,
-    thread_pool: Arc<rayon::ThreadPool>,
+    thread_pool: Edeltraud<J>,
 )
     -> Result<proto::RequestWriteBlock<C>, Error>
-where C: Send
+where C: Send,
+      J: edeltraud::Job + From<job::Job>,
+      J::Output: From<job::JobOutput>,
+      job::JobOutput: From<J::Output>,
 {
-    let (reply_tx, reply_rx) = oneshot::channel();
-    thread_pool.install(move || {
-        let crc = block::crc(&request_write_block.block_bytes);
-        request_write_block.block_crc = Some(crc);
-        reply_tx.send(request_write_block).ok();
-    });
-    let request_write_block = reply_rx.await
-        .map_err(|oneshot::Canceled| Error::ThreadPoolGone)?;
+    let job = job::Job::CalculateCrc { block_bytes: request_write_block.block_bytes.clone(), };
+    let job_output = thread_pool.spawn(job).await
+        .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+    let job_output: job::JobOutput = job_output.into();
+    let job::CalculateCrcDone { crc, } = job_output.into();
+    request_write_block.block_crc = Some(crc);
     Ok(request_write_block)
 }

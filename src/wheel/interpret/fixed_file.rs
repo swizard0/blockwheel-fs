@@ -8,9 +8,6 @@ use std::{
         Instant,
         Duration,
     },
-    sync::{
-        Arc,
-    },
 };
 
 use futures::{
@@ -35,8 +32,17 @@ use tokio::{
     },
 };
 
+use alloc_pool::bytes::{
+    Bytes,
+    BytesMut,
+};
+
+use edeltraud::{
+    Edeltraud,
+};
+
 use crate::{
-    InterpretStats,
+    job,
     context::Context,
     wheel::{
         block,
@@ -46,6 +52,7 @@ use crate::{
             performer,
         },
     },
+    InterpretStats,
 };
 
 use super::{
@@ -71,12 +78,12 @@ pub enum Error {
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockRead(io::Error),
-    BlockReadProcessGone,
     BlockHeaderDeserialize(bincode::Error),
     CommitTagDeserialize(bincode::Error),
     CorruptedData(CorruptedDataError),
     WheelPeerLost,
     DeviceSyncFlush(io::Error),
+    ThreadPoolGone,
 }
 
 #[derive(Debug)]
@@ -429,7 +436,11 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub async fn run(self, thread_pool: Arc<rayon::ThreadPool>) -> Result<(), Error> where C: Send {
+    pub async fn run<J>(self, thread_pool: Edeltraud<J>) -> Result<(), Error>
+    where C: Send, J: edeltraud::Job + From<job::Job>,
+          J::Output: From<job::JobOutput>,
+          job::JobOutput: From<J::Output>,
+    {
         busyloop(
             self.request_rx,
             self.wheel_file,
@@ -552,15 +563,18 @@ struct Timings {
     total: Duration,
 }
 
-async fn busyloop<C>(
+async fn busyloop<C, J>(
     request_rx: mpsc::Receiver<Command<C>>,
     mut wheel_file: fs::File,
     mut work_block: Vec<u8>,
     storage_layout: storage::Layout,
-    thread_pool: Arc<rayon::ThreadPool>,
+    thread_pool: Edeltraud<J>,
 )
     -> Result<(), Error>
 where C: Context + Send,
+      J: edeltraud::Job + From<job::Job>,
+      J::Output: From<job::JobOutput>,
+      job::JobOutput: From<J::Output>,
 {
     let mut stats = InterpretStats::default();
     let mut tasks = FuturesUnordered::new();
@@ -672,61 +686,20 @@ where C: Context + Send,
                         timings.read += now.elapsed();
 
                         let storage_layout = storage_layout.clone();
+                        let block_process_task = thread_pool.spawn(job::Job::BlockProcess(BlockProcessJobArgs {
+                            offset,
+                            storage_layout: storage_layout.clone(),
+                            block_header,
+                            block_bytes,
+                        }));
 
                         // moving block process to separate task, unlock main loop
-                        let block_process_task = move || {
-                            let block_buffer_start = storage_layout.block_header_size;
-                            let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
-
-                            let storage_block_header: storage::BlockHeader = bincode::deserialize_from(
-                                &block_bytes[.. block_buffer_start],
-                            ).map_err(Error::BlockHeaderDeserialize)?;
-                            if storage_block_header.block_id != block_header.block_id {
-                                return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
-                                    offset,
-                                    block_id_expected: block_header.block_id,
-                                    block_id_actual: storage_block_header.block_id,
-                                }));
-                            }
-                            if storage_block_header.block_size != block_header.block_size {
-                                return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
-                                    offset,
-                                    block_id: block_header.block_id,
-                                    block_size_expected: block_header.block_size,
-                                    block_size_actual: storage_block_header.block_size,
-                                }));
-                            }
-                            let commit_tag: storage::CommitTag = bincode::deserialize_from(
-                                &block_bytes[block_buffer_end ..],
-                            ).map_err(Error::CommitTagDeserialize)?;
-                            if commit_tag.block_id != block_header.block_id {
-                                return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
-                                    offset,
-                                    block_id_expected: block_header.block_id,
-                                    block_id_actual: commit_tag.block_id,
-                                }));
-                            }
-                            let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
-                            let block_id = block_header.block_id;
-
-                            let crc_expected = block::crc(&block_bytes);
-                            if commit_tag.crc != crc_expected {
-                                return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
-                                    offset,
-                                    crc_expected,
-                                    crc_actual: commit_tag.crc,
-                                }));
-                            }
-
-                            Ok((block_id, block_bytes, commit_tag.crc))
-                        };
-
-                        let (block_process_tx, block_process_rx) = oneshot::channel();
-                        thread_pool.install(|| block_process_tx.send(block_process_task()).ok());
-
                         tasks.push(async move {
-                            let (block_id, block_bytes, crc_expected) = block_process_rx.await
-                                .map_err(|oneshot::Canceled| Error::BlockReadProcessGone)??;
+                            let job_output = block_process_task.await
+                                .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                            let job_output: job::JobOutput = job_output.into();
+                            let job::BlockProcessDone(block_process_result) = job_output.into();
+                            let BlockProcessJobDone { block_id, block_bytes, block_crc, } = block_process_result?;
 
                             let task_done = task::Done {
                                 current_offset: cursor,
@@ -734,7 +707,7 @@ where C: Context + Send,
                                     block_id,
                                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                                         block_bytes,
-                                        block_crc: crc_expected,
+                                        block_crc,
                                         context,
                                     }),
                                 },
@@ -799,4 +772,76 @@ where C: Context + Send,
 
     log::debug!("master channel closed in interpret_loop, shutting down");
     Ok(())
+}
+
+pub type BlockProcessJobOutput = Result<BlockProcessJobDone, Error>;
+
+pub struct BlockProcessJobDone {
+    block_id: block::Id,
+    block_bytes: Bytes,
+    block_crc: u64,
+}
+
+pub struct BlockProcessJobArgs {
+    offset: u64,
+    storage_layout: storage::Layout,
+    block_header: storage::BlockHeader,
+    block_bytes: BytesMut,
+}
+
+pub fn block_process_job(
+    BlockProcessJobArgs {
+        offset,
+        storage_layout,
+        block_header,
+        block_bytes,
+    }: BlockProcessJobArgs,
+)
+    -> BlockProcessJobOutput
+{
+    let block_buffer_start = storage_layout.block_header_size;
+    let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
+
+    let storage_block_header: storage::BlockHeader = bincode::deserialize_from(
+        &block_bytes[.. block_buffer_start],
+    ).map_err(Error::BlockHeaderDeserialize)?;
+    if storage_block_header.block_id != block_header.block_id {
+        return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
+            offset,
+            block_id_expected: block_header.block_id,
+            block_id_actual: storage_block_header.block_id,
+        }));
+    }
+
+    if storage_block_header.block_size != block_header.block_size {
+        return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
+            offset,
+            block_id: block_header.block_id,
+            block_size_expected: block_header.block_size,
+            block_size_actual: storage_block_header.block_size,
+        }));
+    }
+    let commit_tag: storage::CommitTag = bincode::deserialize_from(
+        &block_bytes[block_buffer_end ..],
+    ).map_err(Error::CommitTagDeserialize)?;
+    if commit_tag.block_id != block_header.block_id {
+        return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
+            offset,
+            block_id_expected: block_header.block_id,
+            block_id_actual: commit_tag.block_id,
+        }));
+    }
+    let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
+    let block_id = block_header.block_id;
+
+    let crc_expected = block::crc(&block_bytes);
+    if commit_tag.crc != crc_expected {
+        return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
+            offset,
+            crc_expected,
+            crc_actual: commit_tag.crc,
+        }));
+    }
+
+    Ok(BlockProcessJobDone { block_id, block_bytes, block_crc: commit_tag.crc, })
 }

@@ -1,6 +1,5 @@
 use std::{
     fs,
-    sync::Arc,
 };
 
 use futures::{
@@ -27,6 +26,7 @@ use ero::{
 use rand::Rng;
 
 use super::{
+    job,
     block,
     Params,
     GenServer,
@@ -115,14 +115,14 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
     tokio::spawn(supervisor_gen_server.run());
 
     let blocks_pool = BytesPool::new();
-    let thread_pool = rayon::ThreadPoolBuilder::new()
+    let thread_pool: edeltraud::Edeltraud<job::Job> = edeltraud::Builder::new()
         .build()
         .map_err(Error::ThreadPool)?;
 
     let gen_server = GenServer::new();
     let mut pid = gen_server.pid();
     supervisor_pid.spawn_link_permanent(
-        gen_server.run(supervisor_pid.clone(), Arc::new(thread_pool), blocks_pool.clone(), params),
+        gen_server.run(supervisor_pid.clone(), thread_pool, blocks_pool.clone(), params),
     );
 
     let mut rng = rand::thread_rng();
@@ -313,7 +313,7 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
 
 #[derive(Debug)]
 enum Error {
-    ThreadPool(rayon::ThreadPoolBuildError),
+    ThreadPool(edeltraud::BuildError),
     WheelGoneDuringInfo,
     WheelGoneDuringFlush,
     WriteBlock(super::WriteBlockError),

@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    sync::Arc,
     path::PathBuf,
     time::Duration,
 };
@@ -14,6 +13,10 @@ use futures::{
     },
     StreamExt,
     SinkExt,
+};
+
+use edeltraud::{
+    Edeltraud,
 };
 
 use alloc_pool::bytes::{
@@ -29,6 +32,7 @@ use ero::{
 
 pub mod block;
 
+mod job;
 mod wheel;
 mod proto;
 mod storage;
@@ -87,13 +91,16 @@ impl GenServer {
         }
     }
 
-    pub async fn run(
+    pub async fn run<J>(
         self,
         parent_supervisor: SupervisorPid,
-        thread_pool: Arc<rayon::ThreadPool>,
+        thread_pool: Edeltraud<J>,
         blocks_pool: BytesPool,
         params: Params,
     )
+    where J: edeltraud::Job + From<job::Job>,
+          J::Output: From<job::JobOutput>,
+          job::JobOutput: From<J::Output>,
     {
         let terminate_result = restart::restartable(
             ero::Params {
