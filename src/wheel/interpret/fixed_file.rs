@@ -684,6 +684,7 @@ where C: Context + Send,
                         wheel_file.read_exact(&mut block_bytes).await
                             .map_err(Error::BlockRead)?;
                         timings.read += now.elapsed();
+                        cursor += block_bytes.len() as u64;
 
                         let storage_layout = storage_layout.clone();
                         let block_process_task = thread_pool.spawn(job::Job::BlockProcess(BlockProcessJobArgs {
@@ -717,7 +718,6 @@ where C: Context + Send,
                                 .map_err(|_send_error| Error::WheelPeerLost)
                         });
                         tasks_count += 1;
-                        cursor += work_block.len() as u64;
                     },
 
                     task::TaskKind::DeleteBlock(delete_block) => {
