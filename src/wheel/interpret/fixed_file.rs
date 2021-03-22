@@ -16,10 +16,8 @@ use futures::{
     },
     channel::{
         mpsc,
-        oneshot,
     },
     select,
-    SinkExt,
     StreamExt,
 };
 
@@ -51,15 +49,15 @@ use crate::{
             task,
             performer,
         },
+        interpret::{
+            Pid,
+            Synced,
+            Command,
+            Request,
+            DoneTask,
+        },
     },
     InterpretStats,
-};
-
-use super::{
-    Request,
-    RequestTask,
-    RequestReplyRx,
-    DoneTask,
 };
 
 #[cfg(test)]
@@ -449,43 +447,6 @@ impl<C> GenServer<C> where C: Context {
             thread_pool,
         ).await
     }
-}
-
-#[derive(Clone)]
-pub struct Pid<C> where C: Context {
-    request_tx: mpsc::Sender<Command<C>>,
-}
-
-impl<C> Pid<C> where C: Context {
-    pub async fn push_request(&mut self, offset: u64, task: RequestTask<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.request_tx
-            .send(Command::Request(Request { offset, task, reply_tx, }))
-            .await
-            .map_err(|_send_error| ero::NoProcError)?;
-        Ok(reply_rx)
-    }
-
-    pub async fn device_sync(&mut self) -> Result<Synced, ero::NoProcError> {
-        loop {
-            let (reply_tx, reply_rx) = oneshot::channel();
-            self.request_tx.send(Command::DeviceSync { reply_tx, }).await
-                .map_err(|_send_error| ero::NoProcError)?;
-            match reply_rx.await {
-                Ok(Synced) =>
-                    return Ok(Synced),
-                Err(oneshot::Canceled) =>
-                    (),
-            }
-        }
-    }
-}
-
-pub struct Synced;
-
-enum Command<C> where C: Context {
-    Request(Request<C>),
-    DeviceSync { reply_tx: oneshot::Sender<Synced>, },
 }
 
 enum ReadBlockStatus {

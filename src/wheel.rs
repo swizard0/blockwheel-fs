@@ -39,6 +39,7 @@ use super::{
     Deleted,
     IterBlocks,
     IterBlocksItem,
+    InterpreterParams,
     blockwheel_context::Context,
 };
 
@@ -54,9 +55,9 @@ mod lru;
 #[derive(Debug)]
 pub enum Error {
     InterpreterInit(performer::BuilderError),
-    InterpreterOpen(interpret::fixed_file::WheelOpenError),
-    InterpreterCreate(interpret::fixed_file::WheelCreateError),
-    InterpreterRun(interpret::fixed_file::Error),
+    InterpreterOpen(interpret::OpenError),
+    InterpreterCreate(interpret::CreateError),
+    InterpreterRun(interpret::RunError),
     InterpreterCrash,
     ThreadPoolGone,
 }
@@ -89,52 +90,61 @@ where J: edeltraud::Job + From<job::Job>,
         .map_err(Error::InterpreterInit)
         .map_err(ErrorSeverity::Fatal)?;
 
-    let open_async = interpret::fixed_file::GenServer::open(
-        interpret::fixed_file::OpenParams {
-            wheel_filename: &state.params.wheel_filename,
-        },
-        performer_builder,
-    );
-    let interpret::fixed_file::WheelData { gen_server: interpreter_gen_server, performer, } = match open_async.await {
-        Ok(interpret::fixed_file::WheelOpenStatus::Success(wheel_data)) =>
-            wheel_data,
-        Ok(interpret::fixed_file::WheelOpenStatus::FileNotFound { performer_builder, }) => {
-            let create_async = interpret::fixed_file::GenServer::create(
-                interpret::fixed_file::CreateParams {
-                    wheel_filename: &state.params.wheel_filename,
-                    init_wheel_size_bytes: state.params.init_wheel_size_bytes,
+    let (interpreter_pid, performer, interpret_error_rx) = match state.params.interpreter {
+
+        InterpreterParams::FixedFile(ref interpreter_params) => {
+            let open_async = interpret::fixed_file::GenServer::open(
+                interpret::fixed_file::OpenParams {
+                    wheel_filename: &interpreter_params.wheel_filename,
                 },
                 performer_builder,
             );
-            create_async.await
-                .map_err(Error::InterpreterCreate)
-                .map_err(ErrorSeverity::Fatal)?
-        },
-        Err(interpret::fixed_file::WheelOpenError::FileWrongType) => {
-            log::error!("[ {:?} ] is not a file", state.params.wheel_filename);
-            return Err(ErrorSeverity::Recoverable { state, });
-        },
-        Err(error) =>
-            return Err(ErrorSeverity::Fatal(Error::InterpreterOpen(error))),
-    };
+            let interpret::fixed_file::WheelData { gen_server: interpreter_gen_server, performer, } = match open_async.await {
+                Ok(interpret::fixed_file::WheelOpenStatus::Success(wheel_data)) =>
+                    wheel_data,
+                Ok(interpret::fixed_file::WheelOpenStatus::FileNotFound { performer_builder, }) => {
+                    let create_async = interpret::fixed_file::GenServer::create(
+                        interpret::fixed_file::CreateParams {
+                            wheel_filename: &interpreter_params.wheel_filename,
+                            init_wheel_size_bytes: interpreter_params.init_wheel_size_bytes,
+                        },
+                        performer_builder,
+                    );
+                    create_async.await
+                        .map_err(interpret::CreateError::FixedFile)
+                        .map_err(Error::InterpreterCreate)
+                        .map_err(ErrorSeverity::Fatal)?
+                },
+                Err(interpret::fixed_file::WheelOpenError::FileWrongType) => {
+                    log::error!("[ {:?} ] is not a file", interpreter_params.wheel_filename);
+                    return Err(ErrorSeverity::Recoverable { state, });
+                },
+                Err(error) =>
+                    return Err(ErrorSeverity::Fatal(Error::InterpreterOpen(interpret::OpenError::FixedFile(error)))),
+            };
 
-    let interpreter_pid = interpreter_gen_server.pid();
-    let interpreter_task = interpreter_gen_server.run(state.thread_pool.clone());
-    let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
-    supervisor_pid.spawn_link_permanent(
-        async move {
-            if let Err(interpret_error) = interpreter_task.await {
-                interpret_error_tx.send(ErrorSeverity::Fatal(Error::InterpreterRun(interpret_error))).ok();
-            }
+            let interpreter_pid = interpreter_gen_server.pid();
+            let interpreter_task = interpreter_gen_server.run(state.thread_pool.clone());
+            let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
+            supervisor_pid.spawn_link_permanent(
+                async move {
+                    if let Err(interpret_error) = interpreter_task.await {
+                        interpret_error_tx.send(ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::FixedFile(interpret_error)))).ok();
+                    }
+                },
+            );
+
+            (interpreter_pid, performer, interpret_error_rx)
         },
-    );
+
+    };
 
     busyloop(supervisor_pid, interpreter_pid, interpret_error_rx.fuse(), state, performer).await
 }
 
 async fn busyloop<J>(
     _supervisor_pid: SupervisorPid,
-    mut interpreter_pid: interpret::fixed_file::Pid<Context>,
+    mut interpreter_pid: interpret::Pid<Context>,
     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
     mut state: State<J>,
     performer: performer::Performer<Context>,
@@ -414,7 +424,7 @@ where J: edeltraud::Job + From<job::Job>,
                 ),
                 performer,
             }) => {
-                let interpret::fixed_file::Synced = interpreter_pid.device_sync().await
+                let interpret::Synced = interpreter_pid.device_sync().await
                     .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
                 if let Err(_send_error) = reply_tx.send(Flushed) {
                     log::warn!("Pid is gone during Flush query result send");

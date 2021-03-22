@@ -33,6 +33,8 @@ use super::{
     Flushed,
     Deleted,
     IterBlocksItem,
+    InterpreterParams,
+    InterpreterFixedFileParams,
 };
 
 #[test]
@@ -45,8 +47,10 @@ fn stress() {
     let init_wheel_size_bytes = 1 * 1024 * 1024;
 
     let params = Params {
-        wheel_filename: wheel_filename.into(),
-        init_wheel_size_bytes,
+        interpreter: InterpreterParams::FixedFile(InterpreterFixedFileParams {
+            wheel_filename: wheel_filename.into(),
+            init_wheel_size_bytes,
+        }),
         work_block_size_bytes,
         lru_cache_size_bytes: 0,
         defrag_parallel_tasks_limit: 8,

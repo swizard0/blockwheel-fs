@@ -43,23 +43,47 @@ mod tests;
 
 #[derive(Clone, Debug)]
 pub struct Params {
-    pub wheel_filename: PathBuf,
-    pub init_wheel_size_bytes: usize,
+    pub interpreter: InterpreterParams,
     pub wheel_task_restart_sec: usize,
     pub work_block_size_bytes: usize,
     pub lru_cache_size_bytes: usize,
     pub defrag_parallel_tasks_limit: usize,
 }
 
+#[derive(Clone, Debug)]
+pub enum InterpreterParams {
+    FixedFile(InterpreterFixedFileParams),
+}
+
+#[derive(Clone, Debug)]
+pub struct InterpreterFixedFileParams {
+    pub wheel_filename: PathBuf,
+    pub init_wheel_size_bytes: usize,
+}
+
 impl Default for Params {
     fn default() -> Params {
         Params {
-            wheel_filename: "wheel".to_string().into(),
-            init_wheel_size_bytes: 64 * 1024 * 1024,
+            interpreter: Default::default(),
             wheel_task_restart_sec: 4,
             work_block_size_bytes: 8 * 1024 * 1024,
             lru_cache_size_bytes: 16 * 1024 * 1024,
             defrag_parallel_tasks_limit: 1,
+        }
+    }
+}
+
+impl Default for InterpreterParams {
+    fn default() -> InterpreterParams {
+        InterpreterParams::FixedFile(Default::default())
+    }
+}
+
+impl Default for InterpreterFixedFileParams {
+    fn default() -> InterpreterFixedFileParams {
+        InterpreterFixedFileParams {
+            wheel_filename: "wheel".to_string().into(),
+            init_wheel_size_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -104,7 +128,13 @@ impl GenServer {
     {
         let terminate_result = restart::restartable(
             ero::Params {
-                name: format!("ero-blockwheel on {:?}", params.wheel_filename),
+                name: format!(
+                    "ero-blockwheel on {:?}",
+                    match params.interpreter {
+                        InterpreterParams::FixedFile(ref interpreter_params) =>
+                            format!("fixed file: {:?}", interpreter_params.wheel_filename),
+                    },
+                ),
                 restart_strategy: RestartStrategy::Delay {
                     restart_after: Duration::from_secs(params.wheel_task_restart_sec as u64),
                 },
