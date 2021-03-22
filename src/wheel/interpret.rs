@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-// pub mod ram;
+pub mod ram;
 pub mod fixed_file;
 
 struct Request<C> where C: Context {
