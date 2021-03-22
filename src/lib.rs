@@ -52,12 +52,18 @@ pub struct Params {
 
 #[derive(Clone, Debug)]
 pub enum InterpreterParams {
-    FixedFile(InterpreterFixedFileParams),
+    FixedFile(FixedFileInterpreterParams),
+    Ram(RamInterpreterParams),
 }
 
 #[derive(Clone, Debug)]
-pub struct InterpreterFixedFileParams {
+pub struct FixedFileInterpreterParams {
     pub wheel_filename: PathBuf,
+    pub init_wheel_size_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct RamInterpreterParams {
     pub init_wheel_size_bytes: usize,
 }
 
@@ -79,10 +85,18 @@ impl Default for InterpreterParams {
     }
 }
 
-impl Default for InterpreterFixedFileParams {
-    fn default() -> InterpreterFixedFileParams {
-        InterpreterFixedFileParams {
+impl Default for FixedFileInterpreterParams {
+    fn default() -> FixedFileInterpreterParams {
+        FixedFileInterpreterParams {
             wheel_filename: "wheel".to_string().into(),
+            init_wheel_size_bytes: 64 * 1024 * 1024,
+        }
+    }
+}
+
+impl Default for RamInterpreterParams {
+    fn default() -> RamInterpreterParams {
+        RamInterpreterParams {
             init_wheel_size_bytes: 64 * 1024 * 1024,
         }
     }
@@ -133,6 +147,8 @@ impl GenServer {
                     match params.interpreter {
                         InterpreterParams::FixedFile(ref interpreter_params) =>
                             format!("fixed file: {:?}", interpreter_params.wheel_filename),
+                        InterpreterParams::Ram(ref interpreter_params) =>
+                            format!("ram file of {} bytes", interpreter_params.init_wheel_size_bytes),
                     },
                 ),
                 restart_strategy: RestartStrategy::Delay {

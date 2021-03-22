@@ -34,11 +34,12 @@ use super::{
     Deleted,
     IterBlocksItem,
     InterpreterParams,
-    InterpreterFixedFileParams,
+    RamInterpreterParams,
+    FixedFileInterpreterParams,
 };
 
 #[test]
-fn stress() {
+fn stress_fixed_file() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -47,7 +48,7 @@ fn stress() {
     let init_wheel_size_bytes = 1 * 1024 * 1024;
 
     let params = Params {
-        interpreter: InterpreterParams::FixedFile(InterpreterFixedFileParams {
+        interpreter: InterpreterParams::FixedFile(FixedFileInterpreterParams {
             wheel_filename: wheel_filename.into(),
             init_wheel_size_bytes,
         }),
@@ -79,6 +80,39 @@ fn stress() {
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
     fs::remove_file(wheel_filename).ok();
+}
+
+#[test]
+fn stress_ram() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let work_block_size_bytes = 16 * 1024;
+    let init_wheel_size_bytes = 1 * 1024 * 1024;
+
+    let params = Params {
+        interpreter: InterpreterParams::Ram(RamInterpreterParams {
+            init_wheel_size_bytes,
+        }),
+        work_block_size_bytes,
+        lru_cache_size_bytes: 0,
+        defrag_parallel_tasks_limit: 8,
+        ..Default::default()
+    };
+
+    let limits = Limits {
+        active_tasks: 128,
+        actions: 1024,
+        block_size_bytes: work_block_size_bytes - 256,
+    };
+
+    let mut counter = Counter::default();
+    let mut blocks = Vec::new();
+
+    // fill wheel from scratch
+    runtime.block_on(stress_loop(params.clone(), &mut blocks, &mut counter, &limits)).unwrap();
+
+    assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 }
 
 #[derive(Clone, Copy, Default, Debug)]

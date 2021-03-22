@@ -48,6 +48,7 @@ enum Command<C> where C: Context {
 #[derive(Debug)]
 pub enum CreateError {
     FixedFile(fixed_file::WheelCreateError),
+    Ram(ram::WheelCreateError),
 }
 
 #[derive(Debug)]
@@ -58,6 +59,7 @@ pub enum OpenError {
 #[derive(Debug)]
 pub enum RunError {
     FixedFile(fixed_file::Error),
+    Ram(ram::Error),
 }
 
 #[derive(Clone)]

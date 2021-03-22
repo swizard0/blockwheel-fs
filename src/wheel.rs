@@ -137,6 +137,32 @@ where J: edeltraud::Job + From<job::Job>,
             (interpreter_pid, performer, interpret_error_rx)
         },
 
+        InterpreterParams::Ram(ref interpreter_params) => {
+            let create_async = interpret::ram::GenServer::create(
+                interpret::ram::CreateParams {
+                    init_wheel_size_bytes: interpreter_params.init_wheel_size_bytes,
+                },
+                performer_builder,
+            );
+            let interpret::ram::WheelData { gen_server: interpreter_gen_server, performer, } = create_async.await
+                .map_err(interpret::CreateError::Ram)
+                .map_err(Error::InterpreterCreate)
+                .map_err(ErrorSeverity::Fatal)?;
+
+            let interpreter_pid = interpreter_gen_server.pid();
+            let interpreter_task = interpreter_gen_server.run(state.thread_pool.clone());
+            let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
+            supervisor_pid.spawn_link_permanent(
+                async move {
+                    if let Err(interpret_error) = interpreter_task.await {
+                        interpret_error_tx.send(ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::Ram(interpret_error)))).ok();
+                    }
+                },
+            );
+
+            (interpreter_pid, performer, interpret_error_rx)
+        },
+
     };
 
     busyloop(supervisor_pid, interpreter_pid, interpret_error_rx.fuse(), state, performer).await

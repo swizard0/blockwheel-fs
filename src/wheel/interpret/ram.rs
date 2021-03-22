@@ -215,7 +215,8 @@ where C: Context + Send,
                             .map_err(Error::BlockHeaderSerialize)?;
                         let start = cursor.position() as usize;
                         let slice = cursor.get_mut();
-                        slice[start ..].copy_from_slice(&write_block.block_bytes);
+                        slice[start .. start + write_block.block_bytes.len()]
+                            .copy_from_slice(&write_block.block_bytes);
                         cursor.set_position(start as u64 + write_block.block_bytes.len() as u64);
                         let commit_tag = storage::CommitTag {
                             block_id: task.block_id.clone(),
