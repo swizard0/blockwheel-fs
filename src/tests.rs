@@ -203,19 +203,19 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
         // construct action and run task
         let info = pid.info().await
             .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
-        if blocks.is_empty() || rng.gen_range(0.0, 1.0) < 0.5 {
+        if blocks.is_empty() || rng.gen_range(0.0 .. 1.0) < 0.5 {
             // write or delete task
             let write_prob = if info.bytes_free * 2 >= info.wheel_size_bytes {
                 1.0
             } else {
                 (info.bytes_free * 2) as f64 / info.wheel_size_bytes as f64
             };
-            let dice = rng.gen_range(0.0, 1.0);
+            let dice = rng.gen_range(0.0 .. 1.0);
             if blocks.is_empty() || dice < write_prob {
                 // write task
                 let mut blockwheel_pid = pid.clone();
                 let blocks_pool = blocks_pool.clone();
-                let amount = rng.gen_range(1, limits.block_size_bytes);
+                let amount = rng.gen_range(1 .. limits.block_size_bytes);
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                     let mut block = blocks_pool.lend();
                     block.extend((0 .. amount).map(|_| 0));
@@ -233,7 +233,7 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
                 active_tasks_counter.writes += 1;
             } else {
                 // delete task
-                let block_index = rng.gen_range(0, blocks.len());
+                let block_index = rng.gen_range(0 .. blocks.len());
                 let BlockTank { block_id, .. } = blocks.swap_remove(block_index);
                 let mut blockwheel_pid = pid.clone();
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
@@ -245,7 +245,7 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
             }
         } else {
             // read task
-            let block_index = rng.gen_range(0, blocks.len());
+            let block_index = rng.gen_range(0 .. blocks.len());
             let BlockTank { block_id, block_bytes, } = blocks[block_index].clone();
             let mut blockwheel_pid = pid.clone();
             spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
