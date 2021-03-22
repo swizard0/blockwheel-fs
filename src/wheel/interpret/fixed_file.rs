@@ -30,11 +30,6 @@ use tokio::{
     },
 };
 
-use alloc_pool::bytes::{
-    Bytes,
-    BytesMut,
-};
-
 use edeltraud::{
     Edeltraud,
 };
@@ -55,6 +50,9 @@ use crate::{
             Command,
             Request,
             DoneTask,
+            BlockProcessJobArgs,
+            BlockProcessJobDone,
+            BlockProcessJobError,
         },
     },
     InterpretStats,
@@ -76,37 +74,10 @@ pub enum Error {
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockRead(io::Error),
-    BlockHeaderDeserialize(bincode::Error),
-    CommitTagDeserialize(bincode::Error),
-    CorruptedData(CorruptedDataError),
     WheelPeerLost,
     DeviceSyncFlush(io::Error),
     ThreadPoolGone,
-}
-
-#[derive(Debug)]
-pub enum CorruptedDataError {
-    BlockIdMismatch {
-        offset: u64,
-        block_id_expected: block::Id,
-        block_id_actual: block::Id,
-    },
-    BlockSizeMismatch {
-        offset: u64,
-        block_id: block::Id,
-        block_size_expected: usize,
-        block_size_actual: usize,
-    },
-    CommitTagBlockIdMismatch {
-        offset: u64,
-        block_id_expected: block::Id,
-        block_id_actual: block::Id,
-    },
-    CommitTagCrcMismatch {
-        offset: u64,
-        crc_expected: u64,
-        crc_actual: u64,
-    },
+    BlockProcessJob(BlockProcessJobError),
 }
 
 #[derive(Debug)]
@@ -661,7 +632,8 @@ where C: Context + Send,
                                 .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
                             let job_output: job::JobOutput = job_output.into();
                             let job::BlockProcessDone(block_process_result) = job_output.into();
-                            let BlockProcessJobDone { block_id, block_bytes, block_crc, } = block_process_result?;
+                            let BlockProcessJobDone { block_id, block_bytes, block_crc, } = block_process_result
+                                .map_err(Error::BlockProcessJob)?;
 
                             let task_done = task::Done {
                                 current_offset: cursor,
@@ -733,76 +705,4 @@ where C: Context + Send,
 
     log::debug!("master channel closed in interpret_loop, shutting down");
     Ok(())
-}
-
-pub type BlockProcessJobOutput = Result<BlockProcessJobDone, Error>;
-
-pub struct BlockProcessJobDone {
-    block_id: block::Id,
-    block_bytes: Bytes,
-    block_crc: u64,
-}
-
-pub struct BlockProcessJobArgs {
-    offset: u64,
-    storage_layout: storage::Layout,
-    block_header: storage::BlockHeader,
-    block_bytes: BytesMut,
-}
-
-pub fn block_process_job(
-    BlockProcessJobArgs {
-        offset,
-        storage_layout,
-        block_header,
-        block_bytes,
-    }: BlockProcessJobArgs,
-)
-    -> BlockProcessJobOutput
-{
-    let block_buffer_start = storage_layout.block_header_size;
-    let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
-
-    let storage_block_header: storage::BlockHeader = bincode::deserialize_from(
-        &block_bytes[.. block_buffer_start],
-    ).map_err(Error::BlockHeaderDeserialize)?;
-    if storage_block_header.block_id != block_header.block_id {
-        return Err(Error::CorruptedData(CorruptedDataError::BlockIdMismatch {
-            offset,
-            block_id_expected: block_header.block_id,
-            block_id_actual: storage_block_header.block_id,
-        }));
-    }
-
-    if storage_block_header.block_size != block_header.block_size {
-        return Err(Error::CorruptedData(CorruptedDataError::BlockSizeMismatch {
-            offset,
-            block_id: block_header.block_id,
-            block_size_expected: block_header.block_size,
-            block_size_actual: storage_block_header.block_size,
-        }));
-    }
-    let commit_tag: storage::CommitTag = bincode::deserialize_from(
-        &block_bytes[block_buffer_end ..],
-    ).map_err(Error::CommitTagDeserialize)?;
-    if commit_tag.block_id != block_header.block_id {
-        return Err(Error::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
-            offset,
-            block_id_expected: block_header.block_id,
-            block_id_actual: commit_tag.block_id,
-        }));
-    }
-    let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
-    let block_id = block_header.block_id;
-
-    let crc_expected = block::crc(&block_bytes);
-    if commit_tag.crc != crc_expected {
-        return Err(Error::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
-            offset,
-            crc_expected,
-            crc_actual: commit_tag.crc,
-        }));
-    }
-
-    Ok(BlockProcessJobDone { block_id, block_bytes, block_crc: commit_tag.crc, })
 }

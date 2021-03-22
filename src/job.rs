@@ -4,12 +4,12 @@ use alloc_pool::bytes::{
 
 use crate::{
     block,
-    wheel::interpret::fixed_file,
+    wheel::interpret,
 };
 
 pub enum Job {
     CalculateCrc { block_bytes: Bytes, },
-    BlockProcess(fixed_file::BlockProcessJobArgs),
+    BlockProcess(interpret::BlockProcessJobArgs),
 }
 
 pub enum JobOutput {
@@ -25,7 +25,7 @@ impl edeltraud::Job for Job {
             Job::CalculateCrc { ref block_bytes, } =>
                 JobOutput::CalculateCrc(CalculateCrcDone { crc: block::crc(block_bytes), }),
             Job::BlockProcess(args) =>
-                JobOutput::BlockProcess(BlockProcessDone(fixed_file::block_process_job(args))),
+                JobOutput::BlockProcess(BlockProcessDone(interpret::block_process_job(args))),
         }
     }
 }
@@ -45,7 +45,7 @@ impl From<JobOutput> for CalculateCrcDone {
     }
 }
 
-pub struct BlockProcessDone(pub fixed_file::BlockProcessJobOutput);
+pub struct BlockProcessDone(pub interpret::BlockProcessJobOutput);
 
 impl From<JobOutput> for BlockProcessDone {
     fn from(output: JobOutput) -> Self {
