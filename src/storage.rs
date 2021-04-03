@@ -80,11 +80,27 @@ impl Default for CommitTag {
     }
 }
 
+pub const TERMINATOR_TAG_MAGIC: u64 = 0x375d8f85e8daab4a;
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct TerminatorTag {
+    pub magic: u64,
+}
+
+impl Default for TerminatorTag {
+    fn default() -> TerminatorTag {
+        TerminatorTag {
+            magic: TERMINATOR_TAG_MAGIC,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Default, Debug)]
 pub struct Layout {
     pub wheel_header_size: usize,
     pub block_header_size: usize,
     pub commit_tag_size: usize,
+    pub terminator_tag_size: usize,
 }
 
 #[derive(Debug)]
@@ -92,6 +108,7 @@ pub enum LayoutError {
     WheelHeaderSerialize(bincode::Error),
     BlockHeaderSerialize(bincode::Error),
     CommitTagSerialize(bincode::Error),
+    TerminatorTagSerialize(bincode::Error),
 }
 
 impl Layout {
@@ -111,17 +128,24 @@ impl Layout {
         bincode::serialize_into(&mut work_block, &CommitTag::default())
             .map_err(LayoutError::CommitTagSerialize)?;
         let commit_tag_size = work_block.len() - cursor;
+        cursor = work_block.len();
+
+        bincode::serialize_into(&mut work_block, &TerminatorTag::default())
+            .map_err(LayoutError::TerminatorTagSerialize)?;
+        let terminator_tag_size = work_block.len() - cursor;
 
         work_block.clear();
         Ok(Layout {
             wheel_header_size,
             block_header_size,
             commit_tag_size,
+            terminator_tag_size,
         })
     }
 
     pub fn service_size_min(&self) -> usize {
         self.wheel_header_size
+            + self.terminator_tag_size
     }
 
     pub fn data_size_block_min(&self) -> usize {
