@@ -22,7 +22,6 @@ use crate::{
             BlockGet,
             BlockEntry,
             BlockEntryGet,
-            RightEnvirons,
         },
     },
 };
@@ -1059,7 +1058,7 @@ impl<C> Inner<C> where C: Context {
                 match &mut task_kind {
                     task::TaskKind::WriteBlock(task::WriteBlock { commit, .. }) |
                     task::TaskKind::DeleteBlock(task::DeleteBlock { commit, .. }) =>
-                        if let RightEnvirons::End = self.schema.block_get().by_id(lens.block_id()).unwrap().environs.right {
+                        if self.schema.is_last_block(&lens.block_id()) {
                             *commit = task::CommitKind::CommitAndTerminate;
                         },
                     task::TaskKind::ReadBlock(..) =>

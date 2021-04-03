@@ -186,6 +186,14 @@ impl Index {
             None
         }
     }
+
+    pub fn is_last(&self, key: &SpaceKey) -> bool {
+        if let Some(Gap { between: GapBetween::BlockAndEnd { .. }, }) = self.gaps.get(key) {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]

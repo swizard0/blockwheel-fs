@@ -42,6 +42,7 @@ use crate::{
 pub enum Error {
     BlockHeaderSerialize(bincode::Error),
     CommitTagSerialize(bincode::Error),
+    TerminatorTagSerialize(bincode::Error),
     TombstoneTagSerialize(bincode::Error),
     WheelPeerLost,
     ThreadPoolGone,
@@ -55,6 +56,7 @@ pub enum WheelCreateError {
         required_min: usize,
     },
     HeaderSerialize(bincode::Error),
+    TerminatorTagSerialize(bincode::Error),
 }
 
 pub struct WheelData<C> where C: Context {
@@ -91,7 +93,13 @@ impl<C> GenServer<C> where C: Context {
         };
         bincode::serialize_into(&mut memory, &wheel_header)
             .map_err(WheelCreateError::HeaderSerialize)?;
-        let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size;
+
+        let terminator_tag = storage::TerminatorTag::default();
+        bincode::serialize_into(&mut memory, &terminator_tag)
+            .map_err(WheelCreateError::TerminatorTagSerialize)?;
+
+        let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size
+            + performer_builder.storage_layout().terminator_tag_size;
         assert_eq!(memory.len(), min_wheel_file_size);
         let size_bytes_total = params.init_wheel_size_bytes;
         if size_bytes_total < min_wheel_file_size {
@@ -225,6 +233,14 @@ where C: Context + Send,
                         };
                         bincode::serialize_into(&mut cursor, &commit_tag)
                             .map_err(Error::CommitTagSerialize)?;
+                        match write_block.commit {
+                            task::CommitKind::CommitOnly =>
+                                (),
+                            task::CommitKind::CommitAndTerminate => {
+                                bincode::serialize_into(&mut cursor, &storage::TerminatorTag::default())
+                                    .map_err(Error::TerminatorTagSerialize)?;
+                            },
+                        }
 
                         let task_done = task::Done {
                             current_offset: cursor.position(),
@@ -289,6 +305,14 @@ where C: Context + Send,
                         let tombstone_tag = storage::TombstoneTag::default();
                         bincode::serialize_into(&mut cursor, &tombstone_tag)
                             .map_err(Error::TombstoneTagSerialize)?;
+                        match delete_block.commit {
+                            task::CommitKind::CommitOnly =>
+                                (),
+                            task::CommitKind::CommitAndTerminate => {
+                                bincode::serialize_into(&mut cursor, &storage::TerminatorTag::default())
+                                    .map_err(Error::TerminatorTagSerialize)?;
+                            },
+                        }
 
                         let task_done = task::Done {
                             current_offset: cursor.position(),

@@ -945,6 +945,22 @@ impl Schema {
         self.blocks_index.next_block_id_from(offset)
     }
 
+    pub fn is_last_block(&self, block_id: &block::Id) -> bool {
+        if let Some(block_entry) = self.blocks_index.get(block_id) {
+            match block_entry.environs.right {
+                RightEnvirons::End =>
+                    true,
+                RightEnvirons::Space { ref space_key, } if self.gaps_index.is_last(space_key) =>
+                    true,
+                RightEnvirons::Space { .. } |
+                RightEnvirons::Block { .. } =>
+                    false,
+            }
+        } else {
+            false
+        }
+    }
+
     fn make_defrag_op(&mut self, space_key_left: SpaceKey, moving_block_id: block::Id) -> DefragOp {
         let defrag_gaps = self.blocks_index.with_mut(&moving_block_id, |block_entry| {
             match block_entry.environs.right {

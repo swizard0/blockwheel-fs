@@ -71,6 +71,7 @@ pub enum Error {
     },
     BlockHeaderSerialize(bincode::Error),
     CommitTagSerialize(bincode::Error),
+    TerminatorTagSerialize(bincode::Error),
     TombstoneTagSerialize(bincode::Error),
     BlockWrite(io::Error),
     BlockRead(io::Error),
@@ -91,6 +92,7 @@ pub enum WheelCreateError {
         required_min: usize,
     },
     HeaderSerialize(bincode::Error),
+    TerminatorTagSerialize(bincode::Error),
     HeaderTagWrite(io::Error),
     ZeroChunkWrite(io::Error),
     Flush(io::Error),
@@ -197,8 +199,13 @@ impl<C> GenServer<C> where C: Context {
         bincode::serialize_into(performer_builder.work_block_cleared(), &wheel_header)
             .map_err(WheelCreateError::HeaderSerialize)?;
 
+        let terminator_tag = storage::TerminatorTag::default();
+        bincode::serialize_into(performer_builder.work_block(), &terminator_tag)
+            .map_err(WheelCreateError::TerminatorTagSerialize)?;
+
         let mut cursor = performer_builder.work_block().len();
-        let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size;
+        let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size
+            + performer_builder.storage_layout().terminator_tag_size;
         assert_eq!(cursor, min_wheel_file_size);
         wheel_file.write_all(performer_builder.work_block()).await
             .map_err(WheelCreateError::HeaderTagWrite)?;
@@ -323,10 +330,18 @@ impl<C> GenServer<C> where C: Context {
         let work_block_size_bytes = work_block.capacity();
         work_block.resize(work_block_size_bytes, 0);
         let mut offset = 0;
-        loop {
+        'outer: loop {
             let bytes_read = match wheel_file.read(&mut work_block[offset ..]).await {
-                Ok(0) =>
-                    break,
+                Ok(0) => {
+                    assert!(
+                        cursor + builder.storage_layout().block_header_size as u64 >= file_size,
+                        "assertion failed: cursor = {} + block_header_size = {} >= file_size = {}",
+                        cursor,
+                        builder.storage_layout().block_header_size,
+                        file_size,
+                    );
+                    break;
+                },
                 Ok(bytes_read) =>
                     bytes_read,
                 Err(ref error) if error.kind() == io::ErrorKind::Interrupted =>
@@ -362,7 +377,14 @@ impl<C> GenServer<C> where C: Context {
                         break;
                     },
                     Ok(..) | Err(..) =>
-                        (),
+                        match bincode::deserialize_from::<_, storage::TerminatorTag>(area) {
+                            Ok(terminator_tag) if terminator_tag.magic == storage::TERMINATOR_TAG_MAGIC => {
+                                log::debug!("terminator found @ {:?}, loading done", cursor);
+                                break 'outer;
+                            },
+                            Ok(..) | Err(..) =>
+                                (),
+                        },
                 };
                 start += 1;
                 cursor += 1;
@@ -372,13 +394,6 @@ impl<C> GenServer<C> where C: Context {
                 offset -= start;
             }
         }
-        assert!(
-            cursor + builder.storage_layout().block_header_size as u64 >= file_size,
-            "assertion failed: cursor = {} + block_header_size = {} >= file_size = {}",
-            cursor,
-            builder.storage_layout().block_header_size,
-            file_size,
-        );
 
         log::debug!("loaded wheel schema");
 
@@ -585,6 +600,14 @@ where C: Context + Send,
                         };
                         bincode::serialize_into(&mut work_block, &commit_tag)
                             .map_err(Error::CommitTagSerialize)?;
+                        match write_block.commit {
+                            task::CommitKind::CommitOnly =>
+                                (),
+                            task::CommitKind::CommitAndTerminate => {
+                                bincode::serialize_into(&mut work_block, &storage::TerminatorTag::default())
+                                    .map_err(Error::TerminatorTagSerialize)?;
+                            },
+                        }
                         timings.write_prepare += now.elapsed();
 
                         let now = Instant::now();
@@ -658,6 +681,14 @@ where C: Context + Send,
                         work_block.clear();
                         bincode::serialize_into(&mut work_block, &tombstone_tag)
                             .map_err(Error::TombstoneTagSerialize)?;
+                        match delete_block.commit {
+                            task::CommitKind::CommitOnly =>
+                                (),
+                            task::CommitKind::CommitAndTerminate => {
+                                bincode::serialize_into(&mut work_block, &storage::TerminatorTag::default())
+                                    .map_err(Error::TerminatorTagSerialize)?;
+                            },
+                        }
 
                         let now = Instant::now();
                         wheel_file.write_all(&work_block).await
