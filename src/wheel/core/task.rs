@@ -40,9 +40,16 @@ impl<C> fmt::Debug for TaskKind<C> where C: Context {
     }
 }
 
+#[derive(Debug)]
+pub enum CommitKind {
+    CommitOnly,
+    CommitAndTerminate,
+}
+
 pub struct WriteBlock<C> {
     pub block_bytes: Bytes,
     pub block_crc: Option<u64>,
+    pub commit: CommitKind,
     pub context: WriteBlockContext<C>,
 }
 
@@ -50,6 +57,7 @@ impl<C> fmt::Debug for WriteBlock<C> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("WriteBlock")
             .field("block_bytes", &self.block_bytes)
+            .field("commit", &self.commit)
             .field("context", &self.context)
             .finish()
     }
@@ -103,8 +111,8 @@ impl<C> fmt::Debug for ReadBlockContext<C> where C: Context {
         match self {
             ReadBlockContext::External(..) =>
                 write!(fmt, "ReadBlockContext::External(..)"),
-            ReadBlockContext::Defrag { .. } =>
-                write!(fmt, "ReadBlockContext::Defrag"),
+            ReadBlockContext::Defrag { defrag_gaps, } =>
+                write!(fmt, "ReadBlockContext::Defrag {{ defrag_gaps: {:?} }}", defrag_gaps),
             ReadBlockContext::IterBlocks { .. } =>
                 write!(fmt, "ReadBlockContext::IterBlocks"),
         }
@@ -112,12 +120,14 @@ impl<C> fmt::Debug for ReadBlockContext<C> where C: Context {
 }
 
 pub struct DeleteBlock<C> {
+    pub commit: CommitKind,
     pub context: DeleteBlockContext<C>,
 }
 
 impl<C> fmt::Debug for DeleteBlock<C> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("DeleteBlock")
+            .field("commit", &self.commit)
             .field("context", &self.context)
             .finish()
     }

@@ -100,6 +100,7 @@ fn create_read_one() {
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
                     block_crc: Some(block::crc(&hello_world_bytes())),
+                    commit: task::CommitKind::CommitOnly,
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -211,6 +212,7 @@ fn create_write_overlap_read_one() {
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
                     block_crc: Some(block::crc(&hello_world_bytes())),
+                    commit: task::CommitKind::CommitOnly,
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -223,6 +225,7 @@ fn create_write_overlap_read_one() {
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
                     block_crc: Some(block::crc(&hello_world_bytes())),
+                    commit: task::CommitKind::CommitOnly,
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -328,6 +331,7 @@ fn create_write_delete_read_one() {
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
                     block_crc: Some(block::crc(&hello_world_bytes())),
+                    commit: task::CommitKind::CommitOnly,
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -339,6 +343,7 @@ fn create_write_delete_read_one() {
                 task::TaskKind::WriteBlock(task::WriteBlock {
                     block_bytes: hello_world_bytes(),
                     block_crc: Some(block::crc(&hello_world_bytes())),
+                    commit: task::CommitKind::CommitOnly,
                     context: task::WriteBlockContext::External(context),
                 }),
             ).await?;
@@ -348,6 +353,7 @@ fn create_write_delete_read_one() {
                 schema.storage_layout().wheel_header_size as u64,
                 block::Id::init(),
                 task::TaskKind::DeleteBlock(task::DeleteBlock {
+                    commit: task::CommitKind::CommitOnly,
                     context: task::DeleteBlockContext::External(context),
                 }),
             ).await?;

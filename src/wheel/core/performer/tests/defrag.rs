@@ -145,7 +145,7 @@ fn script_simple_defrag() {
                     context: task::ReadBlockContext::Defrag {
                         defrag_gaps: DefragGaps::Both {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                            space_key_right: SpaceKey { space_available: 14, serial: 3 },
+                            space_key_right: SpaceKey { space_available: 6, serial: 3 },
                         },
                     },
                 }),

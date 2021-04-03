@@ -1207,7 +1207,7 @@ mod tests {
     #[test]
     fn process_write_block_request() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 136);
+        assert_eq!(schema.gaps_index.space_total(), 128);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(WriteBlockPerform {
@@ -1231,13 +1231,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 75, serial: 2, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 67, serial: 2, }, },
                 },
                 ..
             }) if block_id == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 75);
+        assert_eq!(schema.gaps_index.space_total(), 67);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(
@@ -1279,13 +1279,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Block { block_id: ref block_id_b, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 14, serial: 3, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 14);
+        assert_eq!(schema.gaps_index.space_total(), 6);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::ReplyNoSpaceLeft));
@@ -1294,7 +1294,7 @@ mod tests {
     #[test]
     fn process_write_read_block_requests() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 136);
+        assert_eq!(schema.gaps_index.space_total(), 128);
 
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::NotFound));
@@ -1323,13 +1323,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 75, serial: 2, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 67, serial: 2, }, },
                 },
                 ..
             }) if block_id == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 75);
+        assert_eq!(schema.gaps_index.space_total(), 67);
 
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::Perform(ReadBlockPerform { .. })));
@@ -1338,7 +1338,7 @@ mod tests {
     #[test]
     fn process_delete_block_request() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 136);
+        assert_eq!(schema.gaps_index.space_total(), 128);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(..)));
@@ -1370,7 +1370,7 @@ mod tests {
             defrag_op: DefragOp::Queue {
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 14, serial: 3 },
+                    space_key_right: SpaceKey { space_available: 6, serial: 3 },
                 },
                 moving_block_id,
             },
@@ -1389,12 +1389,12 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 61, serial: 4, }, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 14, serial: 3, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
                 },
                 ..
             }) if block_id == &block::Id::init().next()
         ));
-        assert_eq!(schema.gaps_index.space_total(), 75);
+        assert_eq!(schema.gaps_index.space_total(), 67);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(..)));
@@ -1413,7 +1413,7 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Block { block_id: ref block_id_b, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 14, serial: 3, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init().next().next()
@@ -1434,18 +1434,18 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 75, serial: 5, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 67, serial: 5, }, },
                 },
                 ..
             }) if block_id == &block::Id::init().next().next()
         ));
-        assert_eq!(schema.gaps_index.space_total(), 75);
+        assert_eq!(schema.gaps_index.space_total(), 67);
     }
 
     #[test]
     fn process_delete_block_task_done_defrag() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 136);
+        assert_eq!(schema.gaps_index.space_total(), 128);
 
         let op = schema.process_write_block_request(&sample_hello_world(), Some(0));
         assert!(matches!(op, WriteBlockOp::Perform(..)));
@@ -1460,7 +1460,7 @@ mod tests {
             defrag_op: DefragOp::Queue {
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 14, serial: 3 },
+                    space_key_right: SpaceKey { space_available: 6, serial: 3 },
                 },
                 moving_block_id,
             },
@@ -1468,7 +1468,7 @@ mod tests {
         }) if moving_block_id == block::Id::init().next()));
 
         // defrag delete
-        assert_eq!(schema.gaps_index.space_total(), 75);
+        assert_eq!(schema.gaps_index.space_total(), 67);
 
         let op = schema.process_delete_block_request(&block::Id::init().next());
         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { .. })));
@@ -1490,12 +1490,12 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 75, serial: 5, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 67, serial: 5, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next()
         ));
 
-        assert_eq!(schema.gaps_index.space_total(), 75);
+        assert_eq!(schema.gaps_index.space_total(), 67);
     }
 }

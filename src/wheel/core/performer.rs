@@ -22,6 +22,7 @@ use crate::{
             BlockGet,
             BlockEntry,
             BlockEntryGet,
+            RightEnvirons,
         },
     },
 };
@@ -720,17 +721,19 @@ impl<C> Inner<C> where C: Context {
         match self.schema.process_delete_block_request(&request_delete_block.block_id) {
 
             schema::DeleteBlockOp::Perform(schema::DeleteBlockPerform) => {
+                let block_get = self.schema.block_get();
                 let mut lens = self.tasks_queue.focus_block_id(request_delete_block.block_id.clone());
                 lens.push_task(
                     task::Task {
                         block_id: request_delete_block.block_id,
                         kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                            commit: task::CommitKind::CommitOnly,
                             context: task::DeleteBlockContext::External(
                                 request_delete_block.context,
                             ),
                         }),
                     },
-                    self.schema.block_get(),
+                    block_get,
                 );
                 lens.enqueue(self.schema.block_get());
                 Op::Idle(Performer { inner: self, })
@@ -850,6 +853,7 @@ impl<C> Inner<C> where C: Context {
                                             kind: task::TaskKind::WriteBlock(task::WriteBlock {
                                                 block_bytes: block_bytes.clone(),
                                                 block_crc: Some(block_crc),
+                                                commit: task::CommitKind::CommitOnly,
                                                 context: task::WriteBlockContext::Defrag,
                                             }),
                                         },
@@ -958,6 +962,7 @@ impl<C> Inner<C> where C: Context {
                                     task::Task {
                                         block_id: block_id.clone(),
                                         kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                                            commit: task::CommitKind::CommitOnly,
                                             context: task::DeleteBlockContext::Defrag {
                                                 defrag_gaps,
                                                 block_bytes,
@@ -1028,23 +1033,36 @@ impl<C> Inner<C> where C: Context {
     fn maybe_run_background_task(mut self) -> Op<C> {
         loop {
             if let Some((offset, mut lens)) = self.tasks_queue.next_trigger(self.bg_task.current_offset, self.schema.block_get()) {
-                let task_kind = match lens.pop_task(self.schema.block_get()) {
+                let mut task_kind = match lens.pop_task(self.schema.block_get()) {
                     Some(task_kind) => task_kind,
                     None => panic!("empty task queue unexpected for block {:?} @ {}", lens.block_id(), offset),
                 };
                 match &task_kind {
-                    task::TaskKind::WriteBlock(..) =>
+                    task::TaskKind::WriteBlock(..) |
+                    task::TaskKind::ReadBlock(..) |
+                    task::TaskKind::DeleteBlock(task::DeleteBlock {
+                        context: task::DeleteBlockContext::External(..),
+                        ..
+                    }) =>
                         (),
-                    task::TaskKind::ReadBlock(..) =>
-                        (),
-                    task::TaskKind::DeleteBlock(task::DeleteBlock { context: task::DeleteBlockContext::Defrag { defrag_gaps, .. }, }) =>
+                    task::TaskKind::DeleteBlock(task::DeleteBlock {
+                        context: task::DeleteBlockContext::Defrag { defrag_gaps, .. },
+                        ..
+                    }) =>
                         if !defrag_gaps.is_still_relevant(lens.block_id(), self.schema.block_get()) {
                             cancel_defrag_task(self.defrag.as_mut().unwrap());
                             lens.finish(self.schema.block_get());
                             lens.enqueue(self.schema.block_get());
                             continue;
                         },
-                    task::TaskKind::DeleteBlock(task::DeleteBlock { context: task::DeleteBlockContext::External(..), }) =>
+                }
+                match &mut task_kind {
+                    task::TaskKind::WriteBlock(task::WriteBlock { commit, .. }) |
+                    task::TaskKind::DeleteBlock(task::DeleteBlock { commit, .. }) =>
+                        if let RightEnvirons::End = self.schema.block_get().by_id(lens.block_id()).unwrap().environs.right {
+                            *commit = task::CommitKind::CommitAndTerminate;
+                        },
+                    task::TaskKind::ReadBlock(..) =>
                         (),
                 }
 
@@ -1098,6 +1116,7 @@ where C: Context,
             kind: task::TaskKind::WriteBlock(task::WriteBlock {
                 block_bytes: request_write_block.block_bytes,
                 block_crc: request_write_block.block_crc,
+                commit: task::CommitKind::CommitOnly,
                 context: task::WriteBlockContext::External(
                     request_write_block.context,
                 ),

@@ -295,10 +295,10 @@ fn script_basic() {
             expect_info: Info {
                 blocks_count: 2,
                 wheel_size_bytes: 160,
-                service_bytes_used: 120,
+                service_bytes_used: 128,
                 data_bytes_used: 26,
                 defrag_write_pending_bytes: 0,
-                bytes_free: 14,
+                bytes_free: 6,
                 interpret_stats: InterpretStats {
                     count_total: 0,
                     count_no_seek: 0,
