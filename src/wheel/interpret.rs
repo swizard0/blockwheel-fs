@@ -9,6 +9,7 @@ use futures::{
 use alloc_pool::bytes::{
     Bytes,
     BytesMut,
+    BytesPool,
 };
 
 use crate::{
@@ -26,16 +27,44 @@ pub mod fixed_file;
 
 struct Request<C> where C: Context {
     offset: u64,
-    task: task::Task<C>,
+    task: RequestTask<C>,
     reply_tx: oneshot::Sender<DoneTask<C>>,
 }
 
+pub enum RequestTask<C> where C: Context {
+    WriteBlock(RequestTaskWriteBlock<C>),
+    ReadBlock(task::ReadBlock<C>),
+    DeleteBlock(RequestTaskDeleteBlock<C>),
+}
+
+pub struct RequestTaskWriteBlock<C> {
+    pub write_block_bytes: Bytes,
+    pub context: task::WriteBlockContext<C>,
+}
+
+pub struct RequestTaskDeleteBlock<C> {
+    pub delete_block_bytes: Bytes,
+    pub context: task::DeleteBlockContext<C>,
+}
+
 pub struct DoneTask<C> where C: Context {
-    pub task_done: task::Done<C>,
+    pub current_offset: u64,
+    pub block_id: block::Id,
+    pub task_done: RequestDoneTask<C>,
     pub stats: InterpretStats,
 }
 
-pub type RequestTask<C> = task::Task<C>;
+pub enum RequestDoneTask<C> where C: Context {
+    WriteBlock(task::TaskDoneWriteBlock<C::WriteBlock>),
+    ReadBlock(RequestDoneTaskReadBlock<C>),
+    DeleteBlock(task::TaskDoneDeleteBlock<C::DeleteBlock>),
+}
+
+pub struct RequestDoneTaskReadBlock<C> where C: Context {
+    pub block_process_job_args: BlockProcessJobArgs,
+    pub context: task::ReadBlockContext<C>,
+}
+
 pub type RequestReplyRx<C> = oneshot::Receiver<DoneTask<C>>;
 
 pub struct Synced;
@@ -90,6 +119,122 @@ impl<C> Pid<C> where C: Context {
             }
         }
     }
+}
+
+#[derive(Debug)]
+pub enum BlockPrepareWriteJobError {
+    BlockHeaderSerialize(bincode::Error),
+    CommitTagSerialize(bincode::Error),
+    TerminatorTagSerialize(bincode::Error),
+}
+
+pub struct BlockPrepareWriteJobDone {
+    write_block_bytes: Bytes,
+}
+
+pub struct BlockPrepareWriteJobArgs {
+    block_id: block::Id,
+    block_bytes: Bytes,
+    block_crc: Option<u64>,
+    commit: task::CommitKind,
+    blocks_pool: BytesPool,
+}
+
+pub type BlockPrepareWriteJobOutput = Result<BlockPrepareWriteJobDone, BlockPrepareWriteJobError>;
+
+pub fn block_prepare_write_job(
+    BlockPrepareWriteJobArgs {
+        block_id,
+        block_bytes,
+        block_crc,
+        commit,
+        blocks_pool,
+    }: BlockPrepareWriteJobArgs,
+)
+    -> BlockPrepareWriteJobOutput
+{
+    let mut write_block_bytes = blocks_pool.lend();
+
+    let block_header = storage::BlockHeader {
+        block_id: block_id.clone(),
+        block_size: block_bytes.len(),
+        ..Default::default()
+    };
+    bincode::serialize_into(&mut write_block_bytes, &block_header)
+        .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
+    write_block_bytes.extend_from_slice(&block_bytes);
+
+    let crc = if let Some(value) = block_crc {
+        value
+    } else {
+        block::crc(&block_bytes)
+    };
+
+    let commit_tag = storage::CommitTag {
+        block_id: block_id.clone(),
+        crc,
+        ..Default::default()
+    };
+    bincode::serialize_into(&mut write_block_bytes, &commit_tag)
+        .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
+    match commit {
+        task::CommitKind::CommitOnly =>
+            (),
+        task::CommitKind::CommitAndTerminate => {
+            bincode::serialize_into(&mut write_block_bytes, &storage::TerminatorTag::default())
+                .map_err(BlockPrepareWriteJobError::TerminatorTagSerialize)?;
+        },
+    }
+
+    Ok(BlockPrepareWriteJobDone {
+        write_block_bytes: write_block_bytes.freeze(),
+    })
+}
+
+#[derive(Debug)]
+pub enum BlockPrepareDeleteJobError {
+    TombstoneTagSerialize(bincode::Error),
+    TerminatorTagSerialize(bincode::Error),
+}
+
+pub struct BlockPrepareDeleteJobDone {
+    delete_block_bytes: Bytes,
+}
+
+pub struct BlockPrepareDeleteJobArgs {
+    block_id: block::Id,
+    commit: task::CommitKind,
+    blocks_pool: BytesPool,
+}
+
+pub type BlockPrepareDeleteJobOutput = Result<BlockPrepareDeleteJobDone, BlockPrepareDeleteJobError>;
+
+pub fn block_prepare_delete_job(
+    BlockPrepareDeleteJobArgs {
+        block_id,
+        commit,
+        blocks_pool,
+    }: BlockPrepareDeleteJobArgs,
+)
+    -> BlockPrepareDeleteJobOutput
+{
+    let mut delete_block_bytes = blocks_pool.lend();
+
+    let tombstone_tag = storage::TombstoneTag::default();
+    bincode::serialize_into(&mut delete_block_bytes, &tombstone_tag)
+        .map_err(BlockPrepareDeleteJobError::TombstoneTagSerialize)?;
+    match commit {
+        task::CommitKind::CommitOnly =>
+            (),
+        task::CommitKind::CommitAndTerminate => {
+            bincode::serialize_into(&mut delete_block_bytes, &storage::TerminatorTag::default())
+                .map_err(BlockPrepareDeleteJobError::TerminatorTagSerialize)?;
+        },
+    }
+
+    Ok(BlockPrepareDeleteJobDone {
+        delete_block_bytes: delete_block_bytes.freeze(),
+    })
 }
 
 #[derive(Debug)]
