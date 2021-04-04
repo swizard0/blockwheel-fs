@@ -40,24 +40,15 @@ impl<C> fmt::Debug for TaskKind<C> where C: Context {
     }
 }
 
-#[derive(Debug)]
-pub enum CommitKind {
-    CommitOnly,
-    CommitAndTerminate,
-}
-
 pub struct WriteBlock<C> {
-    pub block_bytes: Bytes,
-    pub block_crc: Option<u64>,
-    pub commit: CommitKind,
+    pub write_block_bytes: BytesMut,
     pub context: WriteBlockContext<C>,
 }
 
 impl<C> fmt::Debug for WriteBlock<C> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("WriteBlock")
-            .field("block_bytes", &self.block_bytes)
-            .field("commit", &self.commit)
+            .field("write_block_bytes", &self.write_block_bytes)
             .field("context", &self.context)
             .finish()
     }
@@ -81,16 +72,14 @@ impl<C> fmt::Debug for WriteBlockContext<C> {
 }
 
 pub struct ReadBlock<C> where C: Context {
-    pub block_header: storage::BlockHeader,
-    pub block_bytes: BytesMut,
+    pub read_block_bytes: BytesMut,
     pub context: ReadBlockContext<C>,
 }
 
 impl<C> fmt::Debug for ReadBlock<C> where C: Context {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("ReadBlock")
-            .field("block_header", &self.block_header)
-            .field("block_bytes", &self.block_bytes)
+            .field("read_block_bytes", &self.read_block_bytes)
             .field("context", &self.context)
             .finish()
     }
@@ -120,14 +109,14 @@ impl<C> fmt::Debug for ReadBlockContext<C> where C: Context {
 }
 
 pub struct DeleteBlock<C> {
-    pub commit: CommitKind,
+    pub delete_block_bytes: BytesMut,
     pub context: DeleteBlockContext<C>,
 }
 
 impl<C> fmt::Debug for DeleteBlock<C> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("DeleteBlock")
-            .field("commit", &self.commit)
+            .field("delete_block_bytes", &self.delete_block_bytes)
             .field("context", &self.context)
             .finish()
     }
@@ -204,7 +193,6 @@ impl<C> fmt::Debug for TaskDoneWriteBlock<C> {
 
 pub struct TaskDoneReadBlock<C> where C: Context {
     pub block_bytes: Bytes,
-    pub block_crc: u64,
     pub context: ReadBlockContext<C>,
 }
 

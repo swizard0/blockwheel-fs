@@ -3,18 +3,19 @@ use alloc_pool::bytes::{
 };
 
 use crate::{
-    block,
     wheel::interpret,
 };
 
 pub enum Job {
-    CalculateCrc { block_bytes: Bytes, },
-    BlockProcess(interpret::BlockProcessJobArgs),
+    BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs),
+    BlockProcessRead(interpret::BlockProcessReadJobArgs),
+    BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs),
 }
 
 pub enum JobOutput {
-    CalculateCrc(CalculateCrcDone),
-    BlockProcess(BlockProcessDone),
+    BlockPrepareWrite(BlockPrepareWriteDone),
+    BlockProcessRead(BlockProcessReadDone),
+    BlockPrepareDelete(BlockPrepareDeleteDone),
 }
 
 impl edeltraud::Job for Job {
@@ -22,38 +23,51 @@ impl edeltraud::Job for Job {
 
     fn run(self) -> Self::Output {
         match self {
-            Job::CalculateCrc { ref block_bytes, } =>
-                JobOutput::CalculateCrc(CalculateCrcDone { crc: block::crc(block_bytes), }),
-            Job::BlockProcess(args) =>
-                JobOutput::BlockProcess(BlockProcessDone(interpret::block_process_job(args))),
+            Job::BlockPrepareWrite(args) =>
+                JobOutput::BlockPrepareWrite(BlockPrepareWriteDone(interpret::block_prepare_write_job(args))),
+            Job::BlockProcessRead(args) =>
+                JobOutput::BlockProcessRead(BlockProcessReadDone(interpret::block_process_read_job(args))),
+            Job::BlockPrepareDelete(args) =>
+                JobOutput::BlockPrepareDelete(BlockPrepareDeleteDone(interpret::block_prepare_delete_job(args))),
         }
     }
 }
 
-pub struct CalculateCrcDone {
-    pub crc: u64,
-}
+pub struct BlockPrepareWriteDone(pub interpret::BlockPrepareWriteJobOutput);
 
-impl From<JobOutput> for CalculateCrcDone {
+impl From<JobOutput> for BlockPrepareWriteDone {
     fn from(output: JobOutput) -> Self {
         match output {
-            JobOutput::CalculateCrc(done) =>
+            JobOutput::BlockPrepareWrite(done) =>
                 done,
             _other =>
-                panic!("expected JobOutput::CalculateCrc but got other"),
+                panic!("expected JobOutput::BlockPrepareWrite but got other"),
         }
     }
 }
 
-pub struct BlockProcessDone(pub interpret::BlockProcessJobOutput);
+pub struct BlockProcessReadDone(pub interpret::BlockProcessReadJobOutput);
 
-impl From<JobOutput> for BlockProcessDone {
+impl From<JobOutput> for BlockProcessReadDone {
     fn from(output: JobOutput) -> Self {
         match output {
-            JobOutput::BlockProcess(done) =>
+            JobOutput::BlockProcessRead(done) =>
                 done,
             _other =>
-                panic!("expected JobOutput::CalculateCrc but got other"),
+                panic!("expected JobOutput::BlockProcessRead but got other"),
+        }
+    }
+}
+
+pub struct BlockPrepareDeleteDone(pub interpret::BlockPrepareDeleteJobOutput);
+
+impl From<JobOutput> for BlockPrepareDeleteDone {
+    fn from(output: JobOutput) -> Self {
+        match output {
+            JobOutput::BlockPrepareDelete(done) =>
+                done,
+            _other =>
+                panic!("expected JobOutput::BlockPrepareDelete but got other"),
         }
     }
 }

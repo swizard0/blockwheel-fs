@@ -27,42 +27,13 @@ pub mod fixed_file;
 
 struct Request<C> where C: Context {
     offset: u64,
-    task: RequestTask<C>,
+    task: task::Task<C>,
     reply_tx: oneshot::Sender<DoneTask<C>>,
 }
 
-pub enum RequestTask<C> where C: Context {
-    WriteBlock(RequestTaskWriteBlock<C>),
-    ReadBlock(task::ReadBlock<C>),
-    DeleteBlock(RequestTaskDeleteBlock<C>),
-}
-
-pub struct RequestTaskWriteBlock<C> {
-    pub write_block_bytes: Bytes,
-    pub context: task::WriteBlockContext<C>,
-}
-
-pub struct RequestTaskDeleteBlock<C> {
-    pub delete_block_bytes: Bytes,
-    pub context: task::DeleteBlockContext<C>,
-}
-
 pub struct DoneTask<C> where C: Context {
-    pub current_offset: u64,
-    pub block_id: block::Id,
-    pub task_done: RequestDoneTask<C>,
+    pub task_done: task::Done<C>,
     pub stats: InterpretStats,
-}
-
-pub enum RequestDoneTask<C> where C: Context {
-    WriteBlock(task::TaskDoneWriteBlock<C::WriteBlock>),
-    ReadBlock(RequestDoneTaskReadBlock<C>),
-    DeleteBlock(task::TaskDoneDeleteBlock<C::DeleteBlock>),
-}
-
-pub struct RequestDoneTaskReadBlock<C> where C: Context {
-    pub block_process_job_args: BlockProcessJobArgs,
-    pub context: task::ReadBlockContext<C>,
 }
 
 pub type RequestReplyRx<C> = oneshot::Receiver<DoneTask<C>>;
@@ -97,7 +68,7 @@ pub struct Pid<C> where C: Context {
 }
 
 impl<C> Pid<C> where C: Context {
-    pub async fn push_request(&mut self, offset: u64, task: RequestTask<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
+    pub async fn push_request(&mut self, offset: u64, task: task::Task<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.request_tx
             .send(Command::Request(Request { offset, task, reply_tx, }))
@@ -238,7 +209,7 @@ pub fn block_prepare_delete_job(
 }
 
 #[derive(Debug)]
-pub enum BlockProcessJobError {
+pub enum BlockProcessReadJobError {
     BlockHeaderDeserialize(bincode::Error),
     CommitTagDeserialize(bincode::Error),
     CorruptedData(CorruptedDataError),
@@ -269,39 +240,39 @@ pub enum CorruptedDataError {
     },
 }
 
-pub type BlockProcessJobOutput = Result<BlockProcessJobDone, BlockProcessJobError>;
+pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
-pub struct BlockProcessJobDone {
+pub struct BlockProcessReadJobDone {
     block_id: block::Id,
     block_bytes: Bytes,
     block_crc: u64,
 }
 
-pub struct BlockProcessJobArgs {
+pub struct BlockProcessReadJobArgs {
     offset: u64,
     storage_layout: storage::Layout,
     block_header: storage::BlockHeader,
     block_bytes: BytesMut,
 }
 
-pub fn block_process_job(
-    BlockProcessJobArgs {
+pub fn block_process_read_job(
+    BlockProcessReadJobArgs {
         offset,
         storage_layout,
         block_header,
         block_bytes,
-    }: BlockProcessJobArgs,
+    }: BlockProcessReadJobArgs,
 )
-    -> BlockProcessJobOutput
+    -> BlockProcessReadJobOutput
 {
     let block_buffer_start = storage_layout.block_header_size;
     let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
 
     let storage_block_header: storage::BlockHeader = bincode::deserialize_from(
         &block_bytes[.. block_buffer_start],
-    ).map_err(BlockProcessJobError::BlockHeaderDeserialize)?;
+    ).map_err(BlockProcessReadJobError::BlockHeaderDeserialize)?;
     if storage_block_header.block_id != block_header.block_id {
-        return Err(BlockProcessJobError::CorruptedData(CorruptedDataError::BlockIdMismatch {
+        return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::BlockIdMismatch {
             offset,
             block_id_expected: block_header.block_id,
             block_id_actual: storage_block_header.block_id,
@@ -309,7 +280,7 @@ pub fn block_process_job(
     }
 
     if storage_block_header.block_size != block_header.block_size {
-        return Err(BlockProcessJobError::CorruptedData(CorruptedDataError::BlockSizeMismatch {
+        return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::BlockSizeMismatch {
             offset,
             block_id: block_header.block_id,
             block_size_expected: block_header.block_size,
@@ -318,9 +289,9 @@ pub fn block_process_job(
     }
     let commit_tag: storage::CommitTag = bincode::deserialize_from(
         &block_bytes[block_buffer_end ..],
-    ).map_err(BlockProcessJobError::CommitTagDeserialize)?;
+    ).map_err(BlockProcessReadJobError::CommitTagDeserialize)?;
     if commit_tag.block_id != block_header.block_id {
-        return Err(BlockProcessJobError::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
+        return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
             offset,
             block_id_expected: block_header.block_id,
             block_id_actual: commit_tag.block_id,
@@ -331,12 +302,12 @@ pub fn block_process_job(
 
     let crc_expected = block::crc(&block_bytes);
     if commit_tag.crc != crc_expected {
-        return Err(BlockProcessJobError::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
+        return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
             offset,
             crc_expected,
             crc_actual: commit_tag.crc,
         }));
     }
 
-    Ok(BlockProcessJobDone { block_id, block_bytes, block_crc: commit_tag.crc, })
+    Ok(BlockProcessReadJobDone { block_id, block_bytes, block_crc: commit_tag.crc, })
 }
