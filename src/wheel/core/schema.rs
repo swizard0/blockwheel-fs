@@ -164,6 +164,7 @@ impl Schema {
                     );
                     right_space_key = Some(space_key);
                     defrag_op = self.make_defrag_op(space_key, right_block_id.clone());
+                    log::debug!("defrag need for between = GapBetween::StartAndBlock: {:?}", defrag_op);
                     (
                         RightEnvirons::Space { space_key, },
                         LeftEnvirons::Space { space_key, },
@@ -215,6 +216,7 @@ impl Schema {
                     );
                     right_space_key = Some(space_key);
                     defrag_op = self.make_defrag_op(space_key, right_block_id.clone());
+                    log::debug!("defrag need for between = GapBetween::TwoBlocks: {:?}", defrag_op);
                     (
                         RightEnvirons::Space { space_key, },
                         RightEnvirons::Block { block_id: block_id.clone(), },
