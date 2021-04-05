@@ -215,8 +215,14 @@ impl Schema {
                         },
                     );
                     right_space_key = Some(space_key);
+                    log::debug!(
+                        "defrag need for between = GapBetween::TwoBlocks {{ left_block = {:?}, right_block = {:?} }}; space_left = {}",
+                        left_block,
+                        right_block,
+                        space_left,
+                    );
                     defrag_op = self.make_defrag_op(space_key, right_block_id.clone());
-                    log::debug!("defrag need for between = GapBetween::TwoBlocks: {:?}", defrag_op);
+                    log::debug!("defrag_op = {:?}", defrag_op);
                     (
                         RightEnvirons::Space { space_key, },
                         RightEnvirons::Block { block_id: block_id.clone(), },
