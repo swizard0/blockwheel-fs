@@ -219,14 +219,11 @@ pub enum CorruptedDataError {
 pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
 pub struct BlockProcessReadJobDone {
-    pub current_offset: u64,
-    pub block_id: block::Id,
     pub block_bytes: Bytes,
 }
 
 pub struct BlockProcessReadJobArgs {
     offset: u64,
-    current_offset: u64,
     storage_layout: storage::Layout,
     block_header: storage::BlockHeader,
     block_bytes: BytesMut,
@@ -235,7 +232,6 @@ pub struct BlockProcessReadJobArgs {
 pub fn block_process_read_job(
     BlockProcessReadJobArgs {
         offset,
-        current_offset,
         storage_layout,
         block_header,
         block_bytes,
@@ -287,5 +283,5 @@ pub fn block_process_read_job(
         }));
     }
 
-    Ok(BlockProcessReadJobDone { current_offset, block_id: block_header.block_id, block_bytes, })
+    Ok(BlockProcessReadJobDone { block_bytes, })
 }

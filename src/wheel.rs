@@ -40,7 +40,6 @@ use super::{
     Deleted,
     IterBlocks,
     IterBlocksItem,
-    InterpretStats,
     InterpreterParams,
     blockwheel_context::Context,
 };
@@ -309,20 +308,12 @@ where J: edeltraud::Job + From<job::Job>,
                                     context,
                                 },
                             ),
-                        Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, stats, })) =>
-                            poll.next.incoming_task_done_stats( // ??? wtf to do
-                                task::Done {
-                                    current_offset: done.current_offset,
-                                    task: task::TaskDone {
-                                        block_id: done.block_id,
-                                        kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                                            block_bytes: done.block_bytes,
-                                            context,
-                                        }),
-                                    },
-                                },
-                                stats,
-                            ),
+                        Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, stats, })) => {
+                            if let Err(_send_error) = reply_tx.send(Ok(done.block_bytes)) {
+                                log::warn!("client channel was closed before a block is actually read");
+                            }
+                            continue;
+                        }
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
                             poll.next.prepared_delete_block_done(
                                 block_id,
@@ -552,13 +543,20 @@ where J: edeltraud::Job + From<job::Job>,
 
             performer::Op::Event(performer::Event {
                 op: performer::EventOp::ReadBlock(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::Done { block_bytes, }, },
+                    performer::TaskDoneOp { context, op: performer::ReadBlockOp::Done { block_bytes, }, },
                 ),
                 performer,
             }) => {
-                if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-                    log::warn!("client channel was closed before a block is actually read");
-                }
+                job_tasks.push(make_job_task(
+                    JobTask::BlockProcessRead {
+                        offset: u64,
+                        storage_layout: storage::Layout,
+                        block_header: storage::BlockHeader,
+                        block_bytes,
+                        context,
+                    },
+                    state.thread_pool.clone(),
+                ));
                 performer.next()
             },
 
@@ -723,7 +721,6 @@ enum JobTask<C> where C: context::Context {
         block_header: storage::BlockHeader,
         block_bytes: BytesMut,
         context: task::ReadBlockContext<C>,
-        stats: InterpretStats,
     },
     BlockPrepareDelete {
         block_id: block::Id,
@@ -741,7 +738,6 @@ enum JobDone<C> where C: context::Context {
     BlockProcessRead {
         context: task::ReadBlockContext<C>,
         done: interpret::BlockProcessReadJobDone,
-        stats: InterpretStats,
     },
     BlockPrepareDelete {
         block_id: block::Id,
