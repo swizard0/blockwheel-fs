@@ -28,7 +28,6 @@ pub struct RequestFlush<C> {
 #[derive(Debug)]
 pub struct RequestWriteBlock<C> {
     pub block_bytes: Bytes,
-    pub block_crc: Option<u64>,
     pub context: C,
 }
 

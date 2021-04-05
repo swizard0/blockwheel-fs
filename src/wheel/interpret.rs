@@ -93,22 +93,29 @@ impl<C> Pid<C> where C: Context {
 }
 
 #[derive(Debug)]
-pub enum BlockPrepareWriteJobError {
-    BlockHeaderSerialize(bincode::Error),
-    CommitTagSerialize(bincode::Error),
+pub enum AppendTerminatorError {
     TerminatorTagSerialize(bincode::Error),
 }
 
+pub fn block_append_terminator(block_bytes: &mut BytesMut) -> Result<(), AppendTerminatorError> {
+    bincode::serialize_into(block_bytes, &storage::TerminatorTag::default())
+        .map_err(AppendTerminatorError::TerminatorTagSerialize)
+}
+
+#[derive(Debug)]
+pub enum BlockPrepareWriteJobError {
+    BlockHeaderSerialize(bincode::Error),
+    CommitTagSerialize(bincode::Error),
+}
+
 pub struct BlockPrepareWriteJobDone {
-    write_block_bytes: Bytes,
+    pub write_block_bytes: BytesMut,
 }
 
 pub struct BlockPrepareWriteJobArgs {
-    block_id: block::Id,
-    block_bytes: Bytes,
-    block_crc: Option<u64>,
-    commit: task::CommitKind,
-    blocks_pool: BytesPool,
+    pub block_id: block::Id,
+    pub block_bytes: Bytes,
+    pub blocks_pool: BytesPool,
 }
 
 pub type BlockPrepareWriteJobOutput = Result<BlockPrepareWriteJobDone, BlockPrepareWriteJobError>;
@@ -117,8 +124,6 @@ pub fn block_prepare_write_job(
     BlockPrepareWriteJobArgs {
         block_id,
         block_bytes,
-        block_crc,
-        commit,
         blocks_pool,
     }: BlockPrepareWriteJobArgs,
 )
@@ -135,47 +140,29 @@ pub fn block_prepare_write_job(
         .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
     write_block_bytes.extend_from_slice(&block_bytes);
 
-    let crc = if let Some(value) = block_crc {
-        value
-    } else {
-        block::crc(&block_bytes)
-    };
-
     let commit_tag = storage::CommitTag {
         block_id: block_id.clone(),
-        crc,
+        crc: block::crc(&block_bytes),
         ..Default::default()
     };
     bincode::serialize_into(&mut write_block_bytes, &commit_tag)
         .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
-    match commit {
-        task::CommitKind::CommitOnly =>
-            (),
-        task::CommitKind::CommitAndTerminate => {
-            bincode::serialize_into(&mut write_block_bytes, &storage::TerminatorTag::default())
-                .map_err(BlockPrepareWriteJobError::TerminatorTagSerialize)?;
-        },
-    }
 
-    Ok(BlockPrepareWriteJobDone {
-        write_block_bytes: write_block_bytes.freeze(),
-    })
+    Ok(BlockPrepareWriteJobDone { write_block_bytes, })
 }
 
 #[derive(Debug)]
 pub enum BlockPrepareDeleteJobError {
     TombstoneTagSerialize(bincode::Error),
-    TerminatorTagSerialize(bincode::Error),
 }
 
 pub struct BlockPrepareDeleteJobDone {
-    delete_block_bytes: Bytes,
+    pub delete_block_bytes: BytesMut,
 }
 
 pub struct BlockPrepareDeleteJobArgs {
-    block_id: block::Id,
-    commit: task::CommitKind,
-    blocks_pool: BytesPool,
+    pub block_id: block::Id,
+    pub blocks_pool: BytesPool,
 }
 
 pub type BlockPrepareDeleteJobOutput = Result<BlockPrepareDeleteJobDone, BlockPrepareDeleteJobError>;
@@ -183,7 +170,6 @@ pub type BlockPrepareDeleteJobOutput = Result<BlockPrepareDeleteJobDone, BlockPr
 pub fn block_prepare_delete_job(
     BlockPrepareDeleteJobArgs {
         block_id,
-        commit,
         blocks_pool,
     }: BlockPrepareDeleteJobArgs,
 )
@@ -194,18 +180,8 @@ pub fn block_prepare_delete_job(
     let tombstone_tag = storage::TombstoneTag::default();
     bincode::serialize_into(&mut delete_block_bytes, &tombstone_tag)
         .map_err(BlockPrepareDeleteJobError::TombstoneTagSerialize)?;
-    match commit {
-        task::CommitKind::CommitOnly =>
-            (),
-        task::CommitKind::CommitAndTerminate => {
-            bincode::serialize_into(&mut delete_block_bytes, &storage::TerminatorTag::default())
-                .map_err(BlockPrepareDeleteJobError::TerminatorTagSerialize)?;
-        },
-    }
 
-    Ok(BlockPrepareDeleteJobDone {
-        delete_block_bytes: delete_block_bytes.freeze(),
-    })
+    Ok(BlockPrepareDeleteJobDone { delete_block_bytes, })
 }
 
 #[derive(Debug)]
@@ -243,13 +219,14 @@ pub enum CorruptedDataError {
 pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
 pub struct BlockProcessReadJobDone {
-    block_id: block::Id,
-    block_bytes: Bytes,
-    block_crc: u64,
+    pub current_offset: u64,
+    pub block_id: block::Id,
+    pub block_bytes: Bytes,
 }
 
 pub struct BlockProcessReadJobArgs {
     offset: u64,
+    current_offset: u64,
     storage_layout: storage::Layout,
     block_header: storage::BlockHeader,
     block_bytes: BytesMut,
@@ -258,6 +235,7 @@ pub struct BlockProcessReadJobArgs {
 pub fn block_process_read_job(
     BlockProcessReadJobArgs {
         offset,
+        current_offset,
         storage_layout,
         block_header,
         block_bytes,
@@ -309,5 +287,5 @@ pub fn block_process_read_job(
         }));
     }
 
-    Ok(BlockProcessReadJobDone { block_id, block_bytes, block_crc: commit_tag.crc, })
+    Ok(BlockProcessReadJobDone { current_offset, block_id: block_header.block_id, block_bytes, })
 }

@@ -72,14 +72,16 @@ impl<C> fmt::Debug for WriteBlockContext<C> {
 }
 
 pub struct ReadBlock<C> where C: Context {
-    pub read_block_bytes: BytesMut,
+    pub block_header: storage::BlockHeader,
+    pub block_bytes: BytesMut,
     pub context: ReadBlockContext<C>,
 }
 
 impl<C> fmt::Debug for ReadBlock<C> where C: Context {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("ReadBlock")
-            .field("read_block_bytes", &self.read_block_bytes)
+            .field("block_header", &self.block_header)
+            .field("block_bytes", &self.block_bytes)
             .field("context", &self.context)
             .finish()
     }
@@ -128,7 +130,6 @@ pub enum DeleteBlockContext<C> {
     Defrag {
         defrag_gaps: DefragGaps,
         block_bytes: Bytes,
-        block_crc: u64,
     },
 }
 
@@ -192,7 +193,7 @@ impl<C> fmt::Debug for TaskDoneWriteBlock<C> {
 }
 
 pub struct TaskDoneReadBlock<C> where C: Context {
-    pub block_bytes: Bytes,
+    pub block_bytes: BytesMut,
     pub context: ReadBlockContext<C>,
 }
 

@@ -25,6 +25,7 @@ use edeltraud::{
 
 use alloc_pool::bytes::{
     Bytes,
+    BytesMut,
     BytesPool,
 };
 
@@ -39,12 +40,14 @@ use super::{
     Deleted,
     IterBlocks,
     IterBlocksItem,
+    InterpretStats,
     InterpreterParams,
     blockwheel_context::Context,
 };
 
 pub mod core;
 use self::core::{
+    task,
     performer,
 };
 
@@ -58,8 +61,12 @@ pub enum Error {
     InterpreterOpen(interpret::OpenError),
     InterpreterCreate(interpret::CreateError),
     InterpreterRun(interpret::RunError),
+    InterpreterAppendTerminator(interpret::AppendTerminatorError),
     InterpreterCrash,
     ThreadPoolGone,
+    BlockPrepareWrite(interpret::BlockPrepareWriteJobError),
+    BlockProcessRead(interpret::BlockProcessReadJobError),
+    BlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
 }
 
 type Request = proto::Request<Context>;
@@ -124,7 +131,7 @@ where J: edeltraud::Job + From<job::Job>,
             };
 
             let interpreter_pid = interpreter_gen_server.pid();
-            let interpreter_task = interpreter_gen_server.run(state.thread_pool.clone());
+            let interpreter_task = interpreter_gen_server.run();
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
             supervisor_pid.spawn_link_permanent(
                 async move {
@@ -150,7 +157,7 @@ where J: edeltraud::Job + From<job::Job>,
                 .map_err(ErrorSeverity::Fatal)?;
 
             let interpreter_pid = interpreter_gen_server.pid();
-            let interpreter_task = interpreter_gen_server.run(state.thread_pool.clone());
+            let interpreter_task = interpreter_gen_server.run();
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
             supervisor_pid.spawn_link_permanent(
                 async move {
@@ -180,7 +187,7 @@ where J: edeltraud::Job + From<job::Job>,
       J::Output: From<job::JobOutput>,
       job::JobOutput: From<J::Output>,
 {
-    let mut crc_tasks = FuturesUnordered::new();
+    let mut job_tasks = FuturesUnordered::new();
     let mut iter_tasks = FuturesUnordered::new();
 
     let mut op = performer.next();
@@ -196,12 +203,12 @@ where J: edeltraud::Job + From<job::Job>,
                     InterpreterDone(B),
                     InterpreterError(C),
                     IterTask(D),
-                    CrcTask(E),
+                    JobTask(E),
                 }
 
                 let mut fused_interpret_result_rx = poll.interpreter_context;
                 loop {
-                    let source = match (iter_tasks.is_empty(), crc_tasks.is_empty()) {
+                    let source = match (iter_tasks.is_empty(), job_tasks.is_empty()) {
                         (true, true) =>
                             select! {
                                 result = state.fused_request_rx.next() =>
@@ -234,11 +241,11 @@ where J: edeltraud::Job + From<job::Job>,
                                     Source::InterpreterDone(result),
                                 result = fused_interpret_error_rx =>
                                     Source::InterpreterError(result),
-                                result = crc_tasks.next() => match result {
+                                result = job_tasks.next() => match result {
                                     None =>
                                         unreachable!(),
-                                    Some(crc_task_done) =>
-                                        Source::CrcTask(crc_task_done),
+                                    Some(job_task_done) =>
+                                        Source::JobTask(job_task_done),
                                 },
                             },
                         (false, false) =>
@@ -255,20 +262,15 @@ where J: edeltraud::Job + From<job::Job>,
                                     Some(iter_task_done) =>
                                         Source::IterTask(iter_task_done),
                                 },
-                                result = crc_tasks.next() => match result {
+                                result = job_tasks.next() => match result {
                                     None =>
                                         unreachable!(),
-                                    Some(crc_task_done) =>
-                                        Source::CrcTask(crc_task_done),
+                                    Some(job_task_done) =>
+                                        Source::JobTask(job_task_done),
                                 },
                             },
                     };
                     break match source {
-                        Source::Pid(Some(proto::Request::WriteBlock(request_write_block @ proto::RequestWriteBlock { block_crc: None, .. }))) => {
-                            let task = calculate_write_block_crc(request_write_block, state.thread_pool.clone());
-                            crc_tasks.push(task);
-                            continue;
-                        },
                         Source::Pid(Some(request)) =>
                             poll.next.incoming_request(request, fused_interpret_result_rx),
                         Source::InterpreterDone(Ok(interpret::DoneTask { task_done, stats, })) =>
@@ -299,9 +301,37 @@ where J: edeltraud::Job + From<job::Job>,
                             log::debug!("iteration finished");
                             continue;
                         },
-                        Source::CrcTask(Ok(request_write_block)) =>
-                            poll.next.incoming_request(Request::WriteBlock(request_write_block), fused_interpret_result_rx),
-                        Source::CrcTask(Err(error)) =>
+                        Source::JobTask(Ok(JobDone::BlockPrepareWrite { block_id, context, done, })) =>
+                            poll.next.prepared_write_block_done(
+                                block_id,
+                                task::WriteBlock {
+                                    write_block_bytes: done.write_block_bytes,
+                                    context,
+                                },
+                            ),
+                        Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, stats, })) =>
+                            poll.next.incoming_task_done_stats( // ??? wtf to do
+                                task::Done {
+                                    current_offset: done.current_offset,
+                                    task: task::TaskDone {
+                                        block_id: done.block_id,
+                                        kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                            block_bytes: done.block_bytes,
+                                            context,
+                                        }),
+                                    },
+                                },
+                                stats,
+                            ),
+                        Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
+                            poll.next.prepared_delete_block_done(
+                                block_id,
+                                task::DeleteBlock {
+                                    delete_block_bytes: done.delete_block_bytes,
+                                    context,
+                                },
+                            ),
+                        Source::JobTask(Err(error)) =>
                             return Err(ErrorSeverity::Fatal(error)),
                     }
                 }
@@ -312,11 +342,11 @@ where J: edeltraud::Job + From<job::Job>,
                     Pid(A),
                     InterpreterError(B),
                     IterTask(C),
-                    CrcTask(D),
+                    JobTask(D),
                 }
 
                 loop {
-                    let source = match (iter_tasks.is_empty(), crc_tasks.is_empty()) {
+                    let source = match (iter_tasks.is_empty(), job_tasks.is_empty()) {
                         (true, true) =>
                             select! {
                                 result = state.fused_request_rx.next() =>
@@ -343,11 +373,11 @@ where J: edeltraud::Job + From<job::Job>,
                                     Source::Pid(result),
                                 result = fused_interpret_error_rx =>
                                     Source::InterpreterError(result),
-                                result = crc_tasks.next() => match result {
+                                result = job_tasks.next() => match result {
                                     None =>
                                         unreachable!(),
-                                    Some(crc_task_done) =>
-                                        Source::CrcTask(crc_task_done),
+                                    Some(job_task_done) =>
+                                        Source::JobTask(job_task_done),
                                 },
                             },
                         (false, false) =>
@@ -362,19 +392,15 @@ where J: edeltraud::Job + From<job::Job>,
                                     Some(iter_task_done) =>
                                         Source::IterTask(iter_task_done),
                                 },
-                                result = crc_tasks.next() => match result {
+                                result = job_tasks.next() => match result {
                                     None =>
                                         unreachable!(),
-                                    Some(crc_task_done) =>
-                                        Source::CrcTask(crc_task_done),
+                                    Some(job_task_done) =>
+                                        Source::JobTask(job_task_done),
                                 },
                             },
                     };
                     break match source {
-                        Source::Pid(Some(proto::Request::WriteBlock(request_write_block @ proto::RequestWriteBlock { block_crc: None, .. }))) => {
-                            crc_tasks.push(calculate_write_block_crc(request_write_block, state.thread_pool.clone()));
-                            continue;
-                        },
                         Source::Pid(Some(request)) =>
                             poll.next.incoming_request(request),
                         Source::Pid(None) => {
@@ -399,15 +425,45 @@ where J: edeltraud::Job + From<job::Job>,
                             log::debug!("iteration finished");
                             continue;
                         },
-                        Source::CrcTask(Ok(request_write_block)) =>
-                            poll.next.incoming_request(Request::WriteBlock(request_write_block)),
-                        Source::CrcTask(Err(error)) =>
+                        Source::JobTask(Ok(JobDone::BlockPrepareWrite { block_id, context, done, })) =>
+                            poll.next.prepared_write_block_done(
+                                block_id,
+                                task::WriteBlock {
+                                    write_block_bytes: done.write_block_bytes,
+                                    context,
+                                },
+                            ),
+                        Source::JobTask(Ok(JobDone::BlockProcessRead { context: reply_tx, done, })) => {
+                            if let Err(_send_error) = reply_tx.send(Ok(done.block_bytes)) {
+                                log::warn!("client channel was closed before a block is actually read");
+                            }
+                            continue;
+                        },
+                        Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
+                            poll.next.prepared_delete_block_done(
+                                block_id,
+                                task::DeleteBlock {
+                                    delete_block_bytes: done.delete_block_bytes,
+                                    context,
+                                },
+                            ),
+                        Source::JobTask(Err(error)) =>
                             return Err(ErrorSeverity::Fatal(error)),
                     }
                 }
             },
 
-            performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
+            performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, mut task, force_terminator, next, })) => {
+                match &mut task {
+                    task::Task { kind: task::TaskKind::WriteBlock(task::WriteBlock { write_block_bytes: block_bytes, .. }), .. } |
+                    task::Task { kind: task::TaskKind::DeleteBlock(task::DeleteBlock { delete_block_bytes: block_bytes, .. }), .. }
+                    if force_terminator => {
+                        interpret::block_append_terminator(block_bytes)
+                            .map_err(|error| ErrorSeverity::Fatal(Error::InterpreterAppendTerminator(error)))?
+                    },
+                    _ =>
+                        (),
+                }
                 let reply_rx = interpreter_pid.push_request(offset, task).await
                     .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
                 let performer = next.task_accepted(reply_rx.fuse());
@@ -566,6 +622,51 @@ where J: edeltraud::Job + From<job::Job>,
                 performer.next()
             },
 
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::PrepareInterpretTask(
+                    performer::PrepareInterpretTaskOp {
+                        block_id,
+                        task: performer::PrepareInterpretTaskKind::WriteBlock(performer::PrepareInterpretTaskWriteBlock {
+                            block_bytes,
+                            context,
+                        }),
+                    },
+                ),
+                performer,
+            }) => {
+                job_tasks.push(make_job_task(
+                    JobTask::BlockPrepareWrite {
+                        block_id,
+                        block_bytes,
+                        blocks_pool: state.blocks_pool.clone(),
+                        context,
+                    },
+                    state.thread_pool.clone(),
+                ));
+                performer.next()
+            },
+
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::PrepareInterpretTask(
+                    performer::PrepareInterpretTaskOp {
+                        block_id,
+                        task: performer::PrepareInterpretTaskKind::DeleteBlock(performer::PrepareInterpretTaskDeleteBlock {
+                            context,
+                        }),
+                    },
+                ),
+                performer,
+            }) => {
+                job_tasks.push(make_job_task(
+                    JobTask::BlockPrepareDelete {
+                        block_id,
+                        blocks_pool: state.blocks_pool.clone(),
+                        context,
+                    },
+                    state.thread_pool.clone(),
+                ));
+                performer.next()
+            },
         };
     }
 }
@@ -609,21 +710,97 @@ async fn push_iter_blocks_item(mut blocks_tx: mpsc::Sender<IterBlocksItem>, task
     }
 }
 
-async fn calculate_write_block_crc<J, C>(
-    mut request_write_block: proto::RequestWriteBlock<C>,
+enum JobTask<C> where C: context::Context {
+    BlockPrepareWrite {
+        block_id: block::Id,
+        block_bytes: Bytes,
+        blocks_pool: BytesPool,
+        context: task::WriteBlockContext<C::WriteBlock>,
+    },
+    BlockProcessRead {
+        offset: u64,
+        storage_layout: storage::Layout,
+        block_header: storage::BlockHeader,
+        block_bytes: BytesMut,
+        context: task::ReadBlockContext<C>,
+        stats: InterpretStats,
+    },
+    BlockPrepareDelete {
+        block_id: block::Id,
+        blocks_pool: BytesPool,
+        context: task::DeleteBlockContext<C::DeleteBlock>,
+    },
+}
+
+enum JobDone<C> where C: context::Context {
+    BlockPrepareWrite {
+        block_id: block::Id,
+        context: task::WriteBlockContext<C::WriteBlock>,
+        done: interpret::BlockPrepareWriteJobDone,
+    },
+    BlockProcessRead {
+        context: task::ReadBlockContext<C>,
+        done: interpret::BlockProcessReadJobDone,
+        stats: InterpretStats,
+    },
+    BlockPrepareDelete {
+        block_id: block::Id,
+        context: task::DeleteBlockContext<C::DeleteBlock>,
+        done: interpret::BlockPrepareDeleteJobDone,
+    },
+}
+
+async fn make_job_task<C, J>(
+    job_task: JobTask<C>,
     thread_pool: Edeltraud<J>,
 )
-    -> Result<proto::RequestWriteBlock<C>, Error>
-where C: Send,
+    -> Result<JobDone<C>, Error>
+where C: context::Context + Send,
       J: edeltraud::Job + From<job::Job>,
       J::Output: From<job::JobOutput>,
       job::JobOutput: From<J::Output>,
 {
-    let job = job::Job::CalculateCrc { block_bytes: request_write_block.block_bytes.clone(), };
-    let job_output = thread_pool.spawn(job).await
-        .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
-    let job_output: job::JobOutput = job_output.into();
-    let job::CalculateCrcDone { crc, } = job_output.into();
-    request_write_block.block_crc = Some(crc);
-    Ok(request_write_block)
+    match job_task {
+
+        JobTask::BlockPrepareWrite { block_id, block_bytes, blocks_pool, context, } => {
+            let job = job::Job::BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs { block_id: block_id.clone(), block_bytes, blocks_pool, });
+            let job_output = thread_pool.spawn(job).await
+                .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+            let job_output: job::JobOutput = job_output.into();
+            let job::BlockPrepareWriteDone(block_prepare_write_result) = job_output.into();
+            let done = block_prepare_write_result
+                .map_err(Error::BlockPrepareWrite)?;
+            Ok(JobDone::BlockPrepareWrite { block_id, context, done, })
+        },
+
+        JobTask::BlockProcessRead {
+            offset,
+            storage_layout,
+            block_header,
+            block_bytes,
+            context,
+            stats,
+        } => {
+            let job = job::Job::BlockProcessRead(interpret::BlockProcessReadJobArgs { offset, storage_layout, block_header, block_bytes, });
+            let job_output = thread_pool.spawn(job).await
+                .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+            let job_output: job::JobOutput = job_output.into();
+            let job::BlockProcessReadDone(block_process_read_result) = job_output.into();
+            let done = block_process_read_result
+                .map_err(Error::BlockProcessRead)?;
+            Ok(JobDone::BlockProcessRead { context, done, stats, })
+        },
+
+        JobTask::BlockPrepareDelete { block_id, blocks_pool, context, } => {
+            let job = job::Job::BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs { block_id: block_id.clone(), blocks_pool, });
+            let job_output = thread_pool.spawn(job).await
+                .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+            let job_output: job::JobOutput = job_output.into();
+            let job::BlockPrepareDeleteDone(block_prepare_delete_result) = job_output.into();
+            let done = block_prepare_delete_result
+                .map_err(Error::BlockPrepareDelete)?;
+            Ok(JobDone::BlockPrepareDelete { block_id, context, done, })
+        },
+
+    }
 }

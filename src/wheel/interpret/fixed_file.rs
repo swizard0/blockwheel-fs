@@ -11,13 +11,9 @@ use std::{
 };
 
 use futures::{
-    stream::{
-        FuturesUnordered,
-    },
     channel::{
         mpsc,
     },
-    select,
     StreamExt,
 };
 
@@ -30,12 +26,7 @@ use tokio::{
     },
 };
 
-use edeltraud::{
-    Edeltraud,
-};
-
 use crate::{
-    job,
     context::Context,
     wheel::{
         block,
@@ -50,9 +41,6 @@ use crate::{
             Command,
             Request,
             DoneTask,
-            BlockProcessJobArgs,
-            BlockProcessJobDone,
-            BlockProcessJobError,
         },
     },
     InterpretStats,
@@ -77,8 +65,6 @@ pub enum Error {
     BlockRead(io::Error),
     WheelPeerLost,
     DeviceSyncFlush(io::Error),
-    ThreadPoolGone,
-    BlockProcessJob(BlockProcessJobError),
 }
 
 #[derive(Debug)]
@@ -420,17 +406,11 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub async fn run<J>(self, thread_pool: Edeltraud<J>) -> Result<(), Error>
-    where C: Send, J: edeltraud::Job + From<job::Job>,
-          J::Output: From<job::JobOutput>,
-          job::JobOutput: From<J::Output>,
-    {
+    pub async fn run(self) -> Result<(), Error> {
         busyloop(
             self.request_rx,
             self.wheel_file,
-            self.work_block,
             self.storage_layout,
-            thread_pool,
         ).await
     }
 }
@@ -502,7 +482,6 @@ async fn try_read_block(
 struct Timings {
     event_wait: Duration,
     seek: Duration,
-    write_prepare: Duration,
     write_write: Duration,
     read: Duration,
     write_delete: Duration,
@@ -510,22 +489,15 @@ struct Timings {
     total: Duration,
 }
 
-async fn busyloop<C, J>(
+async fn busyloop<C>(
     request_rx: mpsc::Receiver<Command<C>>,
     mut wheel_file: fs::File,
-    mut work_block: Vec<u8>,
     storage_layout: storage::Layout,
-    thread_pool: Edeltraud<J>,
 )
     -> Result<(), Error>
-where C: Context + Send,
-      J: edeltraud::Job + From<job::Job>,
-      J::Output: From<job::JobOutput>,
-      job::JobOutput: From<J::Output>,
+where C: Context,
 {
     let mut stats = InterpretStats::default();
-    let mut tasks = FuturesUnordered::new();
-    let mut tasks_count = 0;
 
     let mut fused_request_rx = request_rx.fuse();
 
@@ -537,25 +509,8 @@ where C: Context + Send,
     loop {
         let now_loop = Instant::now();
 
-        enum Event<C, T> { Command(C), Task(T), }
-
-        let event = match tasks_count {
-            0 =>
-                Event::Command(fused_request_rx.next().await),
-            _ =>
-                select! {
-                    result = fused_request_rx.next() =>
-                        Event::Command(result),
-                    result = tasks.next() => match result {
-                        None =>
-                            unreachable!(),
-                        Some(task) => {
-                            tasks_count -= 1;
-                            Event::Task(task)
-                        },
-                    },
-                },
-        };
+        enum Event<C> { Command(C), }
+        let event = Event::Command(fused_request_rx.next().await);
         timings.event_wait += now_loop.elapsed();
 
         match event {
@@ -584,38 +539,11 @@ where C: Context + Send,
                 match task.kind {
                     task::TaskKind::WriteBlock(write_block) => {
                         let now = Instant::now();
-                        let block_header = storage::BlockHeader {
-                            block_id: task.block_id.clone(),
-                            block_size: write_block.block_bytes.len(),
-                            ..Default::default()
-                        };
-                        work_block.clear();
-                        bincode::serialize_into(&mut work_block, &block_header)
-                            .map_err(Error::BlockHeaderSerialize)?;
-                        work_block.extend_from_slice(&write_block.block_bytes);
-                        let commit_tag = storage::CommitTag {
-                            block_id: task.block_id.clone(),
-                            crc: write_block.block_crc.unwrap(), // must be already calculated
-                            ..Default::default()
-                        };
-                        bincode::serialize_into(&mut work_block, &commit_tag)
-                            .map_err(Error::CommitTagSerialize)?;
-                        match write_block.commit {
-                            task::CommitKind::CommitOnly =>
-                                (),
-                            task::CommitKind::CommitAndTerminate => {
-                                bincode::serialize_into(&mut work_block, &storage::TerminatorTag::default())
-                                    .map_err(Error::TerminatorTagSerialize)?;
-                            },
-                        }
-                        timings.write_prepare += now.elapsed();
-
-                        let now = Instant::now();
-                        wheel_file.write_all(&work_block).await
+                        wheel_file.write_all(&write_block.write_block_bytes).await
                             .map_err(Error::BlockWrite)?;
                         timings.write_write += now.elapsed();
 
-                        cursor += work_block.len() as u64;
+                        cursor += write_block.write_block_bytes.len() as u64;
 
                         let task_done = task::Done {
                             current_offset: cursor,
@@ -641,60 +569,27 @@ where C: Context + Send,
                         timings.read += now.elapsed();
                         cursor += block_bytes.len() as u64;
 
-                        let storage_layout = storage_layout.clone();
-                        let block_process_task = thread_pool.spawn(job::Job::BlockProcess(BlockProcessJobArgs {
-                            offset,
-                            storage_layout: storage_layout.clone(),
-                            block_header,
-                            block_bytes,
-                        }));
-
-                        // moving block process to separate task, unlock main loop
-                        tasks.push(async move {
-                            let job_output = block_process_task.await
-                                .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
-                            let job_output: job::JobOutput = job_output.into();
-                            let job::BlockProcessDone(block_process_result) = job_output.into();
-                            let BlockProcessJobDone { block_id, block_bytes, block_crc, } = block_process_result
-                                .map_err(Error::BlockProcessJob)?;
-
-                            let task_done = task::Done {
-                                current_offset: cursor,
-                                task: task::TaskDone {
-                                    block_id,
-                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                                        block_bytes,
-                                        block_crc,
-                                        context,
-                                    }),
-                                },
-                            };
-
-                            reply_tx.send(DoneTask { task_done, stats, })
-                                .map_err(|_send_error| Error::WheelPeerLost)
-                        });
-                        tasks_count += 1;
+                        let task_done = task::Done {
+                            current_offset: cursor,
+                            task: task::TaskDone {
+                                block_id: block_header.block_id,
+                                kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                    block_bytes,
+                                    context,
+                                }),
+                            },
+                        };
+                        if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
+                            break;
+                        }
                     },
 
                     task::TaskKind::DeleteBlock(delete_block) => {
-                        let tombstone_tag = storage::TombstoneTag::default();
-                        work_block.clear();
-                        bincode::serialize_into(&mut work_block, &tombstone_tag)
-                            .map_err(Error::TombstoneTagSerialize)?;
-                        match delete_block.commit {
-                            task::CommitKind::CommitOnly =>
-                                (),
-                            task::CommitKind::CommitAndTerminate => {
-                                bincode::serialize_into(&mut work_block, &storage::TerminatorTag::default())
-                                    .map_err(Error::TerminatorTagSerialize)?;
-                            },
-                        }
-
                         let now = Instant::now();
-                        wheel_file.write_all(&work_block).await
+                        wheel_file.write_all(&delete_block.delete_block_bytes).await
                             .map_err(Error::BlockWrite)?;
                         timings.write_delete += now.elapsed();
-                        cursor += work_block.len() as u64;
+                        cursor += delete_block.delete_block_bytes.len() as u64;
 
                         let task_done = task::Done {
                             current_offset: cursor,
@@ -721,13 +616,6 @@ where C: Context + Send,
                     break;
                 }
                 log::info!("current timings: {:?}", timings);
-            },
-
-            Event::Task(Err(Error::WheelPeerLost)) =>
-                break,
-
-            Event::Task(task_result) => {
-                let () = task_result?;
             },
 
         }

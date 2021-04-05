@@ -1,22 +1,13 @@
 use std::io;
 
 use futures::{
-    stream::{
-        FuturesUnordered,
-    },
     channel::{
         mpsc,
     },
-    select,
     StreamExt,
 };
 
-use edeltraud::{
-    Edeltraud,
-};
-
 use crate::{
-    job,
     context::Context,
     wheel::{
         storage,
@@ -30,9 +21,6 @@ use crate::{
             Command,
             Request,
             DoneTask,
-            BlockProcessJobArgs,
-            BlockProcessJobDone,
-            BlockProcessJobError,
         },
     },
     InterpretStats,
@@ -45,8 +33,6 @@ pub enum Error {
     TerminatorTagSerialize(bincode::Error),
     TombstoneTagSerialize(bincode::Error),
     WheelPeerLost,
-    ThreadPoolGone,
-    BlockProcessJob(BlockProcessJobError),
 }
 
 #[derive(Debug)]
@@ -136,35 +122,24 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub async fn run<J>(self, thread_pool: Edeltraud<J>) -> Result<(), Error>
-    where C: Send, J: edeltraud::Job + From<job::Job>,
-          J::Output: From<job::JobOutput>,
-          job::JobOutput: From<J::Output>,
-    {
+    pub async fn run(self) -> Result<(), Error> {
         busyloop(
             self.request_rx,
             self.memory,
             self.storage_layout,
-            thread_pool,
         ).await
     }
 }
 
-async fn busyloop<C, J>(
+async fn busyloop<C>(
     request_rx: mpsc::Receiver<Command<C>>,
     memory: Vec<u8>,
     storage_layout: storage::Layout,
-    thread_pool: Edeltraud<J>,
 )
     -> Result<(), Error>
-where C: Context + Send,
-      J: edeltraud::Job + From<job::Job>,
-      J::Output: From<job::JobOutput>,
-      job::JobOutput: From<J::Output>,
+where C: Context,
 {
     let mut stats = InterpretStats::default();
-    let mut tasks = FuturesUnordered::new();
-    let mut tasks_count = 0;
 
     let mut fused_request_rx = request_rx.fuse();
 
@@ -172,25 +147,9 @@ where C: Context + Send,
     cursor.set_position(storage_layout.wheel_header_size as u64);
 
     loop {
-        enum Event<C, T> { Command(C), Task(T), }
+        enum Event<C> { Command(C), }
 
-        let event = match tasks_count {
-            0 =>
-                Event::Command(fused_request_rx.next().await),
-            _ =>
-                select! {
-                    result = fused_request_rx.next() =>
-                        Event::Command(result),
-                    result = tasks.next() => match result {
-                        None =>
-                            unreachable!(),
-                        Some(task) => {
-                            tasks_count -= 1;
-                            Event::Task(task)
-                        },
-                    },
-                },
-        };
+        let event = Event::Command(fused_request_rx.next().await);
 
         match event {
 
@@ -213,34 +172,11 @@ where C: Context + Send,
 
                 match task.kind {
                     task::TaskKind::WriteBlock(write_block) => {
-                        let block_header = storage::BlockHeader {
-                            block_id: task.block_id.clone(),
-                            block_size: write_block.block_bytes.len(),
-                            ..Default::default()
-                        };
-
-                        bincode::serialize_into(&mut cursor, &block_header)
-                            .map_err(Error::BlockHeaderSerialize)?;
                         let start = cursor.position() as usize;
                         let slice = cursor.get_mut();
-                        slice[start .. start + write_block.block_bytes.len()]
-                            .copy_from_slice(&write_block.block_bytes);
-                        cursor.set_position(start as u64 + write_block.block_bytes.len() as u64);
-                        let commit_tag = storage::CommitTag {
-                            block_id: task.block_id.clone(),
-                            crc: write_block.block_crc.unwrap(), // must be already calculated
-                            ..Default::default()
-                        };
-                        bincode::serialize_into(&mut cursor, &commit_tag)
-                            .map_err(Error::CommitTagSerialize)?;
-                        match write_block.commit {
-                            task::CommitKind::CommitOnly =>
-                                (),
-                            task::CommitKind::CommitAndTerminate => {
-                                bincode::serialize_into(&mut cursor, &storage::TerminatorTag::default())
-                                    .map_err(Error::TerminatorTagSerialize)?;
-                            },
-                        }
+                        slice[start .. start + write_block.write_block_bytes.len()]
+                            .copy_from_slice(&write_block.write_block_bytes);
+                        cursor.set_position(start as u64 + write_block.write_block_bytes.len() as u64);
 
                         let task_done = task::Done {
                             current_offset: cursor.position(),
@@ -265,54 +201,27 @@ where C: Context + Send,
                         block_bytes.copy_from_slice(&slice[start .. start + total_chunk_size]);
                         cursor.set_position(start as u64 + block_bytes.len() as u64);
 
-                        let storage_layout = storage_layout.clone();
-                        let block_process_task = thread_pool.spawn(job::Job::BlockProcess(BlockProcessJobArgs {
-                            offset,
-                            storage_layout: storage_layout.clone(),
-                            block_header,
-                            block_bytes,
-                        }));
-
-                        // moving block process to separate task, unlock main loop
-                        let current_offset = cursor.position();
-                        tasks.push(async move {
-                            let job_output = block_process_task.await
-                                .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
-                            let job_output: job::JobOutput = job_output.into();
-                            let job::BlockProcessDone(block_process_result) = job_output.into();
-                            let BlockProcessJobDone { block_id, block_bytes, block_crc, } = block_process_result
-                                .map_err(Error::BlockProcessJob)?;
-
-                            let task_done = task::Done {
-                                current_offset,
-                                task: task::TaskDone {
-                                    block_id,
-                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                                        block_bytes,
-                                        block_crc,
-                                        context,
-                                    }),
-                                },
-                            };
-
-                            reply_tx.send(DoneTask { task_done, stats, })
-                                .map_err(|_send_error| Error::WheelPeerLost)
-                        });
-                        tasks_count += 1;
+                        let task_done = task::Done {
+                            current_offset: cursor.position(),
+                            task: task::TaskDone {
+                                block_id: block_header.block_id,
+                                kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                    block_bytes,
+                                    context,
+                                }),
+                            },
+                        };
+                        if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
+                            break;
+                        }
                     },
 
                     task::TaskKind::DeleteBlock(delete_block) => {
-                        let tombstone_tag = storage::TombstoneTag::default();
-                        bincode::serialize_into(&mut cursor, &tombstone_tag)
-                            .map_err(Error::TombstoneTagSerialize)?;
-                        match delete_block.commit {
-                            task::CommitKind::CommitOnly =>
-                                (),
-                            task::CommitKind::CommitAndTerminate => {
-                                bincode::serialize_into(&mut cursor, &storage::TerminatorTag::default())
-                                    .map_err(Error::TerminatorTagSerialize)?;
-                            },
-                        }
+                        let start = cursor.position() as usize;
+                        let slice = cursor.get_mut();
+                        slice[start .. start + delete_block.delete_block_bytes.len()]
+                            .copy_from_slice(&delete_block.delete_block_bytes);
+                        cursor.set_position(start as u64 + delete_block.delete_block_bytes.len() as u64);
 
                         let task_done = task::Done {
                             current_offset: cursor.position(),
@@ -334,13 +243,6 @@ where C: Context + Send,
                 if let Err(_send_error) = reply_tx.send(Synced) {
                     break;
                 },
-
-            Event::Task(Err(Error::WheelPeerLost)) =>
-                break,
-
-            Event::Task(task_result) => {
-                let () = task_result?;
-            },
 
         }
     }
