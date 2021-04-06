@@ -25,7 +25,6 @@ use edeltraud::{
 
 use alloc_pool::bytes::{
     Bytes,
-    BytesMut,
     BytesPool,
 };
 
@@ -308,12 +307,12 @@ where J: edeltraud::Job + From<job::Job>,
                                     context,
                                 },
                             ),
-                        Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, stats, })) => {
+                        Source::JobTask(Ok(JobDone::BlockProcessRead { context: reply_tx, done, })) => {
                             if let Err(_send_error) = reply_tx.send(Ok(done.block_bytes)) {
                                 log::warn!("client channel was closed before a block is actually read");
                             }
                             continue;
-                        }
+                        },
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
                             poll.next.prepared_delete_block_done(
                                 block_id,
@@ -543,15 +542,21 @@ where J: edeltraud::Job + From<job::Job>,
 
             performer::Op::Event(performer::Event {
                 op: performer::EventOp::ReadBlock(
-                    performer::TaskDoneOp { context, op: performer::ReadBlockOp::Done { block_bytes, }, },
+                    performer::TaskDoneOp {
+                        context,
+                        op: performer::ReadBlockOp::Done {
+                            storage_layout,
+                            block_header,
+                            block_bytes,
+                        },
+                    },
                 ),
                 performer,
             }) => {
                 job_tasks.push(make_job_task(
                     JobTask::BlockProcessRead {
-                        offset: u64,
-                        storage_layout: storage::Layout,
-                        block_header: storage::BlockHeader,
+                        storage_layout,
+                        block_header,
                         block_bytes,
                         context,
                     },
@@ -716,11 +721,10 @@ enum JobTask<C> where C: context::Context {
         context: task::WriteBlockContext<C::WriteBlock>,
     },
     BlockProcessRead {
-        offset: u64,
         storage_layout: storage::Layout,
         block_header: storage::BlockHeader,
-        block_bytes: BytesMut,
-        context: task::ReadBlockContext<C>,
+        block_bytes: Bytes,
+        context: C::ReadBlock,
     },
     BlockPrepareDelete {
         block_id: block::Id,
@@ -736,7 +740,7 @@ enum JobDone<C> where C: context::Context {
         done: interpret::BlockPrepareWriteJobDone,
     },
     BlockProcessRead {
-        context: task::ReadBlockContext<C>,
+        context: C::ReadBlock,
         done: interpret::BlockProcessReadJobDone,
     },
     BlockPrepareDelete {
@@ -770,21 +774,19 @@ where C: context::Context + Send,
         },
 
         JobTask::BlockProcessRead {
-            offset,
             storage_layout,
             block_header,
             block_bytes,
             context,
-            stats,
         } => {
-            let job = job::Job::BlockProcessRead(interpret::BlockProcessReadJobArgs { offset, storage_layout, block_header, block_bytes, });
+            let job = job::Job::BlockProcessRead(interpret::BlockProcessReadJobArgs { storage_layout, block_header, block_bytes, });
             let job_output = thread_pool.spawn(job).await
                 .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
             let job_output: job::JobOutput = job_output.into();
             let job::BlockProcessReadDone(block_process_read_result) = job_output.into();
             let done = block_process_read_result
                 .map_err(Error::BlockProcessRead)?;
-            Ok(JobDone::BlockProcessRead { context, done, stats, })
+            Ok(JobDone::BlockProcessRead { context, done, })
         },
 
         JobTask::BlockPrepareDelete { block_id, blocks_pool, context, } => {

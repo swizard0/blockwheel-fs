@@ -194,23 +194,19 @@ pub enum BlockProcessReadJobError {
 #[derive(Debug)]
 pub enum CorruptedDataError {
     BlockIdMismatch {
-        offset: u64,
         block_id_expected: block::Id,
         block_id_actual: block::Id,
     },
     BlockSizeMismatch {
-        offset: u64,
         block_id: block::Id,
         block_size_expected: usize,
         block_size_actual: usize,
     },
     CommitTagBlockIdMismatch {
-        offset: u64,
         block_id_expected: block::Id,
         block_id_actual: block::Id,
     },
     CommitTagCrcMismatch {
-        offset: u64,
         crc_expected: u64,
         crc_actual: u64,
     },
@@ -223,15 +219,13 @@ pub struct BlockProcessReadJobDone {
 }
 
 pub struct BlockProcessReadJobArgs {
-    offset: u64,
     storage_layout: storage::Layout,
     block_header: storage::BlockHeader,
-    block_bytes: BytesMut,
+    block_bytes: Bytes,
 }
 
 pub fn block_process_read_job(
     BlockProcessReadJobArgs {
-        offset,
         storage_layout,
         block_header,
         block_bytes,
@@ -247,7 +241,6 @@ pub fn block_process_read_job(
     ).map_err(BlockProcessReadJobError::BlockHeaderDeserialize)?;
     if storage_block_header.block_id != block_header.block_id {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::BlockIdMismatch {
-            offset,
             block_id_expected: block_header.block_id,
             block_id_actual: storage_block_header.block_id,
         }));
@@ -255,7 +248,6 @@ pub fn block_process_read_job(
 
     if storage_block_header.block_size != block_header.block_size {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::BlockSizeMismatch {
-            offset,
             block_id: block_header.block_id,
             block_size_expected: block_header.block_size,
             block_size_actual: storage_block_header.block_size,
@@ -266,7 +258,6 @@ pub fn block_process_read_job(
     ).map_err(BlockProcessReadJobError::CommitTagDeserialize)?;
     if commit_tag.block_id != block_header.block_id {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
-            offset,
             block_id_expected: block_header.block_id,
             block_id_actual: commit_tag.block_id,
         }));
@@ -277,7 +268,6 @@ pub fn block_process_read_job(
     let crc_expected = block::crc(&block_bytes);
     if commit_tag.crc != crc_expected {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::CommitTagCrcMismatch {
-            offset,
             crc_expected,
             crc_actual: commit_tag.crc,
         }));
