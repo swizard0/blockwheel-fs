@@ -368,11 +368,11 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         self.inner.incoming_interpreter(task_done)
     }
 
-    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_task: task::WriteBlock<C>) -> Op<C> {
+    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_task: task::WriteBlock<C::WriteBlock>) -> Op<C> {
         self.inner.prepared_write_block_done(block_id, write_block_task)
     }
 
-    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_task: task::DeleteBlock<C>) -> Op<C> {
+    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_task: task::DeleteBlock<C::DeleteBlock>) -> Op<C> {
         self.inner.prepared_delete_block_done(block_id, delete_block_task)
     }
 
@@ -408,11 +408,11 @@ impl<C> PollRequestNext<C> where C: Context {
         )
     }
 
-    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_task: task::WriteBlock<C>) -> Op<C> {
+    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_task: task::WriteBlock<C::WriteBlock>) -> Op<C> {
         self.inner.prepared_write_block_done(block_id, write_block_task)
     }
 
-    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_task: task::DeleteBlock<C>) -> Op<C> {
+    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_task: task::DeleteBlock<C::DeleteBlock>) -> Op<C> {
         self.inner.prepared_delete_block_done(block_id, delete_block_task)
     }
 }
@@ -867,7 +867,7 @@ impl<C> Inner<C> where C: Context {
         }))
     }
 
-    fn prepared_write_block_done(mut self, block_id: block::Id, write_block_task: task::WriteBlock<C>) -> Op<C> {
+    fn prepared_write_block_done(mut self, block_id: block::Id, write_block_task: task::WriteBlock<C::WriteBlock>) -> Op<C> {
         let block_get = self.schema.block_get();
         let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
         lens.push_task(
@@ -878,7 +878,7 @@ impl<C> Inner<C> where C: Context {
         Op::Idle(Performer { inner: self, })
     }
 
-    fn prepared_delete_block_done(mut self, block_id: block::Id, delete_block_task: task::DeleteBlock<C>) -> Op<C> {
+    fn prepared_delete_block_done(mut self, block_id: block::Id, delete_block_task: task::DeleteBlock<C::DeleteBlock>) -> Op<C> {
         let block_get = self.schema.block_get();
         let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
         lens.push_task(

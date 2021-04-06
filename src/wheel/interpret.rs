@@ -98,7 +98,7 @@ pub enum AppendTerminatorError {
 }
 
 pub fn block_append_terminator(block_bytes: &mut BytesMut) -> Result<(), AppendTerminatorError> {
-    bincode::serialize_into(block_bytes, &storage::TerminatorTag::default())
+    bincode::serialize_into(&mut ***block_bytes, &storage::TerminatorTag::default())
         .map_err(AppendTerminatorError::TerminatorTagSerialize)
 }
 
@@ -136,7 +136,7 @@ pub fn block_prepare_write_job(
         block_size: block_bytes.len(),
         ..Default::default()
     };
-    bincode::serialize_into(&mut write_block_bytes, &block_header)
+    bincode::serialize_into(&mut ***write_block_bytes, &block_header)
         .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
     write_block_bytes.extend_from_slice(&block_bytes);
 
@@ -145,7 +145,7 @@ pub fn block_prepare_write_job(
         crc: block::crc(&block_bytes),
         ..Default::default()
     };
-    bincode::serialize_into(&mut write_block_bytes, &commit_tag)
+    bincode::serialize_into(&mut ***write_block_bytes, &commit_tag)
         .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
 
     Ok(BlockPrepareWriteJobDone { write_block_bytes, })
@@ -178,7 +178,7 @@ pub fn block_prepare_delete_job(
     let mut delete_block_bytes = blocks_pool.lend();
 
     let tombstone_tag = storage::TombstoneTag::default();
-    bincode::serialize_into(&mut delete_block_bytes, &tombstone_tag)
+    bincode::serialize_into(&mut ***delete_block_bytes, &tombstone_tag)
         .map_err(BlockPrepareDeleteJobError::TombstoneTagSerialize)?;
 
     Ok(BlockPrepareDeleteJobDone { delete_block_bytes, })
@@ -262,7 +262,7 @@ pub fn block_process_read_job(
             block_id_actual: commit_tag.block_id,
         }));
     }
-    let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
+    let block_bytes = block_bytes.subrange(block_buffer_start .. block_buffer_end);
     let block_id = block_header.block_id;
 
     let crc_expected = block::crc(&block_bytes);
