@@ -100,7 +100,7 @@ pub enum DeleteBlockTaskDoneDefragOp {
 pub struct DeleteBlockTaskDoneDefragPerform {
     pub block_offset: u64,
     pub defrag_op: DefragOp,
-    pub freed_space_key: SpaceKey,
+    pub freed_space_key: Option<SpaceKey>,
 }
 
 impl Schema {
@@ -381,8 +381,8 @@ impl Schema {
 
         let freed_space_key = match &block_entry.environs {
 
-            // before: ^| ... | R | ... |$
-            // after:  ^| ............. |$
+            // before: ^| R |$
+            // after:  ^| . |$
             Environs { left: LeftEnvirons::Start, right: RightEnvirons::End, } => {
                 assert_eq!(self.gaps_index.space_total(), 0);
                 assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
@@ -715,13 +715,22 @@ impl Schema {
 
         let freed_space_key = match block_entry.environs.clone() {
 
-            Environs { left: LeftEnvirons::Start, .. } | Environs { left: LeftEnvirons::Block { .. }, .. } =>
-                unreachable!(),
+            value @ Environs { left: LeftEnvirons::Start, .. } =>
+                unreachable!("inconsistent defrag delete for block_id = {:?} with environs = {:?}", removed_block_id, value),
+
+            Environs { left: LeftEnvirons::Block { block_id }, .. } => {
+                log::debug!(
+                    "defrag delete done for block id = {:?} but there is no space already (occupied by block id = {:?} on the left)",
+                    removed_block_id,
+                    block_id,
+                );
+                None
+            }
 
             Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::End, } =>
                 match self.gaps_index.remove(&space_key) {
-                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
-                        unreachable!(),
+                    value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::BlockAndEnd { .. }) =>
+                        unreachable!("inconsistent defrag delete for block_id = {:?} with gaps = {:?}", removed_block_id, value),
                     // before: ^| ... | R |$
                     // after:  ^| R | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
@@ -736,7 +745,7 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Start;
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
-                        moved_space_key
+                        Some(moved_space_key)
                     },
                     // before: ^| ... | A | ... | R |$
                     // after:  ^| ... | A | R | ... |$
@@ -758,7 +767,7 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Block { block_id: left_block.clone(), };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
-                        moved_space_key
+                        Some(moved_space_key)
                     },
                 },
 
@@ -790,7 +799,7 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Start;
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
-                        moved_space_key
+                        Some(moved_space_key)
                     },
                     // before: ^| ... | R | ... | A | ... |$
                     // after:  ^| R | ......... | A | ... |$
@@ -813,7 +822,7 @@ impl Schema {
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
                         defrag_op = self.make_defrag_op(moved_space_key, right_block_right.clone());
-                        moved_space_key
+                        Some(moved_space_key)
                     },
                     // before: ^| ... | A | ... | R | ... |$
                     // after:  ^| ... | A | R | ......... |$
@@ -840,7 +849,7 @@ impl Schema {
                             block_entry.environs.left = LeftEnvirons::Block { block_id: left_block_left, };
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
-                        moved_space_key
+                        Some(moved_space_key)
                     },
                     // before: ^| ... | A | ... | R | ... | B | ... |$
                     // after:  ^| ... | A | R | ......... | B | ... |$
@@ -872,7 +881,7 @@ impl Schema {
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
                         defrag_op = self.make_defrag_op(moved_space_key, right_block_right.clone());
-                        moved_space_key
+                        Some(moved_space_key)
                     },
                 },
 
@@ -896,7 +905,7 @@ impl Schema {
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
                         defrag_op = self.make_defrag_op(moved_space_key, block_id.clone());
-                        moved_space_key
+                        Some(moved_space_key)
                     },
                     // before: ^| ... | A | ... | R | B | ... |$
                     // after:  ^| ... | A | R | ... | B | ... |$
@@ -923,7 +932,7 @@ impl Schema {
                             block_entry.environs.right = RightEnvirons::Space { space_key: moved_space_key, };
                         }).unwrap();
                         defrag_op = self.make_defrag_op(moved_space_key, block_id.clone());
-                        moved_space_key
+                        Some(moved_space_key)
                     },
                 },
 

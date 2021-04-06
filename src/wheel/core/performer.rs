@@ -61,7 +61,7 @@ enum DoneTask {
     DeleteBlockDefrag {
         block_id: block::Id,
         block_bytes: Bytes,
-        freed_space_key: SpaceKey,
+        freed_space_key: Option<SpaceKey>,
     },
 }
 
@@ -563,7 +563,7 @@ impl<C> Inner<C> where C: Context {
                     return self.proceed_read_block_task_done(block_id, block_bytes, read_block.context)
                 }
                 lens.enqueue(self.schema.block_get());
-                self.freed_space_key = Some(freed_space_key);
+                self.freed_space_key = freed_space_key;
             },
         }
 
