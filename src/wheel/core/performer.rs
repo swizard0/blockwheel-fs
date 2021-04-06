@@ -62,7 +62,7 @@ enum DoneTask {
         block_id: block::Id,
         block_bytes: Bytes,
         block_crc: u64,
-        freed_space_key: SpaceKey,
+        freed_space_key: Option<SpaceKey>,
     },
 }
 
@@ -528,7 +528,7 @@ impl<C> Inner<C> where C: Context {
                     return self.proceed_read_block_task_done(block_id, block_bytes, block_crc, read_block.context)
                 }
                 lens.enqueue(self.schema.block_get());
-                self.flush_defrag_pending_queue(Some(freed_space_key));
+                self.flush_defrag_pending_queue(freed_space_key);
             },
         }
 
