@@ -144,8 +144,6 @@ impl Schema {
         let space_required = block_bytes.len()
             + self.storage_layout.data_size_block_min();
 
-        log::debug!("process_write_block_request, block_id = {:?}, space_required = {}", block_id, space_required);
-
         let blocks_index = &self.blocks_index;
         let block_offset = match self.gaps_index.allocate(space_required, defrag_pending_bytes, |block_id| blocks_index.get(block_id)) {
 
@@ -156,9 +154,6 @@ impl Schema {
                 let right_block_id = right_block.block_id.clone();
 
                 let space_left = space_available - space_required;
-
-                log::debug!("allocate success StartAndBlock: block_offset = {}, space_left = {}", block_offset, space_left);
-
                 let (self_env, right_env) = if space_left > 0 {
                     let space_key = self.gaps_index.insert(
                         space_left,
@@ -169,7 +164,6 @@ impl Schema {
                     );
                     right_space_key = Some(space_key);
                     defrag_op = self.make_defrag_op(space_key, right_block_id.clone());
-                    log::debug!("defrag need for between = GapBetween::StartAndBlock: {:?}", defrag_op);
                     (
                         RightEnvirons::Space { space_key, },
                         LeftEnvirons::Space { space_key, },
@@ -211,9 +205,6 @@ impl Schema {
                 let right_block_id = right_block.block_id.clone();
 
                 let space_left = space_available - space_required;
-
-                log::debug!("allocate success TwoBlocks: block_offset = {}, space_left = {}", block_offset, space_left);
-
                 let (self_env, left_env, right_env) = if space_left > 0 {
                     let space_key = self.gaps_index.insert(
                         space_left,
@@ -223,15 +214,7 @@ impl Schema {
                         },
                     );
                     right_space_key = Some(space_key);
-                    log::debug!(
-                        "defrag need for between = GapBetween::TwoBlocks {{ left_block = {:?}, right_block = {:?} }}; space_available = {}, space_left = {}",
-                        left_block,
-                        right_block,
-                        space_available,
-                        space_left,
-                    );
                     defrag_op = self.make_defrag_op(space_key, right_block_id.clone());
-                    log::debug!("defrag_op = {:?}", defrag_op);
                     (
                         RightEnvirons::Space { space_key, },
                         RightEnvirons::Block { block_id: block_id.clone(), },
@@ -275,9 +258,6 @@ impl Schema {
                 let left_block_id = left_block.block_id.clone();
 
                 let space_left = space_available - space_required;
-
-                log::debug!("allocate success BlockAndEnd: block_offset = {}, space_left = {}", block_offset, space_left);
-
                 let self_env = if space_left > 0 {
                     let space_key = self.gaps_index.insert(
                         space_left,
@@ -316,9 +296,6 @@ impl Schema {
                 let block_offset = self.storage_layout.wheel_header_size as u64;
 
                 let space_left = space_available - space_required;
-
-                log::debug!("allocate success StartAndEnd: block_offset = {}, space_left = {}", block_offset, space_left);
-
                 let environs = if space_left > 0 {
                     let space_key = self.gaps_index.insert(
                         space_left,
@@ -399,16 +376,13 @@ impl Schema {
     }
 
     pub fn process_delete_block_task_done(&mut self, removed_block_id: block::Id) -> DeleteBlockTaskDoneOp {
-
-        log::debug!("process_delete_block_task_done");
-
         let block_entry = self.blocks_index.remove(&removed_block_id).unwrap();
         let mut defrag_op = DefragOp::None;
 
         let freed_space_key = match &block_entry.environs {
 
-            // before: ^| ... | R | ... |$
-            // after:  ^| ............. |$
+            // before: ^| R |$
+            // after:  ^| . |$
             Environs { left: LeftEnvirons::Start, right: RightEnvirons::End, } => {
                 assert_eq!(self.gaps_index.space_total(), 0);
                 assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
@@ -741,13 +715,13 @@ impl Schema {
 
         let freed_space_key = match block_entry.environs.clone() {
 
-            Environs { left: LeftEnvirons::Start, .. } | Environs { left: LeftEnvirons::Block { .. }, .. } =>
-                unreachable!(),
+            value @ Environs { left: LeftEnvirons::Start, .. } | value @ Environs { left: LeftEnvirons::Block { .. }, .. } =>
+                unreachable!("inconsistent defrag delete for block_id = {:?} with environs = {:?}", removed_block_id, value),
 
             Environs { left: LeftEnvirons::Space { space_key, }, right: RightEnvirons::End, } =>
                 match self.gaps_index.remove(&space_key) {
-                    None | Some(gaps::GapBetween::StartAndEnd) | Some(gaps::GapBetween::BlockAndEnd { .. }) =>
-                        unreachable!(),
+                    value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::BlockAndEnd { .. }) =>
+                        unreachable!("inconsistent defrag delete for block_id = {:?} with gaps = {:?}", removed_block_id, value),
                     // before: ^| ... | R |$
                     // after:  ^| R | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
