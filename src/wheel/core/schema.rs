@@ -77,9 +77,7 @@ pub enum ReadBlockTaskDoneOp {
 }
 
 #[derive(Debug)]
-pub struct ReadBlockTaskDonePerform {
-    pub block_header: storage::BlockHeader,
-}
+pub struct ReadBlockTaskDonePerform;
 
 #[derive(Debug)]
 pub enum DeleteBlockTaskDoneOp {
@@ -372,12 +370,8 @@ impl Schema {
     }
 
     pub fn process_read_block_task_done(&mut self, read_block_id: &block::Id) -> ReadBlockTaskDoneOp {
-        let block_header = self.blocks_index
-            .get_mut(read_block_id)
-            .unwrap()
-            .header
-            .clone();
-        ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform { block_header, })
+        assert!(self.blocks_index.get_mut(read_block_id).is_some());
+        ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform)
     }
 
     pub fn process_delete_block_task_done(&mut self, removed_block_id: block::Id) -> DeleteBlockTaskDoneOp {

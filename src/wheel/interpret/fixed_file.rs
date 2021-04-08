@@ -26,6 +26,10 @@ use tokio::{
     },
 };
 
+use alloc_pool::bytes::{
+    BytesPool,
+};
+
 use crate::{
     context::Context,
     wheel::{
@@ -406,11 +410,12 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub async fn run(self) -> Result<(), Error> {
+    pub async fn run(self, blocks_pool: BytesPool) -> Result<(), Error> {
         busyloop(
             self.request_rx,
             self.wheel_file,
             self.storage_layout,
+            blocks_pool,
         ).await
     }
 }
@@ -493,6 +498,7 @@ async fn busyloop<C>(
     request_rx: mpsc::Receiver<Command<C>>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
+    blocks_pool: BytesPool,
 )
     -> Result<(), Error>
 where C: Context,
@@ -559,9 +565,10 @@ where C: Context,
                         }
                     },
 
-                    task::TaskKind::ReadBlock(task::ReadBlock { block_header, mut block_bytes, context, }) => {
+                    task::TaskKind::ReadBlock(task::ReadBlock { block_header, context, }) => {
                         let total_chunk_size = storage_layout.data_size_block_min()
                             + block_header.block_size;
+                        let mut block_bytes = blocks_pool.lend();
                         block_bytes.resize(total_chunk_size, 0);
                         let now = Instant::now();
                         wheel_file.read_exact(&mut block_bytes).await

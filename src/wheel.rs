@@ -129,7 +129,7 @@ where J: edeltraud::Job + From<job::Job>,
             };
 
             let interpreter_pid = interpreter_gen_server.pid();
-            let interpreter_task = interpreter_gen_server.run();
+            let interpreter_task = interpreter_gen_server.run(state.blocks_pool.clone());
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
             supervisor_pid.spawn_link_permanent(
                 async move {
@@ -155,7 +155,7 @@ where J: edeltraud::Job + From<job::Job>,
                 .map_err(ErrorSeverity::Fatal)?;
 
             let interpreter_pid = interpreter_gen_server.pid();
-            let interpreter_task = interpreter_gen_server.run();
+            let interpreter_task = interpreter_gen_server.run(state.blocks_pool.clone());
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
             supervisor_pid.spawn_link_permanent(
                 async move {
@@ -307,12 +307,12 @@ where J: edeltraud::Job + From<job::Job>,
                                     context,
                                 },
                             ),
-                        Source::JobTask(Ok(JobDone::BlockProcessRead { context: reply_tx, done, })) => {
-                            if let Err(_send_error) = reply_tx.send(Ok(done.block_bytes)) {
-                                log::warn!("client channel was closed before a block is actually read");
-                            }
-                            continue;
-                        },
+                        Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, })) =>
+                            poll.next.process_read_block_done(
+                                done.block_id,
+                                done.block_bytes,
+                                context,
+                            ),
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
                             poll.next.prepared_delete_block_done(
                                 block_id,
@@ -423,12 +423,12 @@ where J: edeltraud::Job + From<job::Job>,
                                     context,
                                 },
                             ),
-                        Source::JobTask(Ok(JobDone::BlockProcessRead { context: reply_tx, done, })) => {
-                            if let Err(_send_error) = reply_tx.send(Ok(done.block_bytes)) {
-                                log::warn!("client channel was closed before a block is actually read");
-                            }
-                            continue;
-                        },
+                        Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, })) =>
+                            poll.next.process_read_block_done(
+                                done.block_id,
+                                done.block_bytes,
+                                context,
+                            ),
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
                             poll.next.prepared_delete_block_done(
                                 block_id,
@@ -542,26 +542,13 @@ where J: edeltraud::Job + From<job::Job>,
 
             performer::Op::Event(performer::Event {
                 op: performer::EventOp::ReadBlock(
-                    performer::TaskDoneOp {
-                        context,
-                        op: performer::ReadBlockOp::Done {
-                            storage_layout,
-                            block_header,
-                            block_bytes,
-                        },
-                    },
+                    performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::Done { block_bytes, }, },
                 ),
                 performer,
             }) => {
-                job_tasks.push(make_job_task(
-                    JobTask::BlockProcessRead {
-                        storage_layout,
-                        block_header,
-                        block_bytes,
-                        context,
-                    },
-                    state.thread_pool.clone(),
-                ));
+                if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+                    log::warn!("client channel was closed before a block is actually read");
+                }
                 performer.next()
             },
 
@@ -670,6 +657,30 @@ where J: edeltraud::Job + From<job::Job>,
                 ));
                 performer.next()
             },
+
+            performer::Op::Event(performer::Event {
+                op: performer::EventOp::ProcessReadBlockTaskDone(
+                    performer::ProcessReadBlockTaskDoneOp {
+                        storage_layout,
+                        block_header,
+                        block_bytes,
+                        context,
+                    },
+                ),
+                performer,
+            }) => {
+                job_tasks.push(make_job_task(
+                    JobTask::BlockProcessRead {
+                        storage_layout,
+                        block_header,
+                        block_bytes,
+                        context,
+                    },
+                    state.thread_pool.clone(),
+                ));
+                performer.next()
+            },
+
         };
     }
 }
@@ -724,7 +735,7 @@ enum JobTask<C> where C: context::Context {
         storage_layout: storage::Layout,
         block_header: storage::BlockHeader,
         block_bytes: Bytes,
-        context: C::ReadBlock,
+        context: task::ReadBlockProcessContext<C>,
     },
     BlockPrepareDelete {
         block_id: block::Id,
@@ -740,7 +751,7 @@ enum JobDone<C> where C: context::Context {
         done: interpret::BlockPrepareWriteJobDone,
     },
     BlockProcessRead {
-        context: C::ReadBlock,
+        context: task::ReadBlockProcessContext<C>,
         done: interpret::BlockProcessReadJobDone,
     },
     BlockPrepareDelete {

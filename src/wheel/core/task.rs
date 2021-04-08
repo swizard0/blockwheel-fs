@@ -73,7 +73,6 @@ impl<C> fmt::Debug for WriteBlockContext<C> {
 
 pub struct ReadBlock<C> where C: Context {
     pub block_header: storage::BlockHeader,
-    pub block_bytes: BytesMut,
     pub context: ReadBlockContext<C>,
 }
 
@@ -81,7 +80,6 @@ impl<C> fmt::Debug for ReadBlock<C> where C: Context {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("ReadBlock")
             .field("block_header", &self.block_header)
-            .field("block_bytes", &self.block_bytes)
             .field("context", &self.context)
             .finish()
     }
@@ -89,8 +87,18 @@ impl<C> fmt::Debug for ReadBlock<C> where C: Context {
 
 #[derive(Clone, PartialEq)]
 pub enum ReadBlockContext<C> where C: Context {
+    Process(ReadBlockProcessContext<C>),
+    Defrag(ReadBlockDefragContext),
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ReadBlockDefragContext {
+    pub defrag_gaps: DefragGaps,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum ReadBlockProcessContext<C> where C: Context {
     External(C::ReadBlock),
-    Defrag { defrag_gaps: DefragGaps, },
     IterBlocks {
         iter_blocks_stream_context: C::IterBlocksStream,
         next_block_id: block::Id,

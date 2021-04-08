@@ -3,8 +3,11 @@ use o1::{
     forest::Forest1,
 };
 
-use super::{
-    super::{
+use crate::wheel::core::{
+    task::{
+        queue::{
+            TasksHead,
+        },
         Task,
         TaskKind,
         WriteBlock,
@@ -12,13 +15,14 @@ use super::{
         DeleteBlock,
         Flush,
         Context,
+        ReadBlockContext,
     },
-    TasksHead,
 };
 
 pub struct Tasks<C> where C: Context {
     tasks_write: Set<WriteBlock<C::WriteBlock>>,
     tasks_read: Forest1<ReadBlock<C>>,
+    tasks_read_defrag: Forest1<ReadBlock<C>>,
     tasks_delete: Forest1<DeleteBlock<C::DeleteBlock>>,
     tasks_flush: Vec<Flush<C::Flush>>,
 }
@@ -28,6 +32,7 @@ impl<C> Tasks<C> where C: Context {
         Tasks {
             tasks_write: Set::new(),
             tasks_read: Forest1::new(),
+            tasks_read_defrag: Forest1::new(),
             tasks_delete: Forest1::new(),
             tasks_flush: Vec::new(),
         }
@@ -40,13 +45,21 @@ impl<C> Tasks<C> where C: Context {
                 let node_ref = self.tasks_write.insert(write_block);
                 tasks_head.head_write = Some(node_ref);
             },
-            TaskKind::ReadBlock(read_block) =>
+            TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Process(..), }) =>
                 if let Some(prev_ref) = tasks_head.head_read.take() {
                     let node_ref = self.tasks_read.make_node(prev_ref, read_block);
                     tasks_head.head_read = Some(node_ref);
                 } else {
                     let node_ref = self.tasks_read.make_root(read_block);
                     tasks_head.head_read = Some(node_ref);
+                },
+            TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Defrag(..), }) =>
+                if let Some(prev_ref) = tasks_head.head_read_defrag.take() {
+                    let node_ref = self.tasks_read_defrag.make_node(prev_ref, read_block);
+                    tasks_head.head_read_defrag = Some(node_ref);
+                } else {
+                    let node_ref = self.tasks_read_defrag.make_root(read_block);
+                    tasks_head.head_read_defrag = Some(node_ref);
                 },
             TaskKind::DeleteBlock(delete_block) =>
                 if let Some(prev_ref) = tasks_head.head_delete.take() {
@@ -62,6 +75,7 @@ impl<C> Tasks<C> where C: Context {
     pub fn is_empty_tasks(&self) -> bool {
         self.tasks_write.is_empty()
             && self.tasks_read.is_empty()
+            && self.tasks_read_defrag.is_empty()
             && self.tasks_delete.is_empty()
     }
 
@@ -75,6 +89,10 @@ impl<C> Tasks<C> where C: Context {
         }
 
         if let Some(task) = self.pop_read(tasks_head) {
+            return Some(TaskKind::ReadBlock(task));
+        }
+
+        if let Some(task) = self.pop_read_defrag(tasks_head) {
             return Some(TaskKind::ReadBlock(task));
         }
 
@@ -97,6 +115,16 @@ impl<C> Tasks<C> where C: Context {
         if let Some(node_ref) = tasks_head.head_read.take() {
             let node = self.tasks_read.remove(node_ref).unwrap();
             tasks_head.head_read = node.parent;
+            Some(node.item)
+        } else {
+            None
+        }
+    }
+
+    pub fn pop_read_defrag(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C>> {
+        if let Some(node_ref) = tasks_head.head_read_defrag.take() {
+            let node = self.tasks_read_defrag.remove(node_ref).unwrap();
+            tasks_head.head_read_defrag = node.parent;
             Some(node.item)
         } else {
             None

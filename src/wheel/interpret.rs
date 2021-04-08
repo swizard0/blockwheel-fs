@@ -215,13 +215,14 @@ pub enum CorruptedDataError {
 pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
 pub struct BlockProcessReadJobDone {
+    pub block_id: block::Id,
     pub block_bytes: Bytes,
 }
 
 pub struct BlockProcessReadJobArgs {
     storage_layout: storage::Layout,
     block_header: storage::BlockHeader,
-    block_bytes: BytesMut,
+    block_bytes: Bytes,
 }
 
 pub fn block_process_read_job(
@@ -273,5 +274,5 @@ pub fn block_process_read_job(
         }));
     }
 
-    Ok(BlockProcessReadJobDone { block_bytes, })
+    Ok(BlockProcessReadJobDone { block_id, block_bytes, })
 }
