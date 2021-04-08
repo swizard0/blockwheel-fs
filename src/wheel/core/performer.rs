@@ -509,10 +509,10 @@ impl<C> Inner<C> where C: Context {
                             task::ReadBlockContext::Process(process_context) =>
                                 Op::Event(Event {
                                     op: EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
-                                        storage_layout: self.schema.storage_layout(),
+                                        storage_layout: self.schema.storage_layout().clone(),
                                         block_header: block_header.clone(),
                                         block_bytes: block_bytes.clone(),
-                                        context,
+                                        context: process_context,
                                     }),
                                     performer: Performer { inner: self, }
                                 }),
@@ -526,7 +526,7 @@ impl<C> Inner<C> where C: Context {
                                         .push_task(
                                             task::Task {
                                                 block_id: block_header.block_id.clone(),
-                                                kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                                                kind: task::TaskKind::DeleteBlock(task::DeleteBlock { // ??????
                                                     context: task::DeleteBlockContext::Defrag {
                                                         defrag_gaps,
                                                         block_bytes: block_bytes.clone(),

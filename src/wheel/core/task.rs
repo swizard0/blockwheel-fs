@@ -108,12 +108,12 @@ pub enum ReadBlockProcessContext<C> where C: Context {
 impl<C> fmt::Debug for ReadBlockContext<C> where C: Context {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ReadBlockContext::External(..) =>
-                write!(fmt, "ReadBlockContext::External(..)"),
-            ReadBlockContext::Defrag { defrag_gaps, } =>
-                write!(fmt, "ReadBlockContext::Defrag {{ defrag_gaps: {:?} }}", defrag_gaps),
-            ReadBlockContext::IterBlocks { .. } =>
-                write!(fmt, "ReadBlockContext::IterBlocks"),
+            ReadBlockContext::Process(ReadBlockProcessContext::External(..)) =>
+                write!(fmt, "ReadBlockContext::Process(ReadBlockProcessContext::External(..))"),
+            ReadBlockContext::Process(ReadBlockProcessContext::IterBlocks { .. }) =>
+                write!(fmt, "ReadBlockContext::Process(ReadBlockProcessContext::IterBlocks(..))"),
+            ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps, }) =>
+                write!(fmt, "ReadBlockContext::Defrag(ReadBlockDefragContext {{ defrag_gaps: {:?} }})", defrag_gaps),
         }
     }
 }

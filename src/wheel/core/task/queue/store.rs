@@ -45,7 +45,7 @@ impl<C> Tasks<C> where C: Context {
                 let node_ref = self.tasks_write.insert(write_block);
                 tasks_head.head_write = Some(node_ref);
             },
-            TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Process(..), }) =>
+            TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Process(..), .. }) =>
                 if let Some(prev_ref) = tasks_head.head_read.take() {
                     let node_ref = self.tasks_read.make_node(prev_ref, read_block);
                     tasks_head.head_read = Some(node_ref);
@@ -53,7 +53,7 @@ impl<C> Tasks<C> where C: Context {
                     let node_ref = self.tasks_read.make_root(read_block);
                     tasks_head.head_read = Some(node_ref);
                 },
-            TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Defrag(..), }) =>
+            TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Defrag(..), .. }) =>
                 if let Some(prev_ref) = tasks_head.head_read_defrag.take() {
                     let node_ref = self.tasks_read_defrag.make_node(prev_ref, read_block);
                     tasks_head.head_read_defrag = Some(node_ref);
