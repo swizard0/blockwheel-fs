@@ -534,6 +534,9 @@ impl<C> Inner<C> where C: Context {
             },
 
             DoneTask::ReadBlockProcessed { block_id, block_bytes, context, } => {
+
+                self.lru_cache.insert(block_id.clone(), block_bytes.clone());
+
                 let op = match self.schema.process_read_block_task_done(&block_id) {
                     schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform) =>
                         match context {
