@@ -302,18 +302,21 @@ where J: edeltraud::Job + From<job::Job>,
                                 block_id,
                                 done.write_block_bytes,
                                 context,
+                                fused_interpret_result_rx,
                             ),
                         Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, })) =>
                             poll.next.process_read_block_done(
                                 done.block_id,
                                 done.block_bytes,
                                 context,
+                                fused_interpret_result_rx,
                             ),
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
                             poll.next.prepared_delete_block_done(
                                 block_id,
                                 done.delete_block_bytes,
                                 context,
+                                fused_interpret_result_rx,
                             ),
                         Source::JobTask(Err(error)) =>
                             return Err(ErrorSeverity::Fatal(error)),

@@ -38,7 +38,7 @@ use super::{
 
 use crate::Info;
 
-// mod basic;
+mod basic;
 // mod defrag;
 // mod defrag_disturb;
 
@@ -135,8 +135,29 @@ enum DoOp {
     RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, interpreter_context: C, },
     RequestAndInterpreterIncomingTaskDone { task_done: task::Done<Context>, },
     RequestAndInterpreterIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, interpreter_context: C, },
+    RequestAndInterpreterIncomingPreparedWriteBlockDone {
+        block_id: block::Id,
+        write_block_bytes: BytesMut,
+        context: task::WriteBlockContext<C>,
+        interpreter_context: C,
+    },
+    RequestAndInterpreterIncomingPreparedDeleteBlockDone {
+        block_id: block::Id,
+        delete_block_bytes: BytesMut,
+        context: task::DeleteBlockContext<C>,
+        interpreter_context: C,
+    },
+    RequestAndInterpreterIncomingProcessReadBlockDone {
+        block_id: block::Id,
+        block_bytes: Bytes,
+        context: task::ReadBlockProcessContext<Context>,
+        interpreter_context: C,
+    },
     RequestIncomingRequest { request: proto::Request<Context>, },
     RequestIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, },
+    RequestIncomingPreparedWriteBlockDone { block_id: block::Id, write_block_bytes: BytesMut, context: task::WriteBlockContext<C>, },
+    RequestIncomingPreparedDeleteBlockDone { block_id: block::Id, delete_block_bytes: BytesMut, context: task::DeleteBlockContext<C>, },
+    RequestIncomingProcessReadBlockDone { block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<Context>, },
     TaskAccept { interpreter_context: C, },
     StreamReady { iter_context: C, },
 }
@@ -210,8 +231,33 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 poll.next.incoming_task_done(task_done),
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingIterBlocks { iter_blocks_state, interpreter_context, })) =>
                                 poll.next.incoming_iter_blocks(iter_blocks_state, interpreter_context),
+                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
+                                block_id,
+                                write_block_bytes,
+                                context,
+                                interpreter_context,
+                            })) =>
+                                poll.next.prepared_write_block_done(block_id, write_block_bytes, context, interpreter_context),
+                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingProcessReadBlockDone {
+                                block_id,
+                                block_bytes,
+                                context,
+                                interpreter_context,
+                            })) =>
+                                poll.next.process_read_block_done(block_id, block_bytes, context, interpreter_context),
+                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
+                                block_id,
+                                delete_block_bytes,
+                                context,
+                                interpreter_context,
+                            })) =>
+                                poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context, interpreter_context),
                             Some(other_op) =>
-                                panic!("expected DoOp::RequestAndInterpreterIncoming* but got {:?} @ {}", other_op, script_len - script.len()),
+                                panic!(
+                                    "expected DoOp::RequestAndInterpreterIncoming* but got {:?} @ {}",
+                                    other_op,
+                                    script_len - script.len(),
+                                ),
                         },
                     Some(other_op) =>
                         panic!(
@@ -232,6 +278,12 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 poll.next.incoming_request(request),
                             Some(ScriptOp::Do(DoOp::RequestIncomingIterBlocks { iter_blocks_state, })) =>
                                 poll.next.incoming_iter_blocks(iter_blocks_state),
+                            Some(ScriptOp::Do(DoOp::RequestIncomingPreparedWriteBlockDone { block_id, write_block_bytes, context, })) =>
+                                poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
+                            Some(ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone { block_id, block_bytes, context, })) =>
+                                poll.next.process_read_block_done(block_id, block_bytes, context),
+                            Some(ScriptOp::Do(DoOp::RequestIncomingPreparedDeleteBlockDone { block_id, delete_block_bytes, context, })) =>
+                                poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
                             Some(other_op) =>
                                 panic!("expected DoOp::RequestIncoming* but got {:?} @ {}", other_op, script_len - script.len()),
                         },
