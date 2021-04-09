@@ -83,7 +83,6 @@ where J: edeltraud::Job + From<job::Job>,
 {
     let performer_builder = performer::PerformerBuilderInit::new(
         lru::Cache::new(state.params.lru_cache_size_bytes),
-        state.blocks_pool.clone(),
         if state.params.defrag_parallel_tasks_limit == 0 {
             None
         } else {
@@ -782,7 +781,7 @@ where C: context::Context + Send,
         },
 
         JobTask::BlockPrepareDelete { block_id, blocks_pool, context, } => {
-            let job = job::Job::BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs { block_id: block_id.clone(), blocks_pool, });
+            let job = job::Job::BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs { blocks_pool, });
             let job_output = thread_pool.spawn(job).await
                 .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
             let job_output: job::JobOutput = job_output.into();

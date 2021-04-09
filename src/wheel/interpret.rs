@@ -161,7 +161,6 @@ pub struct BlockPrepareDeleteJobDone {
 }
 
 pub struct BlockPrepareDeleteJobArgs {
-    pub block_id: block::Id,
     pub blocks_pool: BytesPool,
 }
 
@@ -169,7 +168,6 @@ pub type BlockPrepareDeleteJobOutput = Result<BlockPrepareDeleteJobDone, BlockPr
 
 pub fn block_prepare_delete_job(
     BlockPrepareDeleteJobArgs {
-        block_id,
         blocks_pool,
     }: BlockPrepareDeleteJobArgs,
 )
@@ -220,9 +218,9 @@ pub struct BlockProcessReadJobDone {
 }
 
 pub struct BlockProcessReadJobArgs {
-    storage_layout: storage::Layout,
-    block_header: storage::BlockHeader,
-    block_bytes: Bytes,
+    pub storage_layout: storage::Layout,
+    pub block_header: storage::BlockHeader,
+    pub block_bytes: Bytes,
 }
 
 pub fn block_process_read_job(

@@ -61,7 +61,6 @@ impl<C> fmt::Debug for WriteBlock<C> {
     }
 }
 
-#[derive(Clone, PartialEq)]
 pub enum WriteBlockContext<C> {
     External(C),
     Defrag,
@@ -92,18 +91,15 @@ impl<C> fmt::Debug for ReadBlock<C> where C: Context {
     }
 }
 
-#[derive(Clone, PartialEq)]
 pub enum ReadBlockContext<C> where C: Context {
     Process(ReadBlockProcessContext<C>),
     Defrag(ReadBlockDefragContext),
 }
 
-#[derive(Clone, PartialEq)]
 pub struct ReadBlockDefragContext {
     pub defrag_gaps: DefragGaps,
 }
 
-#[derive(Clone, PartialEq)]
 pub enum ReadBlockProcessContext<C> where C: Context {
     External(C::ReadBlock),
     IterBlocks {
@@ -140,7 +136,6 @@ impl<C> fmt::Debug for DeleteBlock<C> {
     }
 }
 
-#[derive(Clone, PartialEq)]
 pub enum DeleteBlockContext<C> {
     External(C),
     Defrag {

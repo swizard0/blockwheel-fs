@@ -34,12 +34,7 @@ use crate::{
 
 #[derive(Debug)]
 pub enum Error {
-    BlockHeaderSerialize(bincode::Error),
-    CommitTagSerialize(bincode::Error),
-    TerminatorTagSerialize(bincode::Error),
-    TombstoneTagSerialize(bincode::Error),
     AppendTerminator(AppendTerminatorError),
-    WheelPeerLost,
 }
 
 #[derive(Debug)]

@@ -3,7 +3,6 @@ use std::mem;
 use alloc_pool::bytes::{
     Bytes,
     BytesMut,
-    BytesPool,
 };
 
 use crate::{
@@ -33,7 +32,6 @@ mod tests;
 struct Inner<C> where C: Context {
     schema: schema::Schema,
     lru_cache: lru::Cache,
-    blocks_pool: BytesPool,
     defrag: Option<Defrag<C::WriteBlock>>,
     freed_space_key: Option<SpaceKey>,
     bg_task: BackgroundTask<C::Interpreter>,
@@ -240,7 +238,6 @@ pub enum BuilderError {
 
 pub struct PerformerBuilderInit<C> where C: Context {
     lru_cache: lru::Cache,
-    blocks_pool: BytesPool,
     defrag: Option<Defrag<C::WriteBlock>>,
     storage_layout: storage::Layout,
     work_block: Vec<u8>,
@@ -249,7 +246,6 @@ pub struct PerformerBuilderInit<C> where C: Context {
 impl<C> PerformerBuilderInit<C> where C: Context {
     pub fn new(
         lru_cache: lru::Cache,
-        blocks_pool: BytesPool,
         defrag_queues: Option<DefragConfig<C::WriteBlock>>,
         work_block_size_bytes: usize,
     )
@@ -261,7 +257,6 @@ impl<C> PerformerBuilderInit<C> where C: Context {
 
         Ok(PerformerBuilderInit {
             lru_cache,
-            blocks_pool,
             defrag: defrag_queues
                 .map(|config| Defrag {
                     queues: config.queues,
@@ -292,7 +287,6 @@ impl<C> PerformerBuilderInit<C> where C: Context {
             PerformerBuilder {
                 schema_builder,
                 lru_cache: self.lru_cache,
-                blocks_pool: self.blocks_pool,
                 defrag: self.defrag,
             },
             self.work_block,
@@ -303,7 +297,6 @@ impl<C> PerformerBuilderInit<C> where C: Context {
 pub struct PerformerBuilder<C> where C: Context {
     schema_builder: schema::Builder,
     lru_cache: lru::Cache,
-    blocks_pool: BytesPool,
     defrag: Option<Defrag<C::WriteBlock>>,
 }
 
@@ -339,7 +332,6 @@ impl<C> PerformerBuilder<C> where C: Context {
             inner: Inner::new(
                 schema,
                 self.lru_cache,
-                self.blocks_pool,
                 self.defrag,
             ),
         }
@@ -386,7 +378,7 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         self.inner.prepared_delete_block_done(block_id, delete_block_bytes, context)
     }
 
-    pub fn process_read_block_done(mut self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {
+    pub fn process_read_block_done(self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {
         self.inner.process_read_block_done(block_id, block_bytes, context)
     }
 
@@ -430,7 +422,7 @@ impl<C> PollRequestNext<C> where C: Context {
         self.inner.prepared_delete_block_done(block_id, delete_block_bytes, context)
     }
 
-    pub fn process_read_block_done(mut self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {
+    pub fn process_read_block_done(self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {
         self.inner.process_read_block_done(block_id, block_bytes, context)
     }
 }
@@ -474,7 +466,6 @@ impl<C> Inner<C> where C: Context {
     fn new(
         schema: schema::Schema,
         lru_cache: lru::Cache,
-        blocks_pool: BytesPool,
         defrag: Option<Defrag<C::WriteBlock>>,
     )
         -> Inner<C>
@@ -482,7 +473,6 @@ impl<C> Inner<C> where C: Context {
         Inner {
             schema,
             lru_cache,
-            blocks_pool,
             tasks_queue: task::queue::Queue::new(),
             defrag,
             freed_space_key: None,
@@ -507,28 +497,22 @@ impl<C> Inner<C> where C: Context {
                         match context {
 
                             task::ReadBlockContext::Process(process_context) =>
-                                Op::Event(Event {
-                                    op: EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
-                                        storage_layout: self.schema.storage_layout().clone(),
-                                        block_header: block_header.clone(),
-                                        block_bytes: block_bytes.clone(),
-                                        context: process_context,
-                                    }),
-                                    performer: Performer { inner: self, }
+                                EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
+                                    storage_layout: self.schema.storage_layout().clone(),
+                                    block_header: block_header.clone(),
+                                    block_bytes: block_bytes.clone(),
+                                    context: process_context,
                                 }),
 
                             task::ReadBlockContext::Defrag(task::ReadBlockDefragContext { defrag_gaps, }) =>
-                                Op::Event(Event {
-                                    op: EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
-                                        block_id: block_header.block_id,
-                                        task: PrepareInterpretTaskKind::DeleteBlock(PrepareInterpretTaskDeleteBlock {
-                                            context: task::DeleteBlockContext::Defrag {
-                                                defrag_gaps,
-                                                block_bytes: block_bytes.clone(),
-                                            },
-                                        }),
+                                EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
+                                    block_id: block_header.block_id.clone(),
+                                    task: PrepareInterpretTaskKind::DeleteBlock(PrepareInterpretTaskDeleteBlock {
+                                        context: task::DeleteBlockContext::Defrag {
+                                            defrag_gaps,
+                                            block_bytes: block_bytes.clone(),
+                                        },
                                     }),
-                                    performer: Performer { inner: self, },
                                 }),
 
                         },
@@ -546,7 +530,7 @@ impl<C> Inner<C> where C: Context {
                     lens.enqueue(self.schema.block_get());
                 }
 
-                return op;
+                return Op::Event(Event { op, performer: Performer { inner: self, }, });
             },
 
             DoneTask::ReadBlockProcessed { block_id, block_bytes, context, } => {
@@ -555,29 +539,23 @@ impl<C> Inner<C> where C: Context {
                         match context {
 
                             task::ReadBlockProcessContext::External(context) =>
-                                Op::Event(Event {
-                                    op: EventOp::ReadBlock(TaskDoneOp {
-                                        context,
-                                        op: ReadBlockOp::Done {
-                                            block_bytes: block_bytes.clone(),
-                                        },
-                                    }),
-                                    performer: Performer { inner: self, },
+                                EventOp::ReadBlock(TaskDoneOp {
+                                    context,
+                                    op: ReadBlockOp::Done {
+                                        block_bytes: block_bytes.clone(),
+                                    },
                                 }),
 
                             task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, } =>
-                                Op::Event(Event {
-                                    op: EventOp::IterBlocksItem(IterBlocksItemOp {
-                                        block_id: block_id.clone(),
-                                        block_bytes: block_bytes.clone(),
-                                        iter_blocks_state: IterBlocksState {
-                                            iter_blocks_stream_context,
-                                            iter_blocks_cursor: IterBlocksCursor {
-                                                block_id: next_block_id,
-                                            },
+                                EventOp::IterBlocksItem(IterBlocksItemOp {
+                                    block_id: block_id.clone(),
+                                    block_bytes: block_bytes.clone(),
+                                    iter_blocks_state: IterBlocksState {
+                                        iter_blocks_stream_context,
+                                        iter_blocks_cursor: IterBlocksCursor {
+                                            block_id: next_block_id,
                                         },
-                                    }),
-                                    performer: Performer { inner: self, },
+                                    },
                                 }),
 
                         },
@@ -600,7 +578,7 @@ impl<C> Inner<C> where C: Context {
                     lens.enqueue(self.schema.block_get());
                 }
 
-                return op;
+                return Op::Event(Event { op, performer: Performer { inner: self, }, });
             },
 
             DoneTask::DeleteBlockRegular { block_id, mut block_entry, freed_space_key, } => {
@@ -678,8 +656,8 @@ impl<C> Inner<C> where C: Context {
             },
             DoneTask::DeleteBlockDefrag { block_id, block_bytes, freed_space_key, } => {
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
-                let block_get = self.schema.block_get();
-                if let Some(read_block) = lens.pop_read_task(block_get) {
+                let mut block_get = self.schema.block_get();
+                if let Some(read_block) = lens.pop_read_task(&mut block_get) {
                     self.done_task = DoneTask::DeleteBlockDefrag {
                         block_id: block_id.clone(),
                         block_bytes: block_bytes.clone(),
@@ -1004,7 +982,7 @@ impl<C> Inner<C> where C: Context {
     )
         -> Op<C>
     {
-        let block_get = self.schema.block_get();
+        let mut block_get = self.schema.block_get();
         let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
         lens.push_task(
             task::Task {
@@ -1015,7 +993,7 @@ impl<C> Inner<C> where C: Context {
                     context,
                 }),
             },
-            block_get,
+            &mut block_get,
         );
         lens.enqueue(block_get);
         Op::Idle(Performer { inner: self, })
@@ -1087,7 +1065,7 @@ impl<C> Inner<C> where C: Context {
 
             task::Done { current_offset, task: task::TaskDone { block_id, kind: task::TaskDoneKind::ReadBlock(read_block), }, } => {
                 self.bg_task = BackgroundTask { current_offset, state: BackgroundTaskState::Idle, };
-                let block_get = self.schema.block_get();
+                let mut block_get = self.schema.block_get();
                 let block_header = block_get.by_id(&block_id)
                     .unwrap()
                     .header
@@ -1233,7 +1211,7 @@ impl<C> Inner<C> where C: Context {
     fn maybe_run_background_task(mut self) -> Op<C> {
         loop {
             if let Some((offset, mut lens)) = self.tasks_queue.next_trigger(self.bg_task.current_offset, self.schema.block_get()) {
-                let task_kind = match lens.pop_task(self.schema.block_get()) {
+                let mut task_kind = match lens.pop_task(self.schema.block_get()) {
                     Some(task_kind) => task_kind,
                     None => panic!("empty task queue unexpected for block {:?} @ {}", lens.block_id(), offset),
                 };

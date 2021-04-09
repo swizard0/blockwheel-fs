@@ -63,15 +63,10 @@ pub enum Error {
         cursor: u64,
         error: io::Error,
     },
-    BlockHeaderSerialize(bincode::Error),
-    CommitTagSerialize(bincode::Error),
-    TerminatorTagSerialize(bincode::Error),
-    TombstoneTagSerialize(bincode::Error),
     AppendTerminator(AppendTerminatorError),
     BlockWrite(io::Error),
     TerminatorWrite(io::Error),
     BlockRead(io::Error),
-    WheelPeerLost,
     DeviceSyncFlush(io::Error),
 }
 
@@ -160,7 +155,6 @@ pub struct OpenParams<P> {
 
 pub struct GenServer<C> where C: Context {
     wheel_file: fs::File,
-    work_block: Vec<u8>,
     request_tx: mpsc::Sender<Command<C>>,
     request_rx: mpsc::Receiver<Command<C>>,
     storage_layout: storage::Layout,
@@ -236,12 +230,11 @@ impl<C> GenServer<C> where C: Context {
 
         let (request_tx, request_rx) = mpsc::channel(0);
 
-        let (performer_builder, work_block) = performer_builder.start_fill();
+        let (performer_builder, _work_block) = performer_builder.start_fill();
 
         Ok(WheelData {
             gen_server: GenServer {
                 wheel_file,
-                work_block,
                 request_tx,
                 request_rx,
                 storage_layout,
@@ -396,7 +389,6 @@ impl<C> GenServer<C> where C: Context {
         Ok(WheelOpenStatus::Success(WheelData {
             gen_server: GenServer {
                 wheel_file,
-                work_block,
                 request_tx,
                 request_rx,
                 storage_layout: builder
