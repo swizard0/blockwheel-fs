@@ -263,7 +263,7 @@ pub fn block_process_read_job(
             block_id_actual: commit_tag.block_id,
         }));
     }
-    let block_bytes = block_bytes.freeze_range(block_buffer_start .. block_buffer_end);
+    let block_bytes = block_bytes.subrange(block_buffer_start .. block_buffer_end);
     let block_id = block_header.block_id;
 
     let crc_expected = block::crc(&block_bytes);

@@ -517,29 +517,19 @@ impl<C> Inner<C> where C: Context {
                                     performer: Performer { inner: self, }
                                 }),
 
-                            task::ReadBlockContext::Defrag(task::ReadBlockDefragContext { defrag_gaps, }) => {
-                                let mut block_get = self.schema.block_get();
-                                let block_entry = block_get.by_id(&block_header.block_id).unwrap();
-                                let mut block_entry_get = BlockEntryGet::new(block_entry);
-                                if defrag_gaps.is_still_relevant(&block_header.block_id, &mut block_entry_get) {
-                                    self.tasks_queue.focus_block_id(block_header.block_id.clone())
-                                        .push_task(
-                                            task::Task {
-                                                block_id: block_header.block_id.clone(),
-                                                kind: task::TaskKind::DeleteBlock(task::DeleteBlock { // ??????
-                                                    context: task::DeleteBlockContext::Defrag {
-                                                        defrag_gaps,
-                                                        block_bytes: block_bytes.clone(),
-                                                    },
-                                                }),
+                            task::ReadBlockContext::Defrag(task::ReadBlockDefragContext { defrag_gaps, }) =>
+                                Op::Event(Event {
+                                    op: EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
+                                        block_id: block_header.block_id,
+                                        task: PrepareInterpretTaskKind::DeleteBlock(PrepareInterpretTaskDeleteBlock {
+                                            context: task::DeleteBlockContext::Defrag {
+                                                defrag_gaps,
+                                                block_bytes: block_bytes.clone(),
                                             },
-                                            &mut block_entry_get,
-                                        );
-                                } else {
-                                    cancel_defrag_task(self.defrag.as_mut().unwrap());
-                                }
-                                Op::Idle(Performer { inner: self, })
-                            },
+                                        }),
+                                    }),
+                                    performer: Performer { inner: self, },
+                                }),
 
                         },
                 };
@@ -575,7 +565,7 @@ impl<C> Inner<C> where C: Context {
                                     performer: Performer { inner: self, },
                                 }),
 
-                            task::ReadBlockContext::IterBlocks { iter_blocks_stream_context, next_block_id, } =>
+                            task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, } =>
                                 Op::Event(Event {
                                     op: EventOp::IterBlocksItem(IterBlocksItemOp {
                                         block_id: block_id.clone(),
@@ -601,7 +591,7 @@ impl<C> Inner<C> where C: Context {
                             self.done_task = DoneTask::ReadBlockProcessed {
                                 block_id,
                                 block_bytes,
-                                context: read_block.context,
+                                context: process_context,
                             },
                         task::ReadBlockContext::Defrag(..) =>
                             unreachable!(),
@@ -626,9 +616,16 @@ impl<C> Inner<C> where C: Context {
                         },
                     }
                 }
-                while let Some(read_block) = lens.pop_read_task(&mut block_get) {
+                loop {
+                    let read_block = if let Some(read_block) = lens.pop_read_task(&mut block_get) {
+                        read_block
+                    } else if let Some(read_block) = lens.pop_read_defrag_task(&mut block_get) {
+                        read_block
+                    } else {
+                        break;
+                    };
                     match read_block.context {
-                        task::ReadBlockContext::External(context) => {
+                        task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(context)) => {
                             self.done_task = DoneTask::DeleteBlockRegular {
                                 block_id: block_id.clone(),
                                 block_entry,
@@ -642,13 +639,16 @@ impl<C> Inner<C> where C: Context {
                                 performer: Performer { inner: self, },
                             });
                         },
+                        task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
+                            iter_blocks_stream_context,
+                            next_block_id,
+                        }) => {
+                            // skip this block, proceed with the next one
+                            return self.iter_blocks_stream_next(next_block_id, iter_blocks_stream_context);
+                        },
                         task::ReadBlockContext::Defrag { .. } => {
                             // cancel defrag read task
                             cancel_defrag_task(self.defrag.as_mut().unwrap());
-                        },
-                        task::ReadBlockContext::IterBlocks { iter_blocks_stream_context, next_block_id, } => {
-                            // skip this block, proceed with the next one
-                            return self.iter_blocks_stream_next(next_block_id, iter_blocks_stream_context);
                         },
                     }
                 }
@@ -678,15 +678,34 @@ impl<C> Inner<C> where C: Context {
             },
             DoneTask::DeleteBlockDefrag { block_id, block_bytes, freed_space_key, } => {
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
-                while let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
+                let block_get = self.schema.block_get();
+                if let Some(read_block) = lens.pop_read_task(block_get) {
                     self.done_task = DoneTask::DeleteBlockDefrag {
                         block_id: block_id.clone(),
                         block_bytes: block_bytes.clone(),
                         freed_space_key,
                     };
-                    return self.proceed_read_block_task_done(block_id, block_bytes, read_block.context)
+                    let block_header = block_get
+                        .by_id(&block_id)
+                        .unwrap()
+                        .header
+                        .clone();
+                    match read_block.context {
+                        task::ReadBlockContext::Process(process_context) =>
+                            return Op::Event(Event {
+                                op: EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
+                                    storage_layout: self.schema.storage_layout().clone(),
+                                    block_header,
+                                    block_bytes,
+                                    context: process_context,
+                                }),
+                                performer: Performer { inner: self, }
+                            }),
+                        task::ReadBlockContext::Defrag(..) =>
+                            unreachable!(),
+                    }
                 }
-                lens.enqueue(self.schema.block_get());
+                lens.enqueue(block_get);
                 self.freed_space_key = freed_space_key;
             },
         }
@@ -738,15 +757,15 @@ impl<C> Inner<C> where C: Context {
                 if let Some((defrag_gaps, moving_block_id)) = defrag.queues.tasks.pop(self.schema.block_get()) {
                     let mut block_get = self.schema.block_get();
                     let block_entry = block_get.by_id(&moving_block_id).unwrap();
-                    let block_bytes = self.blocks_pool.lend();
                     let mut lens = self.tasks_queue.focus_block_id(block_entry.header.block_id.clone());
                     lens.push_task(
                         task::Task {
                             block_id: block_entry.header.block_id.clone(),
                             kind: task::TaskKind::ReadBlock(task::ReadBlock {
                                 block_header: block_entry.header.clone(),
-                                block_bytes,
-                                context: task::ReadBlockContext::Defrag { defrag_gaps, },
+                                context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
+                                    defrag_gaps,
+                                }),
                             }),
                         },
                         self.schema.block_get(),
@@ -898,11 +917,11 @@ impl<C> Inner<C> where C: Context {
                         op: EventOp::ReadBlock(TaskDoneOp {
                             context: request_read_block.context,
                             op: ReadBlockOp::Done {
-                                block_bytes,
+                                block_bytes: block_bytes.clone(),
                             },
                         }),
                         performer: Performer { inner: self, },
-                    });
+                    })
                 } else {
                     let mut lens = self.tasks_queue.focus_block_id(request_read_block.block_id.clone());
                     lens.push_task(
@@ -910,8 +929,10 @@ impl<C> Inner<C> where C: Context {
                             block_id: request_read_block.block_id,
                             kind: task::TaskKind::ReadBlock(task::ReadBlock {
                                 block_header: block_header.clone(),
-                                context: task::ReadBlockContext::External(
-                                    request_read_block.context,
+                                context: task::ReadBlockContext::Process(
+                                    task::ReadBlockProcessContext::External(
+                                        request_read_block.context,
+                                    ),
                                 ),
                             }),
                         },
@@ -987,7 +1008,15 @@ impl<C> Inner<C> where C: Context {
     }
 
     fn prepared_delete_block_done(mut self, block_id: block::Id, delete_block_task: task::DeleteBlock<C::DeleteBlock>) -> Op<C> {
-        let block_get = self.schema.block_get();
+        let mut block_get = self.schema.block_get();
+        if let task::DeleteBlockContext::Defrag { defrag_gaps, .. } = &delete_block_task.context {
+            let block_entry = block_get.by_id(&block_id).unwrap();
+            let mut block_entry_get = BlockEntryGet::new(block_entry);
+            if !defrag_gaps.is_still_relevant(&block_id, &mut block_entry_get) {
+                cancel_defrag_task(self.defrag.as_mut().unwrap());
+                 return Op::Idle(Performer { inner: self, });
+            }
+        }
         let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
         lens.push_task(
             task::Task { block_id, kind: task::TaskKind::DeleteBlock(delete_block_task), },
