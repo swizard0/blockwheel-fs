@@ -1,7 +1,6 @@
 use alloc_pool::bytes::{
     Bytes,
     BytesMut,
-    BytesPool,
 };
 
 use super::{
@@ -34,9 +33,9 @@ use super::{
 
 use crate::Info;
 
-mod basic;
-mod defrag;
-mod defrag_disturb;
+// mod basic;
+// mod defrag;
+// mod defrag_disturb;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Context;
@@ -61,7 +60,6 @@ fn init() -> Performer<Context> {
 fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Context> {
     let (performer_builder, _work_block) = PerformerBuilderInit::new(
         lru::Cache::new(16),
-        BytesPool::new(),
         defrag_config,
         1024,
     )
@@ -72,19 +70,16 @@ fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Conte
 
 fn hello_world_write_req(context: C) -> proto::RequestWriteBlock<C> {
     let block_bytes = hello_world_bytes().freeze();
-    let block_crc = Some(block::crc(&block_bytes));
-    proto::RequestWriteBlock { block_bytes, block_crc, context, }
+    proto::RequestWriteBlock { block_bytes, context, }
 }
 
 fn hello_world_read_done(block_id: block::Id, context: C) -> task::TaskDone<Context> {
-    let block_bytes = hello_world_bytes().freeze();
-    let block_crc = block::crc(&block_bytes);
+    let block_bytes = hello_world_bytes();
     task::TaskDone {
         block_id,
         kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
             block_bytes,
-            block_crc,
-            context: task::ReadBlockContext::External(context),
+            context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(context)),
         }),
     }
 }
@@ -153,7 +148,8 @@ enum ExpectTaskKind {
 
 #[derive(Debug)]
 struct ExpectTaskWriteBlock {
-    block_bytes: Bytes,
+    write_block_bytes: Bytes,
+    commit: task::Commit,
     context: task::WriteBlockContext<C>,
 }
 
@@ -165,6 +161,8 @@ struct ExpectTaskReadBlock {
 
 #[derive(Debug)]
 struct ExpectTaskDeleteBlock {
+    delete_block_bytes: Bytes,
+    commit: task::Commit,
     context: task::DeleteBlockContext<C>,
 }
 
@@ -481,7 +479,8 @@ impl PartialEq<task::TaskKind<Context>> for ExpectTaskKind {
 
 impl PartialEq<task::WriteBlock<C>> for ExpectTaskWriteBlock {
     fn eq(&self, task: &task::WriteBlock<C>) -> bool {
-        self.block_bytes == task.block_bytes
+        self.write_block_bytes == task.write_block_bytes
+            && self.commit == task.commit
             && self.context == task.context
     }
 }
@@ -495,6 +494,8 @@ impl PartialEq<task::ReadBlock<Context>> for ExpectTaskReadBlock {
 
 impl PartialEq<task::DeleteBlock<C>> for ExpectTaskDeleteBlock {
     fn eq(&self, task: &task::DeleteBlock<C>) -> bool {
-        self.context == task.context
+        self.delete_block_bytes == task.delete_block_bytes
+            && self.commit == task.commit
+            && self.context == task.context
     }
 }

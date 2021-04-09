@@ -1,4 +1,7 @@
-use std::fmt;
+use std::{
+    fmt,
+    cmp,
+};
 
 use alloc_pool::bytes::{
     Bytes,
@@ -77,6 +80,19 @@ impl<C> fmt::Debug for WriteBlockContext<C> {
     }
 }
 
+impl<C> cmp::PartialEq for WriteBlockContext<C> where C: PartialEq {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (WriteBlockContext::External(a), WriteBlockContext::External(b)) =>
+                a == b,
+            (WriteBlockContext::Defrag, WriteBlockContext::Defrag) =>
+                true,
+            _ =>
+                false,
+        }
+    }
+}
+
 pub struct ReadBlock<C> where C: Context {
     pub block_header: storage::BlockHeader,
     pub context: ReadBlockContext<C>,
@@ -106,6 +122,30 @@ pub enum ReadBlockProcessContext<C> where C: Context {
         iter_blocks_stream_context: C::IterBlocksStream,
         next_block_id: block::Id,
     },
+}
+
+impl<C> cmp::PartialEq for ReadBlockContext<C> where C: Context, C::ReadBlock: PartialEq, C::IterBlocksStream: PartialEq {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                ReadBlockContext::Process(ReadBlockProcessContext::External(a)),
+                ReadBlockContext::Process(ReadBlockProcessContext::External(b)),
+            ) =>
+                a == b,
+            (
+                ReadBlockContext::Process(ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context: a, .. }),
+                ReadBlockContext::Process(ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context: b, .. }),
+            ) =>
+                a == b,
+            (
+                ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps: a, }),
+                ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps: b, }),
+            ) =>
+                a == b,
+            _ =>
+                false,
+        }
+    }
 }
 
 impl<C> fmt::Debug for ReadBlockContext<C> where C: Context {
@@ -142,6 +182,22 @@ pub enum DeleteBlockContext<C> {
         defrag_gaps: DefragGaps,
         block_bytes: Bytes,
     },
+}
+
+impl<C> cmp::PartialEq for DeleteBlockContext<C> where C: PartialEq {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (DeleteBlockContext::External(a), DeleteBlockContext::External(b)) =>
+                a == b,
+            (
+                DeleteBlockContext::Defrag { defrag_gaps: dga, block_bytes: bba, },
+                DeleteBlockContext::Defrag { defrag_gaps: dgb, block_bytes: bbb, },
+            ) =>
+                dga == dgb && bba == bbb,
+            _ =>
+                false,
+        }
+    }
 }
 
 impl<C> fmt::Debug for DeleteBlockContext<C> {

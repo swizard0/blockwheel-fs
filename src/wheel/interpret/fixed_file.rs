@@ -52,8 +52,8 @@ use crate::{
     InterpretStats,
 };
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 #[derive(Debug)]
 pub enum Error {
