@@ -124,18 +124,26 @@ pub enum ReadBlockProcessContext<C> where C: Context {
     },
 }
 
+impl<C> cmp::PartialEq for ReadBlockProcessContext<C> where C: Context, C::ReadBlock: PartialEq, C::IterBlocksStream: PartialEq {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ReadBlockProcessContext::External(a), ReadBlockProcessContext::External(b)) =>
+                a == b,
+            (
+                ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context: a, .. },
+                ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context: b, .. },
+            ) =>
+                a == b,
+            _ =>
+                false,
+        }
+    }
+}
+
 impl<C> cmp::PartialEq for ReadBlockContext<C> where C: Context, C::ReadBlock: PartialEq, C::IterBlocksStream: PartialEq {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (
-                ReadBlockContext::Process(ReadBlockProcessContext::External(a)),
-                ReadBlockContext::Process(ReadBlockProcessContext::External(b)),
-            ) =>
-                a == b,
-            (
-                ReadBlockContext::Process(ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context: a, .. }),
-                ReadBlockContext::Process(ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context: b, .. }),
-            ) =>
+            (ReadBlockContext::Process(a), ReadBlockContext::Process(b)) =>
                 a == b,
             (
                 ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps: a, }),
@@ -148,13 +156,22 @@ impl<C> cmp::PartialEq for ReadBlockContext<C> where C: Context, C::ReadBlock: P
     }
 }
 
+impl<C> fmt::Debug for ReadBlockProcessContext<C> where C: Context {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReadBlockProcessContext::External(..) =>
+                write!(fmt, "ReadBlockProcessContext::External(..)"),
+            ReadBlockProcessContext::IterBlocks { .. } =>
+                write!(fmt, "ReadBlockProcessContext::IterBlocks(..)"),
+        }
+    }
+}
+
 impl<C> fmt::Debug for ReadBlockContext<C> where C: Context {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ReadBlockContext::Process(ReadBlockProcessContext::External(..)) =>
-                write!(fmt, "ReadBlockContext::Process(ReadBlockProcessContext::External(..))"),
-            ReadBlockContext::Process(ReadBlockProcessContext::IterBlocks { .. }) =>
-                write!(fmt, "ReadBlockContext::Process(ReadBlockProcessContext::IterBlocks(..))"),
+            ReadBlockContext::Process(context) =>
+                write!(fmt, "ReadBlockContext::Process({:?})", context),
             ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps, }) =>
                 write!(fmt, "ReadBlockContext::Defrag(ReadBlockDefragContext {{ defrag_gaps: {:?} }})", defrag_gaps),
         }

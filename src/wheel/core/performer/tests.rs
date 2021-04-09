@@ -22,6 +22,11 @@ use super::{
     IterBlocksItemOp,
     IterBlocksFinishOp,
     IterBlocksState,
+    PrepareInterpretTaskOp,
+    PrepareInterpretTaskKind,
+    PrepareInterpretTaskWriteBlock,
+    PrepareInterpretTaskDeleteBlock,
+    ProcessReadBlockTaskDoneOp,
     InterpretTask,
     DefragConfig,
     PerformerBuilderInit,
@@ -119,6 +124,9 @@ enum ExpectOp {
     DeleteBlockDone { expect_block_id: block::Id, expect_context: C, },
     IterBlocksItem { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: C, },
     IterBlocksFinish { expect_context: C, },
+    PrepareInterpretTaskWriteBlock { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: task::WriteBlockContext<C>, },
+    PrepareInterpretTaskDeleteBlock { expect_block_id: block::Id, expect_context: task::DeleteBlockContext<C>, },
+    ProcessReadBlockTaskDone { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: task::ReadBlockProcessContext<Context>, },
 }
 
 #[allow(dead_code)]
@@ -452,6 +460,81 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         ),
                 },
 
+            Op::Event(Event {
+                op: EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
+                    block_id,
+                    task: PrepareInterpretTaskKind::WriteBlock(PrepareInterpretTaskWriteBlock {
+                        block_bytes,
+                        context,
+                    }),
+                }),
+                performer,
+            }) =>
+                match script.pop() {
+                    None =>
+                        panic!(
+                            "unexpected script end on PrepareInterpretTaskOp/WriteBlock, expecting ExpectOp::PrepareInterpretTaskWriteBlock @ {}",
+                            script_len - script.len(),
+                        ),
+                    Some(ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock { expect_block_id, expect_block_bytes, expect_context, }))
+                        if expect_block_id == block_id && expect_block_bytes == block_bytes && expect_context == context =>
+                        performer.next(),
+                    Some(other_op) =>
+                        panic!(
+                            "expecting exact ExpectOp::PrepareInterpretTaskWriteBlock for PrepareInterpretTaskOp/WriteBlock but got {:?} @ {}",
+                            other_op, script_len - script.len(),
+                        ),
+                },
+
+            Op::Event(Event {
+                op: EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
+                    block_id,
+                    task: PrepareInterpretTaskKind::DeleteBlock(PrepareInterpretTaskDeleteBlock {
+                        context,
+                    }),
+                }),
+                performer,
+            }) =>
+                match script.pop() {
+                    None =>
+                        panic!(
+                            "unexpected script end on PrepareInterpretTaskOp/DeleteBlock, expecting ExpectOp::PrepareInterpretTaskDeleteBlock @ {}",
+                            script_len - script.len(),
+                        ),
+                    Some(ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock { expect_block_id, expect_context, }))
+                        if expect_block_id == block_id && expect_context == context =>
+                        performer.next(),
+                    Some(other_op) =>
+                        panic!(
+                            "expecting exact ExpectOp::PrepareInterpretTaskDeleteBlock for PrepareInterpretTaskOp/DeleteBlock but got {:?} @ {}",
+                            other_op, script_len - script.len(),
+                        ),
+                },
+
+            Op::Event(Event {
+                op: EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
+                    block_header,
+                    block_bytes,
+                    context,
+                    ..
+                }),
+                performer,
+            }) =>
+                match script.pop() {
+                    None =>
+                        panic!(
+                            "unexpected script end on ProcessReadBlockTaskDoneOp, expecting ExpectOp::ProcessReadBlockTaskDone @ {}",
+                            script_len - script.len(),
+                        ),
+                    Some(ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone { expect_block_id, expect_block_bytes, expect_context, }))
+                        if expect_block_id == block_header.block_id && expect_block_bytes == block_bytes && expect_context == context =>
+                        performer.next(),
+                    Some(other_op) =>
+                        panic!(
+                            "expecting exact ExpectOp::ProcessReadBlockTaskDone for ProcessReadBlockTaskDoneOp but got {:?} @ {}",
+                            other_op, script_len - script.len(),
+                        ),
+                },
         };
     }
 }
