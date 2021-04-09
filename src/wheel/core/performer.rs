@@ -2,6 +2,7 @@ use std::mem;
 
 use alloc_pool::bytes::{
     Bytes,
+    BytesMut,
     BytesPool,
 };
 
@@ -199,7 +200,6 @@ pub struct IterBlocksFinishOp<C> {
 pub struct InterpretTask<C> where C: Context {
     pub offset: u64,
     pub task: task::Task<C>,
-    pub force_terminator: bool,
     pub next: InterpretTaskNext<C>,
 }
 
@@ -378,12 +378,12 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         self.inner.incoming_interpreter(task_done)
     }
 
-    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_task: task::WriteBlock<C::WriteBlock>) -> Op<C> {
-        self.inner.prepared_write_block_done(block_id, write_block_task)
+    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_bytes: BytesMut, context: task::WriteBlockContext<C::WriteBlock>) -> Op<C> {
+        self.inner.prepared_write_block_done(block_id, write_block_bytes, context)
     }
 
-    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_task: task::DeleteBlock<C::DeleteBlock>) -> Op<C> {
-        self.inner.prepared_delete_block_done(block_id, delete_block_task)
+    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_bytes: BytesMut, context: task::DeleteBlockContext<C::DeleteBlock>) -> Op<C> {
+        self.inner.prepared_delete_block_done(block_id, delete_block_bytes, context)
     }
 
     pub fn process_read_block_done(mut self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {
@@ -422,12 +422,12 @@ impl<C> PollRequestNext<C> where C: Context {
         )
     }
 
-    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_task: task::WriteBlock<C::WriteBlock>) -> Op<C> {
-        self.inner.prepared_write_block_done(block_id, write_block_task)
+    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_bytes: BytesMut, context: task::WriteBlockContext<C::WriteBlock>) -> Op<C> {
+        self.inner.prepared_write_block_done(block_id, write_block_bytes, context)
     }
 
-    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_task: task::DeleteBlock<C::DeleteBlock>) -> Op<C> {
-        self.inner.prepared_delete_block_done(block_id, delete_block_task)
+    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_bytes: BytesMut, context: task::DeleteBlockContext<C::DeleteBlock>) -> Op<C> {
+        self.inner.prepared_delete_block_done(block_id, delete_block_bytes, context)
     }
 
     pub fn process_read_block_done(mut self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {
@@ -996,20 +996,41 @@ impl<C> Inner<C> where C: Context {
         }))
     }
 
-    fn prepared_write_block_done(mut self, block_id: block::Id, write_block_task: task::WriteBlock<C::WriteBlock>) -> Op<C> {
+    fn prepared_write_block_done(
+        mut self,
+        block_id: block::Id,
+        write_block_bytes: BytesMut,
+        context: task::WriteBlockContext<C::WriteBlock>,
+    )
+        -> Op<C>
+    {
         let block_get = self.schema.block_get();
         let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
         lens.push_task(
-            task::Task { block_id, kind: task::TaskKind::WriteBlock(write_block_task), },
+            task::Task {
+                block_id,
+                kind: task::TaskKind::WriteBlock(task::WriteBlock {
+                    write_block_bytes: write_block_bytes.freeze(),
+                    commit: task::Commit::None,
+                    context,
+                }),
+            },
             block_get,
         );
         lens.enqueue(block_get);
         Op::Idle(Performer { inner: self, })
     }
 
-    fn prepared_delete_block_done(mut self, block_id: block::Id, delete_block_task: task::DeleteBlock<C::DeleteBlock>) -> Op<C> {
+    fn prepared_delete_block_done(
+        mut self,
+        block_id: block::Id,
+        delete_block_bytes: BytesMut,
+        context: task::DeleteBlockContext<C::DeleteBlock>,
+    )
+        -> Op<C>
+    {
         let mut block_get = self.schema.block_get();
-        if let task::DeleteBlockContext::Defrag { defrag_gaps, .. } = &delete_block_task.context {
+        if let task::DeleteBlockContext::Defrag { defrag_gaps, .. } = &context {
             let block_entry = block_get.by_id(&block_id).unwrap();
             let mut block_entry_get = BlockEntryGet::new(block_entry);
             if !defrag_gaps.is_still_relevant(&block_id, &mut block_entry_get) {
@@ -1019,7 +1040,14 @@ impl<C> Inner<C> where C: Context {
         }
         let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
         lens.push_task(
-            task::Task { block_id, kind: task::TaskKind::DeleteBlock(delete_block_task), },
+            task::Task {
+                block_id,
+                kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                    delete_block_bytes: delete_block_bytes.freeze(),
+                    commit: task::Commit::None,
+                    context,
+                }),
+            },
             block_get,
         );
         lens.enqueue(self.schema.block_get());
@@ -1124,6 +1152,7 @@ impl<C> Inner<C> where C: Context {
                                             block_id: block_id.clone(),
                                             kind: task::TaskKind::WriteBlock(task::WriteBlock {
                                                 write_block_bytes: block_bytes.clone(),
+                                                commit: task::Commit::None,
                                                 context: task::WriteBlockContext::Defrag,
                                             }),
                                         },
@@ -1182,10 +1211,10 @@ impl<C> Inner<C> where C: Context {
                                     block_id: block_id.clone(),
                                     kind: task::TaskKind::ReadBlock(task::ReadBlock {
                                         block_header: block_header.clone(),
-                                        context: task::ReadBlockContext::IterBlocks {
+                                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
                                             iter_blocks_stream_context,
                                             next_block_id: block_id.next(),
-                                        },
+                                        }),
                                     }),
                                 },
                                 self.schema.block_get(),
@@ -1227,12 +1256,15 @@ impl<C> Inner<C> where C: Context {
                             continue;
                         },
                 }
-                let force_terminator = match &mut task_kind {
-                    task::TaskKind::WriteBlock(task::WriteBlock { .. }) |
-                    task::TaskKind::DeleteBlock(task::DeleteBlock { .. }) =>
-                        self.schema.is_last_block(&lens.block_id()),
+
+                match &mut task_kind {
+                    task::TaskKind::WriteBlock(task::WriteBlock { commit, .. }) |
+                    task::TaskKind::DeleteBlock(task::DeleteBlock { commit, .. }) =>
+                        if self.schema.is_last_block(&lens.block_id()) {
+                            *commit = task::Commit::WithTerminator;
+                        },
                     task::TaskKind::ReadBlock(..) =>
-                        false,
+                        (),
                 };
 
                 self.bg_task.state = BackgroundTaskState::Await {
@@ -1244,7 +1276,6 @@ impl<C> Inner<C> where C: Context {
                         block_id: lens.block_id().clone(),
                         kind: task_kind,
                     },
-                    force_terminator,
                     next: InterpretTaskNext {
                         inner: self,
                     },

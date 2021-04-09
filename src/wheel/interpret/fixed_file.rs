@@ -45,6 +45,8 @@ use crate::{
             Command,
             Request,
             DoneTask,
+            AppendTerminatorError,
+            block_append_terminator,
         },
     },
     InterpretStats,
@@ -65,7 +67,9 @@ pub enum Error {
     CommitTagSerialize(bincode::Error),
     TerminatorTagSerialize(bincode::Error),
     TombstoneTagSerialize(bincode::Error),
+    AppendTerminator(AppendTerminatorError),
     BlockWrite(io::Error),
+    TerminatorWrite(io::Error),
     BlockRead(io::Error),
     WheelPeerLost,
     DeviceSyncFlush(io::Error),
@@ -507,6 +511,10 @@ where C: Context,
 
     let mut fused_request_rx = request_rx.fuse();
 
+    let mut terminator_block_bytes = blocks_pool.lend();
+    block_append_terminator(&mut terminator_block_bytes)
+        .map_err(Error::AppendTerminator)?;
+
     let mut cursor = storage_layout.wheel_header_size as u64;
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
@@ -547,9 +555,20 @@ where C: Context,
                         let now = Instant::now();
                         wheel_file.write_all(&write_block.write_block_bytes).await
                             .map_err(Error::BlockWrite)?;
+                        cursor += write_block.write_block_bytes.len() as u64;
+
+                        match write_block.commit {
+                            task::Commit::None =>
+                                (),
+                            task::Commit::WithTerminator => {
+                                wheel_file.write_all(&terminator_block_bytes).await
+                                    .map_err(Error::TerminatorWrite)?;
+                                cursor += terminator_block_bytes.len() as u64;
+                            }
+                        }
+
                         timings.write_write += now.elapsed();
 
-                        cursor += write_block.write_block_bytes.len() as u64;
 
                         let task_done = task::Done {
                             current_offset: cursor,
@@ -573,8 +592,8 @@ where C: Context,
                         let now = Instant::now();
                         wheel_file.read_exact(&mut block_bytes).await
                             .map_err(Error::BlockRead)?;
-                        timings.read += now.elapsed();
                         cursor += block_bytes.len() as u64;
+                        timings.read += now.elapsed();
 
                         let task_done = task::Done {
                             current_offset: cursor,
@@ -595,8 +614,19 @@ where C: Context,
                         let now = Instant::now();
                         wheel_file.write_all(&delete_block.delete_block_bytes).await
                             .map_err(Error::BlockWrite)?;
-                        timings.write_delete += now.elapsed();
                         cursor += delete_block.delete_block_bytes.len() as u64;
+
+                        match delete_block.commit {
+                            task::Commit::None =>
+                                (),
+                            task::Commit::WithTerminator => {
+                                wheel_file.write_all(&terminator_block_bytes).await
+                                    .map_err(Error::TerminatorWrite)?;
+                                cursor += terminator_block_bytes.len() as u64;
+                            }
+                        }
+
+                        timings.write_delete += now.elapsed();
 
                         let task_done = task::Done {
                             current_offset: cursor,

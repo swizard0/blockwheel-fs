@@ -25,6 +25,8 @@ use crate::{
             Command,
             Request,
             DoneTask,
+            AppendTerminatorError,
+            block_append_terminator,
         },
     },
     InterpretStats,
@@ -36,6 +38,7 @@ pub enum Error {
     CommitTagSerialize(bincode::Error),
     TerminatorTagSerialize(bincode::Error),
     TombstoneTagSerialize(bincode::Error),
+    AppendTerminator(AppendTerminatorError),
     WheelPeerLost,
 }
 
@@ -149,6 +152,10 @@ where C: Context,
 
     let mut fused_request_rx = request_rx.fuse();
 
+    let mut terminator_block_bytes = blocks_pool.lend();
+    block_append_terminator(&mut terminator_block_bytes)
+        .map_err(Error::AppendTerminator)?;
+
     let mut cursor = io::Cursor::new(memory);
     cursor.set_position(storage_layout.wheel_header_size as u64);
 
@@ -182,7 +189,19 @@ where C: Context,
                         let slice = cursor.get_mut();
                         slice[start .. start + write_block.write_block_bytes.len()]
                             .copy_from_slice(&write_block.write_block_bytes);
-                        cursor.set_position(start as u64 + write_block.write_block_bytes.len() as u64);
+                        let mut written = write_block.write_block_bytes.len();
+
+                        match write_block.commit {
+                            task::Commit::None =>
+                                (),
+                            task::Commit::WithTerminator => {
+                                slice[start + written .. start + written + terminator_block_bytes.len()]
+                                    .copy_from_slice(&terminator_block_bytes);
+                                written += terminator_block_bytes.len();
+                            }
+                        }
+
+                        cursor.set_position(start as u64 + written as u64);
 
                         let task_done = task::Done {
                             current_offset: cursor.position(),
@@ -228,7 +247,19 @@ where C: Context,
                         let slice = cursor.get_mut();
                         slice[start .. start + delete_block.delete_block_bytes.len()]
                             .copy_from_slice(&delete_block.delete_block_bytes);
-                        cursor.set_position(start as u64 + delete_block.delete_block_bytes.len() as u64);
+                        let mut written = delete_block.delete_block_bytes.len();
+
+                        match delete_block.commit {
+                            task::Commit::None =>
+                                (),
+                            task::Commit::WithTerminator => {
+                                slice[start + written .. start + written + terminator_block_bytes.len()]
+                                    .copy_from_slice(&terminator_block_bytes);
+                                written += terminator_block_bytes.len();
+                            }
+                        }
+
+                        cursor.set_position(start as u64 + written as u64);
 
                         let task_done = task::Done {
                             current_offset: cursor.position(),

@@ -59,7 +59,6 @@ pub enum Error {
     InterpreterOpen(interpret::OpenError),
     InterpreterCreate(interpret::CreateError),
     InterpreterRun(interpret::RunError),
-    InterpreterAppendTerminator(interpret::AppendTerminatorError),
     InterpreterCrash,
     ThreadPoolGone,
     BlockPrepareWrite(interpret::BlockPrepareWriteJobError),
@@ -302,10 +301,8 @@ where J: edeltraud::Job + From<job::Job>,
                         Source::JobTask(Ok(JobDone::BlockPrepareWrite { block_id, context, done, })) =>
                             poll.next.prepared_write_block_done(
                                 block_id,
-                                task::WriteBlock {
-                                    write_block_bytes: done.write_block_bytes,
-                                    context,
-                                },
+                                done.write_block_bytes,
+                                context,
                             ),
                         Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, })) =>
                             poll.next.process_read_block_done(
@@ -316,10 +313,8 @@ where J: edeltraud::Job + From<job::Job>,
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
                             poll.next.prepared_delete_block_done(
                                 block_id,
-                                task::DeleteBlock {
-                                    delete_block_bytes: done.delete_block_bytes,
-                                    context,
-                                },
+                                done.delete_block_bytes,
+                                context,
                             ),
                         Source::JobTask(Err(error)) =>
                             return Err(ErrorSeverity::Fatal(error)),
@@ -418,10 +413,8 @@ where J: edeltraud::Job + From<job::Job>,
                         Source::JobTask(Ok(JobDone::BlockPrepareWrite { block_id, context, done, })) =>
                             poll.next.prepared_write_block_done(
                                 block_id,
-                                task::WriteBlock {
-                                    write_block_bytes: done.write_block_bytes,
-                                    context,
-                                },
+                                done.write_block_bytes,
+                                context,
                             ),
                         Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, })) =>
                             poll.next.process_read_block_done(
@@ -432,10 +425,8 @@ where J: edeltraud::Job + From<job::Job>,
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
                             poll.next.prepared_delete_block_done(
                                 block_id,
-                                task::DeleteBlock {
-                                    delete_block_bytes: done.delete_block_bytes,
-                                    context,
-                                },
+                                done.delete_block_bytes,
+                                context,
                             ),
                         Source::JobTask(Err(error)) =>
                             return Err(ErrorSeverity::Fatal(error)),
@@ -443,17 +434,7 @@ where J: edeltraud::Job + From<job::Job>,
                 }
             },
 
-            performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, mut task, force_terminator, next, })) => {
-                match &mut task {
-                    task::Task { kind: task::TaskKind::WriteBlock(task::WriteBlock { write_block_bytes: block_bytes, .. }), .. } |
-                    task::Task { kind: task::TaskKind::DeleteBlock(task::DeleteBlock { delete_block_bytes: block_bytes, .. }), .. }
-                    if force_terminator => {
-                        interpret::block_append_terminator(block_bytes)
-                            .map_err(|error| ErrorSeverity::Fatal(Error::InterpreterAppendTerminator(error)))?
-                    },
-                    _ =>
-                        (),
-                }
+            performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
                 let reply_rx = interpreter_pid.push_request(offset, task).await
                     .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
                 let performer = next.task_accepted(reply_rx.fuse());

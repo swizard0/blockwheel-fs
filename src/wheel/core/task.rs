@@ -40,8 +40,15 @@ impl<C> fmt::Debug for TaskKind<C> where C: Context {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Commit {
+    None,
+    WithTerminator,
+}
+
 pub struct WriteBlock<C> {
     pub write_block_bytes: Bytes,
+    pub commit: Commit,
     pub context: WriteBlockContext<C>,
 }
 
@@ -119,7 +126,8 @@ impl<C> fmt::Debug for ReadBlockContext<C> where C: Context {
 }
 
 pub struct DeleteBlock<C> {
-    pub delete_block_bytes: BytesMut,
+    pub delete_block_bytes: Bytes,
+    pub commit: Commit,
     pub context: DeleteBlockContext<C>,
 }
 
