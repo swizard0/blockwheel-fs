@@ -185,7 +185,7 @@ struct ExpectTaskWriteBlock {
 #[derive(Debug)]
 struct ExpectTaskReadBlock {
     block_header: storage::BlockHeader,
-    context: task::ReadBlockContext<Context>,
+    context: task::ReadBlockProcessContext<Context>,
 }
 
 #[derive(Debug)]
@@ -432,10 +432,18 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                     Some(ScriptOp::Expect(ExpectOp::ReadBlockDone { expect_block_bytes, expect_context, }))
                         if expect_block_bytes == block_bytes && expect_context == context =>
                         performer.next(),
+                    Some(ScriptOp::Expect(ExpectOp::ReadBlockDone { expect_block_bytes, expect_context, })) =>
+                        panic!(
+                            "expecting exact ExpectOp::ReadBlockDone for ReadBlockOp::Done but got ExpectOp::ReadBlockDone @ {}; {:?}/{:?}",
+                            script_len - script.len(),
+                            expect_block_bytes == block_bytes,
+                            expect_context == context,
+                        ),
                     Some(other_op) =>
                         panic!(
                             "expecting exact ExpectOp::ReadBlockDone for ReadBlockOp::Done but got {:?} @ {}",
-                            other_op, script_len - script.len(),
+                            other_op,
+                            script_len - script.len(),
                         ),
                 },
 
@@ -623,7 +631,12 @@ impl PartialEq<task::WriteBlock<C>> for ExpectTaskWriteBlock {
 impl PartialEq<task::ReadBlock<Context>> for ExpectTaskReadBlock {
     fn eq(&self, task: &task::ReadBlock<Context>) -> bool {
         self.block_header == task.block_header
-            && self.context == task.context
+            && match &task.context {
+                task::ReadBlockContext::Process(context) =>
+                    &self.context == context,
+                task::ReadBlockContext::Defrag(..) =>
+                    false,
+            }
     }
 }
 

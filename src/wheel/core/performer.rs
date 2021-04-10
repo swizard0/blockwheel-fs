@@ -431,15 +431,36 @@ impl<C> PollRequestNext<C> where C: Context {
         )
     }
 
-    pub fn prepared_write_block_done(self, block_id: block::Id, write_block_bytes: BytesMut, context: task::WriteBlockContext<C::WriteBlock>) -> Op<C> {
+    pub fn prepared_write_block_done(
+        self,
+        block_id: block::Id,
+        write_block_bytes: BytesMut,
+        context: task::WriteBlockContext<C::WriteBlock>,
+    )
+        -> Op<C>
+    {
         self.inner.prepared_write_block_done(block_id, write_block_bytes, context)
     }
 
-    pub fn prepared_delete_block_done(self, block_id: block::Id, delete_block_bytes: BytesMut, context: task::DeleteBlockContext<C::DeleteBlock>) -> Op<C> {
+    pub fn prepared_delete_block_done(
+        self,
+        block_id: block::Id,
+        delete_block_bytes: BytesMut,
+        context: task::DeleteBlockContext<C::DeleteBlock>,
+    )
+        -> Op<C>
+    {
         self.inner.prepared_delete_block_done(block_id, delete_block_bytes, context)
     }
 
-    pub fn process_read_block_done(self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {
+    pub fn process_read_block_done(
+        self,
+        block_id: block::Id,
+        block_bytes: Bytes,
+        context: task::ReadBlockProcessContext<C>,
+    )
+        -> Op<C>
+    {
         self.inner.process_read_block_done(block_id, block_bytes, context)
     }
 }
@@ -519,6 +540,8 @@ impl<C> Inner<C> where C: Context {
 
             DoneTask::ReadBlockRaw { block_header, block_bytes, context, } => {
                 let op = match self.schema.process_read_block_task_done(&block_header.block_id) {
+                    schema::ReadBlockTaskDoneOp::NotFound =>
+                        unreachable!(),
                     schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform) =>
                         match context {
 
@@ -563,20 +586,27 @@ impl<C> Inner<C> where C: Context {
 
                 self.lru_cache.insert(block_id.clone(), block_bytes.clone());
 
-                let op = match self.schema.process_read_block_task_done(&block_id) {
+                let maybe_op = match self.schema.process_read_block_task_done(&block_id) {
+                    schema::ReadBlockTaskDoneOp::NotFound =>
+                        match context {
+                            task::ReadBlockProcessContext::External(context) =>
+                                Some(EventOp::ReadBlock(TaskDoneOp { context, op: ReadBlockOp::NotFound, })),
+                            task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, } => {
+                                // skip this block, proceed with the next one
+                                self.iter_blocks_stream_next_op(next_block_id, iter_blocks_stream_context)
+                            },
+                        },
                     schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform) =>
                         match context {
-
                             task::ReadBlockProcessContext::External(context) =>
-                                EventOp::ReadBlock(TaskDoneOp {
+                                Some(EventOp::ReadBlock(TaskDoneOp {
                                     context,
                                     op: ReadBlockOp::Done {
                                         block_bytes: block_bytes.clone(),
                                     },
-                                }),
-
+                                })),
                             task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, } =>
-                                EventOp::IterBlocksItem(IterBlocksItemOp {
+                                Some(EventOp::IterBlocksItem(IterBlocksItemOp {
                                     block_id: block_id.clone(),
                                     block_bytes: block_bytes.clone(),
                                     iter_blocks_state: IterBlocksState {
@@ -585,8 +615,7 @@ impl<C> Inner<C> where C: Context {
                                             block_id: next_block_id,
                                         },
                                     },
-                                }),
-
+                                })),
                         },
                 };
 
@@ -607,7 +636,11 @@ impl<C> Inner<C> where C: Context {
                     lens.enqueue(self.schema.block_get());
                 }
 
-                return Op::Event(Event { op, performer: Performer { inner: self, }, });
+                return if let Some(op) = maybe_op {
+                    Op::Event(Event { op, performer: Performer { inner: self, }, })
+                } else {
+                    Op::Idle(Performer { inner: self, })
+                };
             },
 
             DoneTask::DeleteBlockRegular { block_id, mut block_entry, freed_space_key, } => {
@@ -1184,33 +1217,35 @@ impl<C> Inner<C> where C: Context {
     }
 
     fn iter_blocks_stream_next(mut self, block_id_from: block::Id, iter_blocks_stream_context: C::IterBlocksStream) -> Op<C> {
+        if let Some(op) = self.iter_blocks_stream_next_op(block_id_from, iter_blocks_stream_context) {
+            Op::Event(Event { op, performer: Performer { inner: self, }, })
+        } else {
+            Op::Idle(Performer { inner: self, })
+        }
+    }
+
+    fn iter_blocks_stream_next_op(&mut self, block_id_from: block::Id, iter_blocks_stream_context: C::IterBlocksStream) -> Option<EventOp<C>> {
         match self.schema.next_block_id_from(block_id_from) {
             None =>
-                Op::Event(Event {
-                    op: EventOp::IterBlocksFinish(IterBlocksFinishOp {
-                        iter_blocks_stream_context,
-                    }),
-                    performer: Performer { inner: self, },
-                }),
+                Some(EventOp::IterBlocksFinish(IterBlocksFinishOp {
+                    iter_blocks_stream_context,
+                })),
 
             Some(block_id) =>
                 match self.schema.process_read_block_request(&block_id) {
 
                     schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) =>
                         if let Some(block_bytes) = self.lru_cache.get(&block_id) {
-                            Op::Event(Event {
-                                op: EventOp::IterBlocksItem(IterBlocksItemOp {
-                                    block_id: block_id.clone(),
-                                    block_bytes: block_bytes.clone(),
-                                    iter_blocks_state: IterBlocksState {
-                                        iter_blocks_stream_context,
-                                        iter_blocks_cursor: IterBlocksCursor {
-                                            block_id: block_id.next(),
-                                        },
+                            Some(EventOp::IterBlocksItem(IterBlocksItemOp {
+                                block_id: block_id.clone(),
+                                block_bytes: block_bytes.clone(),
+                                iter_blocks_state: IterBlocksState {
+                                    iter_blocks_stream_context,
+                                    iter_blocks_cursor: IterBlocksCursor {
+                                        block_id: block_id.next(),
                                     },
-                                }),
-                                performer: Performer { inner: self, },
-                            })
+                                },
+                            }))
                         } else {
                             let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                             lens.push_task(
@@ -1227,7 +1262,7 @@ impl<C> Inner<C> where C: Context {
                                 self.schema.block_get(),
                             );
                             lens.enqueue(self.schema.block_get());
-                            Op::Idle(Performer { inner: self, })
+                            None
                         },
 
                     schema::ReadBlockOp::NotFound =>

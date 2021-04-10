@@ -555,7 +555,8 @@ where C: Context,
                             task::Commit::WithTerminator => {
                                 wheel_file.write_all(&terminator_block_bytes).await
                                     .map_err(Error::TerminatorWrite)?;
-                                cursor += terminator_block_bytes.len() as u64;
+                                // note: do not count terminator in order to overwrite it during next write
+                                // cursor += terminator_block_bytes.len() as u64;
                             }
                         }
 
