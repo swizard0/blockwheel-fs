@@ -27,17 +27,34 @@ use crate::wheel::core::{
 fn script_simple_defrag() {
     let performer = with_defrag_config(Some(DefragConfig::new(1)));
     let script = vec![
+        // { }
         ScriptOp::Expect(ExpectOp::PollRequest),
+        // { 0: write req }
         ScriptOp::Do(DoOp::RequestIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx00")),
         }),
+        // { 0: prep write }
+        ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
+            expect_block_id: block::Id::init(),
+            expect_block_bytes: hello_world_bytes().freeze(),
+            expect_context: task::WriteBlockContext::External("ectx00"),
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        // { 0: prep write done }
+        ScriptOp::Do(DoOp::RequestIncomingPreparedWriteBlockDone {
+            block_id: block::Id::init(),
+            write_block_bytes: hello_world_bytes(),
+            context: task::WriteBlockContext::External("ectx00"),
+        }),
         ScriptOp::Expect(ExpectOp::Idle),
+        // { 0: write task in progress @ 24 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 24,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes().freeze(),
+                    write_block_bytes: hello_world_bytes().freeze(),
+                    commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::External("ectx00"),
                 }),
             },
@@ -46,14 +63,33 @@ fn script_simple_defrag() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
             expect_context: "ictx00",
         }),
+
+        // { 0: write task in progress @ 24, 1: write req }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx01")),
-            interpreter_context: "ictx01",
+            interpreter_context: "ictx00",
+        }),
+        // { 0: write task in progress @ 24, 1: prep write }
+        ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
+            expect_block_id: block::Id::init().next(),
+            expect_block_bytes: hello_world_bytes().freeze(),
+            expect_context: task::WriteBlockContext::External("ectx01"),
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx00",
+        }),
+        // { 0: write task in progress @ 24, 1: prep write done }
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
+            block_id: block::Id::init().next(),
+            write_block_bytes: hello_world_bytes(),
+            context: task::WriteBlockContext::External("ectx01"),
+            interpreter_context: "ictx00",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx01",
+            expect_context: "ictx00",
         }),
+        // { 0: write task done @ 24 .. 85, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 85,
@@ -69,20 +105,23 @@ fn script_simple_defrag() {
             expect_block_id: block::Id::init(),
             expect_context: "ectx00",
         }),
+        // { 0: ready @ 24 .. 85, 1: write task in progress @ 85 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 85,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes().freeze(),
+                    write_block_bytes: hello_world_bytes().freeze(),
+                    commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::External("ectx01"),
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx02", }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx01", }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx02",
+            expect_context: "ictx01",
         }),
+        // { 0: ready @ 24 .. 85, 1: write task done @ 85 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 130,
@@ -98,24 +137,43 @@ fn script_simple_defrag() {
             expect_block_id: block::Id::init().next(),
             expect_context: "ectx01",
         }),
+        // { 0: ready @ 24 .. 85, 1: ready @ 85 }
         ScriptOp::Expect(ExpectOp::PollRequest),
+
+        // { 0: ready @ 24 .. 85, 0: delete req, 1: ready @ 85 }
         ScriptOp::Do(DoOp::RequestIncomingRequest {
             request: proto::Request::DeleteBlock(proto::RequestDeleteBlock { block_id: block::Id::init(), context: "ectx02", }),
         }),
+        // { 0: ready @ 24 .. 85, 0: prep delete, 1: ready @ 85 }
+        ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock {
+            expect_block_id: block::Id::init(),
+            expect_context: task::DeleteBlockContext::External("ectx02"),
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        // { 0: ready @ 24 .. 85, 0: prep delete done, 1: ready @ 85 }
+        ScriptOp::Do(DoOp::RequestIncomingPreparedDeleteBlockDone {
+            block_id: block::Id::init(),
+            delete_block_bytes: hello_world_bytes(),
+            context: task::DeleteBlockContext::External("ectx02"),
+        }),
         ScriptOp::Expect(ExpectOp::Idle),
+        // { 0: ready @ 24 .. 85, 0: delete task in progress @ 24, 1: ready @ 85 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 24,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
+                    delete_block_bytes: hello_world_bytes().freeze(),
+                    commit: task::Commit::None,
                     context: task::DeleteBlockContext::External("ectx02"),
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx03", }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx02", }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx03",
+            expect_context: "ictx02",
         }),
+        // { 0: ready @ 24 .. 85, 0: delete task done @ 24, 1: ready @ 85 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 24,
@@ -131,6 +189,8 @@ fn script_simple_defrag() {
             expect_block_id: block::Id::init(),
             expect_context: "ectx02",
         }),
+
+        // { 1: ready @ 85 }
         // defragmentation has started
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 85,
@@ -142,11 +202,69 @@ fn script_simple_defrag() {
                         block_size: 13,
                         ..Default::default()
                     },
-                    context: task::ReadBlockContext::Defrag {
+                    context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
                         defrag_gaps: DefragGaps::Both {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
                             space_key_right: SpaceKey { space_available: 6, serial: 3 },
                         },
+                    }),
+                }),
+            },
+        }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx03", }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
+            expect_context: "ictx03",
+        }),
+        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
+            task_done: task::Done {
+                current_offset: 85,
+                task: task::TaskDone {
+                    block_id: block::Id::init().next(),
+                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                        block_bytes: hello_world_bytes(),
+                        context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
+                            defrag_gaps: DefragGaps::OnlyLeft {
+                                space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                            },
+                        }),
+                    }),
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock {
+            expect_block_id: block::Id::init().next(),
+            expect_context: task::DeleteBlockContext::Defrag {
+                block_bytes: hello_world_bytes().freeze(),
+                defrag_gaps: DefragGaps::OnlyLeft {
+                    space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingPreparedDeleteBlockDone {
+            block_id: block::Id::init().next(),
+            delete_block_bytes: hello_world_bytes(),
+            context: task::DeleteBlockContext::Defrag {
+                block_bytes: hello_world_bytes().freeze(),
+                defrag_gaps: DefragGaps::OnlyLeft {
+                    space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                },
+            },
+        }),
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::InterpretTask {
+            expect_offset: 85,
+            expect_task: ExpectTask {
+                block_id: block::Id::init().next(),
+                kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
+                    delete_block_bytes: hello_world_bytes().freeze(),
+                    commit: task::Commit::WithTerminator,
+                    context: task::DeleteBlockContext::Defrag {
+                        defrag_gaps: DefragGaps::OnlyLeft {
+                            space_key_left: SpaceKey { space_available: 61, serial: 4, },
+                        },
+                        block_bytes: hello_world_bytes().freeze(),
                     },
                 }),
             },
@@ -160,50 +278,12 @@ fn script_simple_defrag() {
                 current_offset: 85,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
-                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                        block_bytes: hello_world_bytes().freeze(),
-                        block_crc: block::crc(&hello_world_bytes()),
-                        context: task::ReadBlockContext::Defrag {
-                            defrag_gaps: DefragGaps::OnlyLeft {
-                                space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                            },
-                        },
-                    }),
-                },
-            },
-        }),
-        ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
-            expect_task: ExpectTask {
-                block_id: block::Id::init().next(),
-                kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
-                    context: task::DeleteBlockContext::Defrag {
-                        defrag_gaps: DefragGaps::OnlyLeft {
-                            space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                        },
-                        block_bytes: hello_world_bytes().freeze(),
-                        block_crc: block::crc(&hello_world_bytes()),
-                    },
-                }),
-            },
-        }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx05", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx05",
-        }),
-        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
-            task_done: task::Done {
-                current_offset: 85,
-                task: task::TaskDone {
-                    block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
                         context: task::DeleteBlockContext::Defrag {
                             defrag_gaps: DefragGaps::OnlyLeft {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
                             },
                             block_bytes: hello_world_bytes().freeze(),
-                            block_crc: block::crc(&hello_world_bytes()),
                         },
                     }),
                 },
@@ -215,14 +295,15 @@ fn script_simple_defrag() {
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes().freeze(),
+                    write_block_bytes: hello_world_bytes().freeze(),
+                    commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::Defrag,
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx06", }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx05", }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx06",
+            expect_context: "ictx05",
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -237,8 +318,20 @@ fn script_simple_defrag() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequest),
+
         ScriptOp::Do(DoOp::RequestIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx03")),
+        }),
+        ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
+            expect_block_id: block::Id::init().next().next(),
+            expect_block_bytes: hello_world_bytes().freeze(),
+            expect_context: task::WriteBlockContext::External("ectx03"),
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+        ScriptOp::Do(DoOp::RequestIncomingPreparedWriteBlockDone {
+            block_id: block::Id::init().next().next(),
+            write_block_bytes: hello_world_bytes(),
+            context: task::WriteBlockContext::External("ectx03"),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -246,14 +339,15 @@ fn script_simple_defrag() {
             expect_task: ExpectTask {
                 block_id: block::Id::init().next().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
-                    block_bytes: hello_world_bytes().freeze(),
+                    write_block_bytes: hello_world_bytes().freeze(),
+                    commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::External("ectx03"),
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx07", }),
+        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx06", }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx07",
+            expect_context: "ictx06",
         }),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {

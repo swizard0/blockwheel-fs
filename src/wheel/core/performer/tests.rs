@@ -39,7 +39,7 @@ use super::{
 use crate::Info;
 
 mod basic;
-// mod defrag;
+mod defrag;
 // mod defrag_disturb;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -185,7 +185,7 @@ struct ExpectTaskWriteBlock {
 #[derive(Debug)]
 struct ExpectTaskReadBlock {
     block_header: storage::BlockHeader,
-    context: task::ReadBlockProcessContext<Context>,
+    context: task::ReadBlockContext<Context>,
 }
 
 #[derive(Debug)]
@@ -631,12 +631,7 @@ impl PartialEq<task::WriteBlock<C>> for ExpectTaskWriteBlock {
 impl PartialEq<task::ReadBlock<Context>> for ExpectTaskReadBlock {
     fn eq(&self, task: &task::ReadBlock<Context>) -> bool {
         self.block_header == task.block_header
-            && match &task.context {
-                task::ReadBlockContext::Process(context) =>
-                    &self.context == context,
-                task::ReadBlockContext::Defrag(..) =>
-                    false,
-            }
+            && self.context == task.context
     }
 }
 

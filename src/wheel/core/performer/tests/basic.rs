@@ -195,7 +195,7 @@ fn script_basic() {
                         block_size: 13,
                         ..Default::default()
                     },
-                    context: task::ReadBlockProcessContext::External("ectx03"),
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External("ectx03")),
                 }),
             },
         }),
@@ -389,7 +389,7 @@ fn script_basic() {
                         block_size: 13,
                         ..Default::default()
                     },
-                    context: task::ReadBlockProcessContext::External("ectx0a"),
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External("ectx0a")),
                 }),
             },
         }),
@@ -587,10 +587,10 @@ fn script_iter() {
                         block_size: 13,
                         ..Default::default()
                     },
-                    context: task::ReadBlockProcessContext::IterBlocks {
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
                         iter_blocks_stream_context: "sctx00",
                         next_block_id: block::Id::init().next(),
-                    },
+                    }),
                 }),
             },
         }),
@@ -657,10 +657,10 @@ fn script_iter() {
                         block_size: 13,
                         ..Default::default()
                     },
-                    context: task::ReadBlockProcessContext::IterBlocks {
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
                         iter_blocks_stream_context: "sctx00",
                         next_block_id: block::Id::init().next().next(),
-                    },
+                    }),
                 }),
             },
         }),
