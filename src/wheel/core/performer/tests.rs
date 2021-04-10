@@ -40,7 +40,7 @@ use crate::Info;
 
 mod basic;
 mod defrag;
-// mod defrag_disturb;
+mod defrag_disturb;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Context;
@@ -566,8 +566,8 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectOp::PrepareInterpretTaskDeleteBlock for PrepareInterpretTaskOp/DeleteBlock but got {:?} @ {}",
-                            other_op, script_len - script.len(),
+                            "expecting exact ExpectOp::PrepareInterpretTaskDeleteBlock for PrepareInterpretTaskOp/DeleteBlock/{:?} but got {:?} @ {}",
+                            context, other_op, script_len - script.len(),
                         ),
                 },
 

@@ -222,8 +222,8 @@ impl<C> fmt::Debug for DeleteBlockContext<C> {
         match self {
             DeleteBlockContext::External(..) =>
                 write!(fmt, "DeleteBlockContext::External(..)"),
-            DeleteBlockContext::Defrag { .. } =>
-                write!(fmt, "DeleteBlockContext::Defrag"),
+            DeleteBlockContext::Defrag { defrag_gaps, .. } =>
+                write!(fmt, "DeleteBlockContext::Defrag {{ defrag_gaps: {:?}, .. }}", defrag_gaps),
         }
     }
 }
