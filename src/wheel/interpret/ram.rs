@@ -192,8 +192,7 @@ where C: Context,
                             task::Commit::WithTerminator => {
                                 slice[start + written .. start + written + terminator_block_bytes.len()]
                                     .copy_from_slice(&terminator_block_bytes);
-                                // note: do not count terminator in order to overwrite it during next write
-                                // written += terminator_block_bytes.len();
+                                // note: do not count terminator length in cursor in order to overwrite it during next write
                             }
                         }
 
@@ -243,7 +242,7 @@ where C: Context,
                         let slice = cursor.get_mut();
                         slice[start .. start + delete_block.delete_block_bytes.len()]
                             .copy_from_slice(&delete_block.delete_block_bytes);
-                        let mut written = delete_block.delete_block_bytes.len();
+                        let written = delete_block.delete_block_bytes.len();
 
                         match delete_block.commit {
                             task::Commit::None =>
@@ -251,7 +250,7 @@ where C: Context,
                             task::Commit::WithTerminator => {
                                 slice[start + written .. start + written + terminator_block_bytes.len()]
                                     .copy_from_slice(&terminator_block_bytes);
-                                written += terminator_block_bytes.len();
+                                // note: do not count terminator length in cursor in order to overwrite it during next write
                             }
                         }
 

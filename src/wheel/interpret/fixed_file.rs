@@ -508,7 +508,7 @@ where C: Context,
     let mut cursor = storage_layout.wheel_header_size as u64;
     wheel_file.seek(io::SeekFrom::Start(cursor)).await
         .map_err(Error::WheelFileInitialSeek)?;
-
+    let mut pending_terminator = false;
     let mut timings = Timings::default();
     loop {
         let now_loop = Instant::now();
@@ -525,11 +525,20 @@ where C: Context,
             Event::Command(Some(Command::Request(Request { offset, task, reply_tx, }))) => {
                 stats.count_total += 1;
 
+                let file_cursor = wheel_file.seek(io::SeekFrom::Current(0)).await
+                    .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
+                assert_eq!(file_cursor, cursor);
+
                 if cursor != offset {
                     if cursor < offset {
                         stats.count_seek_forward += 1;
                     } else if cursor > offset {
                         stats.count_seek_backward += 1;
+                        if pending_terminator {
+                            wheel_file.write_all(&terminator_block_bytes).await
+                                .map_err(Error::TerminatorWrite)?;
+                            pending_terminator = false;
+                        }
                     }
                     let now = Instant::now();
                     wheel_file.seek(io::SeekFrom::Start(offset)).await
@@ -546,20 +555,14 @@ where C: Context,
                         wheel_file.write_all(&write_block.write_block_bytes).await
                             .map_err(Error::BlockWrite)?;
                         cursor += write_block.write_block_bytes.len() as u64;
-
-                        match write_block.commit {
-                            task::Commit::None =>
-                                (),
-                            task::Commit::WithTerminator => {
-                                wheel_file.write_all(&terminator_block_bytes).await
-                                    .map_err(Error::TerminatorWrite)?;
-                                // note: do not count terminator in order to overwrite it during next write
-                                // cursor += terminator_block_bytes.len() as u64;
-                            }
-                        }
-
                         timings.write_write += now.elapsed();
 
+                        pending_terminator = match write_block.commit {
+                            task::Commit::None =>
+                                false,
+                            task::Commit::WithTerminator =>
+                                true,
+                        };
 
                         let task_done = task::Done {
                             current_offset: cursor,
@@ -606,18 +609,14 @@ where C: Context,
                         wheel_file.write_all(&delete_block.delete_block_bytes).await
                             .map_err(Error::BlockWrite)?;
                         cursor += delete_block.delete_block_bytes.len() as u64;
-
-                        match delete_block.commit {
-                            task::Commit::None =>
-                                (),
-                            task::Commit::WithTerminator => {
-                                wheel_file.write_all(&terminator_block_bytes).await
-                                    .map_err(Error::TerminatorWrite)?;
-                                cursor += terminator_block_bytes.len() as u64;
-                            }
-                        }
-
                         timings.write_delete += now.elapsed();
+
+                        pending_terminator = match delete_block.commit {
+                            task::Commit::None =>
+                                false,
+                            task::Commit::WithTerminator =>
+                                true,
+                        };
 
                         let task_done = task::Done {
                             current_offset: cursor,
