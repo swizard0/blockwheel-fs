@@ -264,9 +264,6 @@ impl<C> GenServer<C> where C: Context {
                     error,
                 }),
         };
-
-        println!(" ;; open | file_size = {:?}", file_size);
-
         let mut wheel_file = fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -309,8 +306,6 @@ impl<C> GenServer<C> where C: Context {
             });
         }
 
-        println!(" ;; open | wheel_header = {:?}", wheel_header);
-
         // read blocks and gaps
         let (mut builder, mut work_block) = performer_builder.start_fill();
 
@@ -330,9 +325,6 @@ impl<C> GenServer<C> where C: Context {
                         builder.storage_layout().block_header_size,
                         file_size,
                     );
-
-                    println!(" ;; open | zero read, finishing");
-
                     break;
                 },
                 Ok(bytes_read) =>
@@ -343,20 +335,11 @@ impl<C> GenServer<C> where C: Context {
                     return Err(WheelOpenError::LocateBlock(error)),
             };
             offset += bytes_read;
-
-            println!(" ;; open | read {} bytes, offset = {}", bytes_read, offset);
-
             let mut start = 0;
             while offset - start >= builder.storage_layout().block_header_size {
-
-                println!(" ;; open | poking @ {} ...", cursor);
-
                 let area = &work_block[start .. start + builder.storage_layout().block_header_size];
                 match bincode::deserialize_from::<_, storage::BlockHeader>(area) {
                     Ok(block_header) if block_header.magic == storage::BLOCK_MAGIC => {
-
-                        println!(" ;; open | block_header @ {} found: {:?}", cursor, block_header);
-
                         let try_read_block_status = try_read_block(
                             &mut wheel_file,
                             &mut work_block,
@@ -382,9 +365,6 @@ impl<C> GenServer<C> where C: Context {
                         match bincode::deserialize_from::<_, storage::TerminatorTag>(area) {
                             Ok(terminator_tag) if terminator_tag.magic == storage::TERMINATOR_TAG_MAGIC => {
                                 log::debug!("terminator found @ {:?}, loading done", cursor);
-
-                                println!(" ;; open | terminator found @ {}, terminating", cursor);
-
                                 break 'outer;
                             },
                             Ok(..) | Err(..) =>
