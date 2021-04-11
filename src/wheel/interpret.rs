@@ -136,7 +136,7 @@ pub fn block_prepare_write_job(
         block_size: block_bytes.len(),
         ..Default::default()
     };
-    bincode::serialize_into(&mut ***write_block_bytes, &block_header)
+    bincode::serialize_into(&mut **write_block_bytes, &block_header)
         .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
     write_block_bytes.extend_from_slice(&block_bytes);
 
@@ -145,7 +145,7 @@ pub fn block_prepare_write_job(
         crc: block::crc(&block_bytes),
         ..Default::default()
     };
-    bincode::serialize_into(&mut ***write_block_bytes, &commit_tag)
+    bincode::serialize_into(&mut **write_block_bytes, &commit_tag)
         .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
 
     Ok(BlockPrepareWriteJobDone { write_block_bytes, })
@@ -176,7 +176,7 @@ pub fn block_prepare_delete_job(
     let mut delete_block_bytes = blocks_pool.lend();
 
     let tombstone_tag = storage::TombstoneTag::default();
-    bincode::serialize_into(&mut ***delete_block_bytes, &tombstone_tag)
+    bincode::serialize_into(&mut **delete_block_bytes, &tombstone_tag)
         .map_err(BlockPrepareDeleteJobError::TombstoneTagSerialize)?;
 
     Ok(BlockPrepareDeleteJobDone { delete_block_bytes, })
