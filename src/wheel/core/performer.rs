@@ -620,7 +620,6 @@ impl<C> Inner<C> where C: Context {
                 };
 
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
-                assert!(lens.pop_write_task(self.schema.block_get()).is_none());
                 if let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
                     match read_block.context {
                         task::ReadBlockContext::Process(process_context) =>
@@ -1070,28 +1069,48 @@ impl<C> Inner<C> where C: Context {
         -> Op<C>
     {
         let mut block_get = self.schema.block_get();
-        if let task::DeleteBlockContext::Defrag { defrag_gaps, .. } = &context {
-            let block_entry = block_get.by_id(&block_id).unwrap();
-            let mut block_entry_get = BlockEntryGet::new(block_entry);
-            if !defrag_gaps.is_still_relevant(&block_id, &mut block_entry_get) {
+        match (block_get.by_id(&block_id), context) {
+            (None, task::DeleteBlockContext::Defrag { .. }) => {
+                // block has been deleted already during defrag
                 cancel_defrag_task(self.defrag.as_mut().unwrap());
-                 return Op::Idle(Performer { inner: self, });
-            }
-        }
-        let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
-        lens.push_task(
-            task::Task {
-                block_id,
-                kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
-                    delete_block_bytes: delete_block_bytes.freeze(),
-                    commit: task::Commit::None,
-                    context,
-                }),
+                Op::Idle(Performer { inner: self, })
             },
-            block_get,
-        );
-        lens.enqueue(self.schema.block_get());
-        Op::Idle(Performer { inner: self, })
+            (None, task::DeleteBlockContext::External(context)) => {
+                // block has been deleted already during request
+                Op::Event(Event {
+                    op: EventOp::DeleteBlock(TaskDoneOp {
+                        context,
+                        op: DeleteBlockOp::NotFound,
+                    }),
+                    performer: Performer { inner: self, },
+                })
+            },
+            (Some(block_entry), context) => {
+                if let task::DeleteBlockContext::Defrag { defrag_gaps, .. } = &context {
+                    let mut block_entry_get = BlockEntryGet::new(block_entry);
+                    if !defrag_gaps.is_still_relevant(&block_id, &mut block_entry_get) {
+                        // block has been moved somewhere during defrag
+                        cancel_defrag_task(self.defrag.as_mut().unwrap());
+                        return Op::Idle(Performer { inner: self, })
+                    }
+                }
+
+                let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
+                lens.push_task(
+                    task::Task {
+                        block_id,
+                        kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+                            delete_block_bytes: delete_block_bytes.freeze(),
+                            commit: task::Commit::None,
+                            context,
+                        }),
+                    },
+                    block_get,
+                );
+                lens.enqueue(self.schema.block_get());
+                Op::Idle(Performer { inner: self, })
+            },
+        }
     }
 
     fn process_read_block_done(mut self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {

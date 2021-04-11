@@ -7,6 +7,7 @@ use crate::wheel::core::{
     task::{
         queue::{
             TasksHead,
+            PendingReadContextBag,
         },
         Task,
         TaskKind,
@@ -22,7 +23,6 @@ use crate::wheel::core::{
 pub struct Tasks<C> where C: Context {
     tasks_write: Set<WriteBlock<C::WriteBlock>>,
     tasks_read: Forest1<ReadBlock<C>>,
-    tasks_read_defrag: Forest1<ReadBlock<C>>,
     tasks_delete: Forest1<DeleteBlock<C::DeleteBlock>>,
     tasks_flush: Vec<Flush<C::Flush>>,
 }
@@ -32,7 +32,6 @@ impl<C> Tasks<C> where C: Context {
         Tasks {
             tasks_write: Set::new(),
             tasks_read: Forest1::new(),
-            tasks_read_defrag: Forest1::new(),
             tasks_delete: Forest1::new(),
             tasks_flush: Vec::new(),
         }
@@ -55,10 +54,10 @@ impl<C> Tasks<C> where C: Context {
                 },
             TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Defrag(..), .. }) =>
                 if let Some(prev_ref) = tasks_head.head_read_defrag.take() {
-                    let node_ref = self.tasks_read_defrag.make_node(prev_ref, read_block);
+                    let node_ref = self.tasks_read.make_node(prev_ref, read_block);
                     tasks_head.head_read_defrag = Some(node_ref);
                 } else {
-                    let node_ref = self.tasks_read_defrag.make_root(read_block);
+                    let node_ref = self.tasks_read.make_root(read_block);
                     tasks_head.head_read_defrag = Some(node_ref);
                 },
             TaskKind::DeleteBlock(delete_block) =>
@@ -75,7 +74,6 @@ impl<C> Tasks<C> where C: Context {
     pub fn is_empty_tasks(&self) -> bool {
         self.tasks_write.is_empty()
             && self.tasks_read.is_empty()
-            && self.tasks_read_defrag.is_empty()
             && self.tasks_delete.is_empty()
     }
 
@@ -104,44 +102,49 @@ impl<C> Tasks<C> where C: Context {
     }
 
     pub fn pop_write(&mut self, tasks_head: &mut TasksHead) -> Option<WriteBlock<C::WriteBlock>> {
-        if let Some(node_ref) = tasks_head.head_write.take() {
-            Some(self.tasks_write.remove(node_ref).unwrap())
-        } else {
-            None
-        }
+        let node_ref = tasks_head.head_write.take()?;
+        Some(self.tasks_write.remove(node_ref).unwrap())
     }
 
     pub fn pop_read(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C>> {
-        if let Some(node_ref) = tasks_head.head_read.take() {
-            let node = self.tasks_read.remove(node_ref).unwrap();
-            tasks_head.head_read = node.parent;
-            Some(node.item)
-        } else {
-            None
-        }
+        let node_ref = tasks_head.head_read.take()?;
+        let node = self.tasks_read.remove(node_ref).unwrap();
+        tasks_head.head_read = node.parent;
+        Some(node.item)
     }
 
     pub fn pop_read_defrag(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C>> {
-        if let Some(node_ref) = tasks_head.head_read_defrag.take() {
-            let node = self.tasks_read_defrag.remove(node_ref).unwrap();
-            tasks_head.head_read_defrag = node.parent;
-            Some(node.item)
-        } else {
-            None
-        }
+        let node_ref = tasks_head.head_read_defrag.take()?;
+        let node = self.tasks_read.remove(node_ref).unwrap();
+        tasks_head.head_read_defrag = node.parent;
+        Some(node.item)
     }
 
     pub fn pop_delete(&mut self, tasks_head: &mut TasksHead) -> Option<DeleteBlock<C::DeleteBlock>> {
-        if let Some(node_ref) = tasks_head.head_delete.take() {
-            let node = self.tasks_delete.remove(node_ref).unwrap();
-            tasks_head.head_delete = node.parent;
-            Some(node.item)
-        } else {
-            None
-        }
+        let node_ref = tasks_head.head_delete.take()?;
+        let node = self.tasks_delete.remove(node_ref).unwrap();
+        tasks_head.head_delete = node.parent;
+        Some(node.item)
     }
 
     pub fn pop_flush(&mut self) -> Option<Flush<C::Flush>> {
         self.tasks_flush.pop()
+    }
+
+    pub fn push_pending_read_context(&mut self, read_block: ReadBlock<C>, pending_read_contexts: &mut PendingReadContextBag) {
+        if let Some(prev_ref) = pending_read_contexts.head.take() {
+            let node_ref = self.tasks_read.make_node(prev_ref, read_block);
+            pending_read_contexts.head = Some(node_ref);
+        } else {
+            let node_ref = self.tasks_read.make_root(read_block);
+            pending_read_contexts.head = Some(node_ref);
+        }
+    }
+
+    pub fn pop_pending_read_context(&mut self, pending_read_contexts: &mut PendingReadContextBag) -> Option<ReadBlock<C>> {
+        let node_ref = pending_read_contexts.head.take()?;
+        let node = self.tasks_read.remove(node_ref).unwrap();
+        pending_read_contexts.head = node.parent;
+        Some(node.item)
     }
 }

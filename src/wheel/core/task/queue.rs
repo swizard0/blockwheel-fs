@@ -107,6 +107,14 @@ impl<C> Queue<C> where C: Context {
     pub fn pop_flush(&mut self) -> Option<Flush<C::Flush>> {
         self.tasks.pop_flush()
     }
+
+    pub fn push_pending_read_context(&mut self, read_block: ReadBlock<C>, pending_read_contexts: &mut PendingReadContextBag) {
+        self.tasks.push_pending_read_context(read_block, pending_read_contexts);
+    }
+
+    pub fn pop_pending_read_context(&mut self, pending_read_contexts: &mut PendingReadContextBag) -> Option<ReadBlock<C>> {
+        self.tasks.pop_pending_read_context(pending_read_contexts)
+    }
 }
 
 pub struct BlockLens<'q, C> where C: Context {
@@ -172,6 +180,11 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
         let block_entry = block_get.by_id(&self.block_id)?;
         self.queue.tasks.pop_delete(&mut block_entry.tasks_head)
     }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
+pub struct PendingReadContextBag {
+    head: Option<Ref>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
