@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use alloc_pool::bytes::{
     Bytes,
     BytesMut,
@@ -126,7 +128,7 @@ enum ExpectOp {
     IterBlocksFinish { expect_context: C, },
     PrepareInterpretTaskWriteBlock { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: task::WriteBlockContext<C>, },
     PrepareInterpretTaskDeleteBlock { expect_block_id: block::Id, expect_context: task::DeleteBlockContext<C>, },
-    ProcessReadBlockTaskDone { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_pending_contexts: task::queue::PendingReadContextBag, },
+    ProcessReadBlockTaskDone { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_pending_contexts_key: &'static str, },
 }
 
 #[allow(dead_code)]
@@ -150,7 +152,7 @@ enum DoOp {
     RequestAndInterpreterIncomingProcessReadBlockDone {
         block_id: block::Id,
         block_bytes: Bytes,
-        pending_contexts: task::queue::PendingReadContextBag,
+        pending_contexts_key: &'static str,
         interpreter_context: C,
     },
     RequestIncomingRequest { request: proto::Request<Context>, },
@@ -160,7 +162,7 @@ enum DoOp {
     RequestIncomingProcessReadBlockDone {
         block_id: block::Id,
         block_bytes: Bytes,
-        pending_contexts: task::queue::PendingReadContextBag,
+        pending_contexts_key: &'static str,
     },
     TaskAccept { interpreter_context: C, },
     StreamReady { iter_context: C, },
@@ -202,6 +204,8 @@ struct ExpectTaskDeleteBlock {
 fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
     let script_len = script.len();
     script.reverse();
+
+    let mut pending_contexts_table: HashMap<&'static str, task::queue::PendingReadContextBag> = HashMap::new();
 
     let mut op = performer.next();
     loop {
@@ -245,10 +249,12 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingProcessReadBlockDone {
                                 block_id,
                                 block_bytes,
-                                pending_contexts,
+                                pending_contexts_key,
                                 interpreter_context,
-                            })) =>
-                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts, interpreter_context),
+                            })) => {
+                                let pending_contexts = pending_contexts_table.remove(pending_contexts_key).unwrap();
+                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts, interpreter_context)
+                            },
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
                                 block_id,
                                 delete_block_bytes,
@@ -284,8 +290,10 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 poll.next.incoming_iter_blocks(iter_blocks_state),
                             Some(ScriptOp::Do(DoOp::RequestIncomingPreparedWriteBlockDone { block_id, write_block_bytes, context, })) =>
                                 poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
-                            Some(ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone { block_id, block_bytes, pending_contexts, })) =>
-                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
+                            Some(ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone { block_id, block_bytes, pending_contexts_key, })) => {
+                                let pending_contexts = pending_contexts_table.remove(pending_contexts_key).unwrap();
+                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts)
+                            },
                             Some(ScriptOp::Do(DoOp::RequestIncomingPreparedDeleteBlockDone { block_id, delete_block_bytes, context, })) =>
                                 poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
                             Some(other_op) =>
@@ -590,9 +598,12 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                             "unexpected script end on ProcessReadBlockTaskDoneOp, expecting ExpectOp::ProcessReadBlockTaskDone @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone { expect_block_id, expect_block_bytes, expect_pending_contexts, }))
-                        if expect_block_id == block_header.block_id && expect_block_bytes == block_bytes && expect_pending_contexts == pending_contexts =>
-                        performer.next(),
+                    Some(ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone { expect_block_id, expect_block_bytes, expect_pending_contexts_key, }))
+                        if expect_block_id == block_header.block_id && expect_block_bytes == block_bytes => {
+                            let prev = pending_contexts_table.insert(expect_pending_contexts_key, pending_contexts);
+                            assert_eq!(prev, None);
+                            performer.next()
+                        },
                     Some(other_op) =>
                         panic!(
                             "expecting exact ExpectOp::ProcessReadBlockTaskDone for ProcessReadBlockTaskDoneOp but got {:?} @ {}",
