@@ -217,7 +217,6 @@ fn script_defrag_disturb() {
             expect_context: "ictx03",
         }),
 
-
         // request user block read as well (expect delay until defrag read)
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init().next(), context: "ectx03", }),
@@ -272,15 +271,13 @@ fn script_defrag_disturb() {
             },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock {
+        ScriptOp::Expect(ExpectOp::Idle),
+        ScriptOp::Expect(ExpectOp::Idle),
+        // user read data immediately ready, proceed with process
+        ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone {
             expect_block_id: block::Id::init().next(),
-            expect_context: task::DeleteBlockContext::Defrag {
-                block_bytes: hello_world_bytes().freeze(),
-                defrag_gaps: DefragGaps::Both {
-                    space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 6, serial: 3 },
-                },
-            },
+            expect_block_bytes: hello_world_bytes().freeze(),
+            expect_pending_contexts_key: "pk0",
         }),
         // proceed with user write
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -295,22 +292,6 @@ fn script_defrag_disturb() {
             },
         }),
         ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx07", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx07",
-        }),
-        ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
-            block_id: block::Id::init().next(),
-            delete_block_bytes: hello_world_bytes(),
-            context: task::DeleteBlockContext::Defrag {
-                block_bytes: hello_world_bytes().freeze(),
-                defrag_gaps: DefragGaps::Both {
-                    space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 6, serial: 3 },
-                },
-            },
-            interpreter_context: "ictx07",
-        }),
-        ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
             expect_context: "ictx07",
         }),
@@ -329,7 +310,7 @@ fn script_defrag_disturb() {
             expect_block_id: block::Id::init().next().next(),
             expect_context: "ectx04",
         }),
-        // proceed with user read task
+        // new defragmentation has started with adjusted parameters
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 85,
             expect_task: ExpectTask {
@@ -340,7 +321,12 @@ fn script_defrag_disturb() {
                         block_size: 13,
                         ..Default::default()
                     },
-                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External("ectx03")),
+                    context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
+                        defrag_gaps: DefragGaps::Both {
+                            space_key_left: SpaceKey { space_available: 7, serial: 5, },
+                            space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                        },
+                    }),
                 }),
             },
         }),
@@ -355,18 +341,18 @@ fn script_defrag_disturb() {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                         block_bytes: hello_world_bytes(),
-                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External("ectx03")),
+                        context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
+                            defrag_gaps: DefragGaps::Both {
+                                space_key_left: SpaceKey { space_available: 7, serial: 5, },
+                                space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                            },
+                        }),
                     }),
                 },
             },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone {
-            expect_block_id: block::Id::init().next(),
-            expect_block_bytes: hello_world_bytes().freeze(),
-            expect_context: task::ReadBlockProcessContext::External("ectx03"),
-        }),
-        // new defragmentation has started with adjusted parameters (prep delete task, no read)
+        // defragmentation proceeded with delete block
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock {
             expect_block_id: block::Id::init().next(),
             expect_context: task::DeleteBlockContext::Defrag {
@@ -378,10 +364,11 @@ fn script_defrag_disturb() {
             },
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
+        // finish user read
         ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone {
             block_id: block::Id::init().next(),
             block_bytes: hello_world_bytes().freeze(),
-            context: task::ReadBlockProcessContext::External("ectx03"),
+            pending_contexts_key: "pk0",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::ReadBlockDone {
