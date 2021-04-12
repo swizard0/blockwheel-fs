@@ -26,6 +26,8 @@ use tokio::{
     },
 };
 
+use bincode::Options;
+
 use alloc_pool::bytes::{
     BytesPool,
 };
@@ -184,10 +186,12 @@ impl<C> GenServer<C> where C: Context {
             size_bytes: params.init_wheel_size_bytes as u64,
             ..storage::WheelHeader::default()
         };
-        bincode::serialize_into(performer_builder.work_block_cleared(), &wheel_header)
+        storage::bincode_options()
+            .serialize_into(performer_builder.work_block_cleared(), &wheel_header)
             .map_err(WheelCreateError::HeaderSerialize)?;
         let terminator_tag = storage::TerminatorTag::default();
-        bincode::serialize_into(performer_builder.work_block(), &terminator_tag)
+        storage::bincode_options()
+            .serialize_into(performer_builder.work_block(), &terminator_tag)
             .map_err(WheelCreateError::TerminatorTagSerialize)?;
 
         let mut cursor = performer_builder.work_block().len();
@@ -285,7 +289,8 @@ impl<C> GenServer<C> where C: Context {
             .extend((0 .. wheel_header_size).map(|_| 0));
         wheel_file.read_exact(performer_builder.work_block()).await
             .map_err(WheelOpenError::HeaderRead)?;
-        let wheel_header: storage::WheelHeader = bincode::deserialize_from(&performer_builder.work_block()[..])
+        let wheel_header: storage::WheelHeader = storage::bincode_options()
+            .deserialize_from(&performer_builder.work_block()[..])
             .map_err(WheelOpenError::HeaderDeserialize)?;
         if wheel_header.magic != storage::WHEEL_MAGIC {
             return Err(WheelOpenError::HeaderInvalidMagic {
@@ -305,6 +310,8 @@ impl<C> GenServer<C> where C: Context {
                 actual: file_size,
             });
         }
+
+        log::debug!("wheel_header read: {:?}", wheel_header);
 
         // read blocks and gaps
         let (mut builder, mut work_block) = performer_builder.start_fill();
@@ -338,7 +345,7 @@ impl<C> GenServer<C> where C: Context {
             let mut start = 0;
             while offset - start >= builder.storage_layout().block_header_size {
                 let area = &work_block[start .. start + builder.storage_layout().block_header_size];
-                match bincode::deserialize_from::<_, storage::BlockHeader>(area) {
+                match storage::bincode_options().deserialize_from::<_, storage::BlockHeader>(area) {
                     Ok(block_header) if block_header.magic == storage::BLOCK_MAGIC => {
                         let try_read_block_status = try_read_block(
                             &mut wheel_file,
@@ -355,21 +362,28 @@ impl<C> GenServer<C> where C: Context {
                             ReadBlockStatus::NotABlock { next_cursor, } =>
                                 cursor = next_cursor,
                             ReadBlockStatus::BlockFound { next_cursor, } => {
+
+                                log::debug!("restored block @ {}: {:?}, next_cursor = {}", cursor, block_header, next_cursor);
+
                                 builder.push_block(cursor, block_header);
                                 cursor = next_cursor;
                             },
                         }
                         break;
                     },
-                    Ok(..) | Err(..) =>
-                        match bincode::deserialize_from::<_, storage::TerminatorTag>(area) {
-                            Ok(terminator_tag) if terminator_tag.magic == storage::TERMINATOR_TAG_MAGIC => {
-                                log::debug!("terminator found @ {:?}, loading done", cursor);
-                                break 'outer;
-                            },
-                            Ok(..) | Err(..) =>
-                                (),
-                        },
+                    Ok(..) | Err(..) => {
+
+                        panic!("failed to deserialize block @ {}", cursor);
+
+                        // match storage::bincode_options().deserialize_from::<_, storage::TerminatorTag>(area) {
+                        //     Ok(terminator_tag) if terminator_tag.magic == storage::TERMINATOR_TAG_MAGIC => {
+                        //         log::debug!("terminator found @ {:?}, loading done", cursor);
+                        //         break 'outer;
+                        //     },
+                        //     Ok(..) | Err(..) =>
+                        //         (),
+                        // }
+                    },
                 };
                 start += 1;
                 cursor += 1;
@@ -429,19 +443,25 @@ async fn try_read_block(
     -> Result<ReadBlockStatus, WheelOpenError>
 {
     // seek to commit tag position
-    wheel_file.seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64 + block_header.block_size as u64)).await
+    let commit_offset = wheel_file
+        .seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64 + block_header.block_size as u64))
+        .await
         .map_err(WheelOpenError::BlockSeekCommitTag)?;
     // read commit tag
     work_block.resize(storage_layout.commit_tag_size, 0);
     wheel_file.read_exact(work_block).await
         .map_err(WheelOpenError::BlockReadCommitTag)?;
-    let commit_tag: storage::CommitTag = bincode::deserialize_from(&work_block[..])
+    let commit_tag: storage::CommitTag = storage::bincode_options()
+        .deserialize_from(&work_block[..])
         .map_err(WheelOpenError::CommitTagDeserialize)?;
     if commit_tag.magic != storage::COMMIT_TAG_MAGIC {
         // not a block: rewind and step
         let next_cursor = cursor + 1;
         wheel_file.seek(io::SeekFrom::Start(next_cursor)).await
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
+
+        log::debug!("NotABlock because of commit magic {:?} != {:?}", commit_tag.magic, storage::COMMIT_TAG_MAGIC);
+
         return Ok(ReadBlockStatus::NotABlock { next_cursor, });
     }
     if commit_tag.block_id != block_header.block_id {
@@ -449,6 +469,9 @@ async fn try_read_block(
         let next_cursor = cursor + 1;
         wheel_file.seek(io::SeekFrom::Start(next_cursor)).await
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
+
+        log::debug!("NotABlock because of commit block_id {:?} != header.block_id {:?}", commit_tag.block_id, block_header.block_id);
+
         return Ok(ReadBlockStatus::NotABlock { next_cursor, });
     }
     if block_header.block_size > work_block.capacity() {
@@ -474,6 +497,9 @@ async fn try_read_block(
     // seek to the end of commit tag
     let next_cursor = wheel_file.seek(io::SeekFrom::Current(storage_layout.commit_tag_size as i64)).await
         .map_err(WheelOpenError::BlockSeekEnd)?;
+
+    assert_eq!(next_cursor, commit_offset + storage_layout.commit_tag_size as u64);
+
     Ok(ReadBlockStatus::BlockFound { next_cursor, })
 }
 
@@ -525,6 +551,7 @@ where C: Context,
             Event::Command(Some(Command::Request(Request { offset, task, reply_tx, }))) => {
                 stats.count_total += 1;
 
+                // TODO: remove
                 let file_cursor = wheel_file.seek(io::SeekFrom::Current(0)).await
                     .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
                 assert_eq!(file_cursor, cursor);
@@ -535,6 +562,7 @@ where C: Context,
                     } else if cursor > offset {
                         stats.count_seek_backward += 1;
                         if pending_terminator {
+                            log::debug!("writing pending_terminator during seek @ {}", cursor);
                             wheel_file.write_all(&terminator_block_bytes).await
                                 .map_err(Error::TerminatorWrite)?;
                             pending_terminator = false;
@@ -636,6 +664,14 @@ where C: Context,
 
             Event::Command(Some(Command::DeviceSync { reply_tx, })) => {
                 let now = Instant::now();
+                if pending_terminator {
+                    log::debug!("writing pending_terminator during flush @ {}", cursor);
+                    wheel_file.write_all(&terminator_block_bytes).await
+                        .map_err(Error::TerminatorWrite)?;
+                    pending_terminator = false;
+                } else {
+                    log::debug!("flushed with no pending_terminator (cursor @ {})", cursor);
+                }
                 wheel_file.flush().await
                     .map_err(Error::DeviceSyncFlush)?;
                 timings.flush += now.elapsed();

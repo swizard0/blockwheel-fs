@@ -3,6 +3,8 @@ use serde_derive::{
     Deserialize,
 };
 
+use bincode::Options;
+
 use super::{
     block,
 };
@@ -115,22 +117,26 @@ impl Layout {
     pub fn calculate(mut work_block: &mut Vec<u8>) -> Result<Layout, LayoutError> {
         let mut cursor = work_block.len();
 
-        bincode::serialize_into(&mut work_block, &WheelHeader::default())
+        bincode_options()
+            .serialize_into(&mut work_block, &WheelHeader::default())
             .map_err(LayoutError::WheelHeaderSerialize)?;
         let wheel_header_size = work_block.len() - cursor;
         cursor = work_block.len();
 
-        bincode::serialize_into(&mut work_block, &BlockHeader::default())
+        bincode_options()
+            .serialize_into(&mut work_block, &BlockHeader::default())
             .map_err(LayoutError::BlockHeaderSerialize)?;
         let block_header_size = work_block.len() - cursor;
         cursor = work_block.len();
 
-        bincode::serialize_into(&mut work_block, &CommitTag::default())
+        bincode_options()
+            .serialize_into(&mut work_block, &CommitTag::default())
             .map_err(LayoutError::CommitTagSerialize)?;
         let commit_tag_size = work_block.len() - cursor;
         cursor = work_block.len();
 
-        bincode::serialize_into(&mut work_block, &TerminatorTag::default())
+        bincode_options()
+            .serialize_into(&mut work_block, &TerminatorTag::default())
             .map_err(LayoutError::TerminatorTagSerialize)?;
         let terminator_tag_size = work_block.len() - cursor;
 
@@ -152,4 +158,12 @@ impl Layout {
         self.block_header_size
             + self.commit_tag_size
     }
+}
+
+pub fn bincode_options() -> impl Options {
+    bincode::DefaultOptions::new()
+        .with_no_limit()
+        .with_big_endian()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
 }

@@ -7,6 +7,8 @@ use futures::{
     StreamExt,
 };
 
+use bincode::Options;
+
 use alloc_pool::bytes::{
     BytesPool,
 };
@@ -79,11 +81,13 @@ impl<C> GenServer<C> where C: Context {
             size_bytes: params.init_wheel_size_bytes as u64,
             ..storage::WheelHeader::default()
         };
-        bincode::serialize_into(&mut memory, &wheel_header)
+        storage::bincode_options()
+            .serialize_into(&mut memory, &wheel_header)
             .map_err(WheelCreateError::HeaderSerialize)?;
 
         let terminator_tag = storage::TerminatorTag::default();
-        bincode::serialize_into(&mut memory, &terminator_tag)
+        storage::bincode_options()
+            .serialize_into(&mut memory, &terminator_tag)
             .map_err(WheelCreateError::TerminatorTagSerialize)?;
 
         let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size

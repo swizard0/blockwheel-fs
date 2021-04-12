@@ -6,6 +6,8 @@ use futures::{
     SinkExt,
 };
 
+use bincode::Options;
+
 use alloc_pool::bytes::{
     Bytes,
     BytesMut,
@@ -98,7 +100,8 @@ pub enum AppendTerminatorError {
 }
 
 pub fn block_append_terminator(block_bytes: &mut BytesMut) -> Result<(), AppendTerminatorError> {
-    bincode::serialize_into(&mut ***block_bytes, &storage::TerminatorTag::default())
+    storage::bincode_options()
+        .serialize_into(&mut ***block_bytes, &storage::TerminatorTag::default())
         .map_err(AppendTerminatorError::TerminatorTagSerialize)
 }
 
@@ -136,7 +139,8 @@ pub fn block_prepare_write_job(
         block_size: block_bytes.len(),
         ..Default::default()
     };
-    bincode::serialize_into(&mut **write_block_bytes, &block_header)
+    storage::bincode_options()
+        .serialize_into(&mut **write_block_bytes, &block_header)
         .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
     write_block_bytes.extend_from_slice(&block_bytes);
 
@@ -145,7 +149,8 @@ pub fn block_prepare_write_job(
         crc: block::crc(&block_bytes),
         ..Default::default()
     };
-    bincode::serialize_into(&mut **write_block_bytes, &commit_tag)
+    storage::bincode_options()
+        .serialize_into(&mut **write_block_bytes, &commit_tag)
         .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
 
     Ok(BlockPrepareWriteJobDone { write_block_bytes, })
@@ -176,7 +181,8 @@ pub fn block_prepare_delete_job(
     let mut delete_block_bytes = blocks_pool.lend();
 
     let tombstone_tag = storage::TombstoneTag::default();
-    bincode::serialize_into(&mut **delete_block_bytes, &tombstone_tag)
+    storage::bincode_options()
+        .serialize_into(&mut **delete_block_bytes, &tombstone_tag)
         .map_err(BlockPrepareDeleteJobError::TombstoneTagSerialize)?;
 
     Ok(BlockPrepareDeleteJobDone { delete_block_bytes, })
@@ -235,9 +241,9 @@ pub fn block_process_read_job(
     let block_buffer_start = storage_layout.block_header_size;
     let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
 
-    let storage_block_header: storage::BlockHeader = bincode::deserialize_from(
-        &block_bytes[.. block_buffer_start],
-    ).map_err(BlockProcessReadJobError::BlockHeaderDeserialize)?;
+    let storage_block_header: storage::BlockHeader = storage::bincode_options()
+        .deserialize_from(&block_bytes[.. block_buffer_start])
+        .map_err(BlockProcessReadJobError::BlockHeaderDeserialize)?;
     if storage_block_header.block_id != block_header.block_id {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::BlockIdMismatch {
             block_id_expected: block_header.block_id,
@@ -252,9 +258,9 @@ pub fn block_process_read_job(
             block_size_actual: storage_block_header.block_size,
         }));
     }
-    let commit_tag: storage::CommitTag = bincode::deserialize_from(
-        &block_bytes[block_buffer_end ..],
-    ).map_err(BlockProcessReadJobError::CommitTagDeserialize)?;
+    let commit_tag: storage::CommitTag = storage::bincode_options()
+        .deserialize_from(&block_bytes[block_buffer_end ..])
+        .map_err(BlockProcessReadJobError::CommitTagDeserialize)?;
     if commit_tag.block_id != block_header.block_id {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
             block_id_expected: block_header.block_id,

@@ -49,7 +49,7 @@ fn stress_fixed_file() {
     // let work_block_size_bytes = 16 * 1024;
     // let init_wheel_size_bytes = 1 * 1024 * 1024;
     let work_block_size_bytes = 128 * 1024;
-    let init_wheel_size_bytes = 1 * 1024 * 1024 * 1024;
+    let init_wheel_size_bytes = 128 * 1024 * 1024;
 
     let params = Params {
         interpreter: InterpreterParams::FixedFile(FixedFileInterpreterParams {
@@ -64,7 +64,7 @@ fn stress_fixed_file() {
 
     let limits = Limits {
         active_tasks: 1024,
-        actions: 128 * 1024,
+        actions: 64 * 1024,
         // active_tasks: 128,
         // actions: 1024,
         block_size_bytes: work_block_size_bytes - 256,
@@ -348,6 +348,7 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
             blocks_size_info: info.data_bytes_used,
         });
     }
+    let mut actual_count = 0;
     loop {
         match iter_blocks.blocks_rx.next().await {
             None =>
@@ -362,12 +363,14 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
                         if expected_crc != provided_crc {
                             return Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, });
                         }
+                        actual_count += 1;
                     },
                 },
             Some(IterBlocksItem::NoMoreBlocks) =>
                 break,
         }
     }
+    assert_eq!(actual_count, iter_blocks.blocks_total_count);
 
     Ok::<_, Error>(())
 }
