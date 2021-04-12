@@ -40,12 +40,16 @@ use super::{
 
 #[test]
 fn stress_fixed_file() {
+    env_logger::init();
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
-    let work_block_size_bytes = 16 * 1024;
-    let init_wheel_size_bytes = 1 * 1024 * 1024;
+    // let work_block_size_bytes = 16 * 1024;
+    // let init_wheel_size_bytes = 1 * 1024 * 1024;
+    let work_block_size_bytes = 128 * 1024;
+    let init_wheel_size_bytes = 1 * 1024 * 1024 * 1024;
 
     let params = Params {
         interpreter: InterpreterParams::FixedFile(FixedFileInterpreterParams {
@@ -59,8 +63,10 @@ fn stress_fixed_file() {
     };
 
     let limits = Limits {
-        active_tasks: 128,
-        actions: 1024,
+        active_tasks: 1024,
+        actions: 128 * 1024,
+        // active_tasks: 128,
+        // actions: 1024,
         block_size_bytes: work_block_size_bytes - 256,
     };
 
@@ -217,6 +223,10 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
         }
     }
 
+    let info = pid.info().await
+        .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
+    log::info!("start | info: {:?}", info);
+
     loop {
         if actions_counter >= limits.actions {
             std::mem::drop(done_tx);
@@ -320,6 +330,8 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
         .map_err(|ero::NoProcError| Error::WheelGoneDuringFlush)?;
     let info = pid.info().await
         .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
+
+    log::info!("finish | flushed: {:?}", info);
 
     // backwards check with iterator
     let mut iter_blocks = pid.iter_blocks().await
