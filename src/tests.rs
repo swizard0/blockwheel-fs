@@ -173,7 +173,8 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
         WriteBlock(BlockTank),
         WriteBlockNoSpace,
         DeleteBlock,
-        ReadBlock,
+        ReadBlockSuccess,
+        ReadBlockNotFound(block::Id),
     }
 
     fn spawn_task<T>(
@@ -200,10 +201,15 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
                 counter.writes += 1;
                 active_tasks_counter.writes -= 1;
             },
-            TaskDone::ReadBlock => {
+            TaskDone::ReadBlockSuccess => {
                 counter.reads += 1;
                 active_tasks_counter.reads -= 1;
             }
+            TaskDone::ReadBlockNotFound(block_id) => {
+                counter.reads += 1;
+                active_tasks_counter.reads -= 1;
+                assert!(blocks.iter().find(|tank| tank.block_id == block_id).is_none());
+            },
             TaskDone::DeleteBlock => {
                 counter.deletes += 1;
                 active_tasks_counter.deletes -= 1;
@@ -287,14 +293,20 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
             let BlockTank { block_id, block_bytes, } = blocks[block_index].clone();
             let mut blockwheel_pid = pid.clone();
             spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-                let block_bytes_read = blockwheel_pid.read_block(block_id.clone()).await
-                    .map_err(Error::ReadBlock)?;
-                let expected_crc = block::crc(&block_bytes);
-                let provided_crc = block::crc(&block_bytes_read);
-                if expected_crc != provided_crc {
-                    Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, })
-                } else {
-                    Ok(TaskDone::ReadBlock)
+                match blockwheel_pid.read_block(block_id.clone()).await {
+                    Ok(block_bytes_read) => {
+                        let expected_crc = block::crc(&block_bytes);
+                        let provided_crc = block::crc(&block_bytes_read);
+                        if expected_crc != provided_crc {
+                            Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, })
+                        } else {
+                            Ok(TaskDone::ReadBlockSuccess)
+                        }
+                    },
+                    Err(super::ReadBlockError::NotFound) =>
+                        Ok(TaskDone::ReadBlockNotFound(block_id)),
+                    Err(error) =>
+                        Err(Error::ReadBlock(error)),
                 }
             });
             active_tasks_counter.reads += 1;

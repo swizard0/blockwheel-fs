@@ -590,7 +590,6 @@ impl<C> Inner<C> where C: Context {
                 };
 
                 let mut lens = self.tasks_queue.focus_block_id(block_header.block_id.clone());
-                assert!(lens.pop_write_task(self.schema.block_get()).is_none());
                 let maybe_context = lens.pop_read_task(self.schema.block_get())
                     .map(|read_block| read_block.context);
                 self.done_task = DoneTask::ReadBlockRaw {
