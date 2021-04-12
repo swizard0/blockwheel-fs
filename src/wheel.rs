@@ -304,11 +304,11 @@ where J: edeltraud::Job + From<job::Job>,
                                 context,
                                 fused_interpret_result_rx,
                             ),
-                        Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, })) =>
+                        Source::JobTask(Ok(JobDone::BlockProcessRead { pending_contexts, done, })) =>
                             poll.next.process_read_block_done(
                                 done.block_id,
                                 done.block_bytes,
-                                context,
+                                pending_contexts,
                                 fused_interpret_result_rx,
                             ),
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
@@ -418,11 +418,11 @@ where J: edeltraud::Job + From<job::Job>,
                                 done.write_block_bytes,
                                 context,
                             ),
-                        Source::JobTask(Ok(JobDone::BlockProcessRead { context, done, })) =>
+                        Source::JobTask(Ok(JobDone::BlockProcessRead { pending_contexts, done, })) =>
                             poll.next.process_read_block_done(
                                 done.block_id,
                                 done.block_bytes,
-                                context,
+                                pending_contexts,
                             ),
                         Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
                             poll.next.prepared_delete_block_done(
@@ -607,7 +607,7 @@ where J: edeltraud::Job + From<job::Job>,
                 ),
                 performer,
             }) => {
-                job_tasks.push(make_job_task(
+                job_tasks.push(make_job_task::<Context, _>(
                     JobTask::BlockPrepareWrite {
                         block_id,
                         block_bytes,
@@ -647,7 +647,7 @@ where J: edeltraud::Job + From<job::Job>,
                         storage_layout,
                         block_header,
                         block_bytes,
-                        context,
+                        pending_contexts,
                     },
                 ),
                 performer,
@@ -657,7 +657,7 @@ where J: edeltraud::Job + From<job::Job>,
                         storage_layout,
                         block_header,
                         block_bytes,
-                        context,
+                        pending_contexts,
                     },
                     state.thread_pool.clone(),
                 ));
@@ -718,7 +718,7 @@ enum JobTask<C> where C: context::Context {
         storage_layout: storage::Layout,
         block_header: storage::BlockHeader,
         block_bytes: Bytes,
-        context: task::ReadBlockProcessContext<C>,
+        pending_contexts: task::queue::PendingReadContextBag,
     },
     BlockPrepareDelete {
         block_id: block::Id,
@@ -734,7 +734,7 @@ enum JobDone<C> where C: context::Context {
         done: interpret::BlockPrepareWriteJobDone,
     },
     BlockProcessRead {
-        context: task::ReadBlockProcessContext<C>,
+        pending_contexts: task::queue::PendingReadContextBag,
         done: interpret::BlockProcessReadJobDone,
     },
     BlockPrepareDelete {
@@ -771,7 +771,7 @@ where C: context::Context + Send,
             storage_layout,
             block_header,
             block_bytes,
-            context,
+            pending_contexts,
         } => {
             let job = job::Job::BlockProcessRead(interpret::BlockProcessReadJobArgs { storage_layout, block_header, block_bytes, });
             let job_output = thread_pool.spawn(job).await
@@ -780,7 +780,7 @@ where C: context::Context + Send,
             let job::BlockProcessReadDone(block_process_read_result) = job_output.into();
             let done = block_process_read_result
                 .map_err(Error::BlockProcessRead)?;
-            Ok(JobDone::BlockProcessRead { context, done, })
+            Ok(JobDone::BlockProcessRead { pending_contexts, done, })
         },
 
         JobTask::BlockPrepareDelete { block_id, blocks_pool, context, } => {

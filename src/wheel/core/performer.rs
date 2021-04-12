@@ -51,22 +51,18 @@ enum DoneTask<C> where C: Context {
     ReadBlockRaw {
         block_header: storage::BlockHeader,
         block_bytes: Bytes,
-        context: task::ReadBlockContext<C>,
+        maybe_context: Option<task::ReadBlockContext<C>>,
+        pending_contexts: task::queue::PendingReadContextBag,
     },
     ReadBlockProcessed {
         block_id: block::Id,
-        block_bytes: Bytes,
-        context: task::ReadBlockProcessContext<C>,
+        maybe_block_bytes: Option<Bytes>,
+        pending_contexts: task::queue::PendingReadContextBag,
     },
     DeleteBlockRegular {
         block_id: block::Id,
         block_entry: BlockEntry,
         freed_space_key: SpaceKey,
-    },
-    DeleteBlockDefrag {
-        block_id: block::Id,
-        block_bytes: Bytes,
-        freed_space_key: Option<SpaceKey>,
     },
 }
 
@@ -117,7 +113,7 @@ pub enum EventOp<C> where C: Context {
     IterBlocksItem(IterBlocksItemOp<C::IterBlocksStream>),
     IterBlocksFinish(IterBlocksFinishOp<C::IterBlocksStream>),
     PrepareInterpretTask(PrepareInterpretTaskOp<C>),
-    ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp<C>),
+    ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp),
 }
 
 pub struct TaskDoneOp<C, O> {
@@ -173,11 +169,11 @@ pub struct PrepareInterpretTaskDeleteBlock<C> {
     pub context: task::DeleteBlockContext<C>,
 }
 
-pub struct ProcessReadBlockTaskDoneOp<C> where C: Context {
+pub struct ProcessReadBlockTaskDoneOp {
     pub storage_layout: storage::Layout,
     pub block_header: storage::BlockHeader,
     pub block_bytes: Bytes,
-    pub context: task::ReadBlockProcessContext<C>,
+    pub pending_contexts: task::queue::PendingReadContextBag,
 }
 
 #[derive(Debug)]
@@ -395,13 +391,13 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         mut self,
         block_id: block::Id,
         block_bytes: Bytes,
-        context: task::ReadBlockProcessContext<C>,
+        pending_contexts: task::queue::PendingReadContextBag,
         interpreter_context: C::Interpreter,
     )
         -> Op<C>
     {
         self.inner.rollback_bg_task_state(interpreter_context);
-        self.inner.process_read_block_done(block_id, block_bytes, context)
+        self.inner.process_read_block_done(block_id, block_bytes, pending_contexts)
     }
 
     pub fn incoming_iter_blocks(
@@ -457,11 +453,11 @@ impl<C> PollRequestNext<C> where C: Context {
         self,
         block_id: block::Id,
         block_bytes: Bytes,
-        context: task::ReadBlockProcessContext<C>,
+        pending_contexts: task::queue::PendingReadContextBag,
     )
         -> Op<C>
     {
-        self.inner.process_read_block_done(block_id, block_bytes, context)
+        self.inner.process_read_block_done(block_id, block_bytes, pending_contexts)
     }
 }
 
@@ -538,108 +534,131 @@ impl<C> Inner<C> where C: Context {
             DoneTask::None =>
                 (),
 
-            DoneTask::ReadBlockRaw { block_header, block_bytes, context, } => {
-                let op = match self.schema.process_read_block_task_done(&block_header.block_id) {
+            DoneTask::ReadBlockRaw { block_header, block_bytes, maybe_context: None, pending_contexts, } => {
+                self.tasks_queue
+                    .focus_block_id(block_header.block_id.clone())
+                    .enqueue(self.schema.block_get());
+                if !pending_contexts.is_empty() {
+                    return Op::Event(Event {
+                        op: EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
+                            storage_layout: self.schema.storage_layout().clone(),
+                            block_header,
+                            block_bytes,
+                            pending_contexts,
+                        }),
+                        performer: Performer { inner: self, },
+                    });
+                }
+            }
+
+            DoneTask::ReadBlockRaw { block_header, block_bytes, maybe_context: Some(context), mut pending_contexts, } => {
+                let maybe_op = match self.schema.process_read_block_task_done(&block_header.block_id) {
                     schema::ReadBlockTaskDoneOp::NotFound =>
                         unreachable!(),
                     schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform) =>
                         match context {
 
-                            task::ReadBlockContext::Process(process_context) =>
-                                EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
-                                    storage_layout: self.schema.storage_layout().clone(),
-                                    block_header: block_header.clone(),
-                                    block_bytes: block_bytes.clone(),
-                                    context: process_context,
-                                }),
+                            context @ task::ReadBlockContext::Process(..) => {
+                                self.tasks_queue.push_pending_read_context(
+                                    task::ReadBlock {
+                                        block_header: block_header.clone(),
+                                        context,
+                                    },
+                                    &mut pending_contexts,
+                                );
+                                None
+                            },
 
                             task::ReadBlockContext::Defrag(task::ReadBlockDefragContext { defrag_gaps, }) =>
-                                EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
-                                    block_id: block_header.block_id.clone(),
-                                    task: PrepareInterpretTaskKind::DeleteBlock(PrepareInterpretTaskDeleteBlock {
-                                        context: task::DeleteBlockContext::Defrag {
-                                            defrag_gaps,
-                                            block_bytes: block_bytes.clone(),
-                                        },
-                                    }),
-                                }),
+                                if defrag_gaps.is_still_relevant(&block_header.block_id, self.schema.block_get()) {
+                                    Some(EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
+                                        block_id: block_header.block_id.clone(),
+                                        task: PrepareInterpretTaskKind::DeleteBlock(PrepareInterpretTaskDeleteBlock {
+                                            context: task::DeleteBlockContext::Defrag {
+                                                defrag_gaps,
+                                                block_bytes: block_bytes.clone(),
+                                            },
+                                        }),
+                                    }))
+                                } else {
+                                    // cancel defrag read task
+                                    cancel_defrag_task(self.defrag.as_mut().unwrap());
+                                    None
+                                },
 
                         },
                 };
 
                 let mut lens = self.tasks_queue.focus_block_id(block_header.block_id.clone());
                 assert!(lens.pop_write_task(self.schema.block_get()).is_none());
-                if let Some(read_block) = lens.pop_read_defrag_task(self.schema.block_get()) {
-                    self.done_task = DoneTask::ReadBlockRaw {
-                        block_header,
-                        block_bytes,
-                        context: read_block.context,
-                    };
-                } else {
-                    lens.enqueue(self.schema.block_get());
-                }
-
-                return Op::Event(Event { op, performer: Performer { inner: self, }, });
-            },
-
-            DoneTask::ReadBlockProcessed { block_id, block_bytes, context, } => {
-
-                self.lru_cache.insert(block_id.clone(), block_bytes.clone());
-
-                let maybe_op = match self.schema.process_read_block_task_done(&block_id) {
-                    schema::ReadBlockTaskDoneOp::NotFound =>
-                        match context {
-                            task::ReadBlockProcessContext::External(context) =>
-                                Some(EventOp::ReadBlock(TaskDoneOp { context, op: ReadBlockOp::NotFound, })),
-                            task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, } => {
-                                // skip this block, proceed with the next one
-                                self.iter_blocks_stream_next_op(next_block_id, iter_blocks_stream_context)
-                            },
-                        },
-                    schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform) =>
-                        match context {
-                            task::ReadBlockProcessContext::External(context) =>
-                                Some(EventOp::ReadBlock(TaskDoneOp {
-                                    context,
-                                    op: ReadBlockOp::Done {
-                                        block_bytes: block_bytes.clone(),
-                                    },
-                                })),
-                            task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, } =>
-                                Some(EventOp::IterBlocksItem(IterBlocksItemOp {
-                                    block_id: block_id.clone(),
-                                    block_bytes: block_bytes.clone(),
-                                    iter_blocks_state: IterBlocksState {
-                                        iter_blocks_stream_context,
-                                        iter_blocks_cursor: IterBlocksCursor {
-                                            block_id: next_block_id,
-                                        },
-                                    },
-                                })),
-                        },
+                let maybe_context = lens.pop_read_task(self.schema.block_get())
+                    .map(|read_block| read_block.context);
+                self.done_task = DoneTask::ReadBlockRaw {
+                    block_header,
+                    block_bytes,
+                    maybe_context,
+                    pending_contexts,
                 };
-
-                let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
-                if let Some(read_block) = lens.pop_read_task(self.schema.block_get()) {
-                    match read_block.context {
-                        task::ReadBlockContext::Process(process_context) =>
-                            self.done_task = DoneTask::ReadBlockProcessed {
-                                block_id,
-                                block_bytes,
-                                context: process_context,
-                            },
-                        task::ReadBlockContext::Defrag(..) =>
-                            unreachable!(),
-                    }
-                } else {
-                    lens.enqueue(self.schema.block_get());
-                }
 
                 return if let Some(op) = maybe_op {
                     Op::Event(Event { op, performer: Performer { inner: self, }, })
                 } else {
                     Op::Idle(Performer { inner: self, })
-                };
+                }
+            },
+
+            DoneTask::ReadBlockProcessed { block_id, maybe_block_bytes, mut pending_contexts, } => {
+                if let Some(read_block) = self.tasks_queue.pop_pending_read_context(&mut pending_contexts) {
+                    let maybe_op = match (maybe_block_bytes.clone(), read_block.context) {
+                        (None, task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(context))) =>
+                            Some(EventOp::ReadBlock(TaskDoneOp { context, op: ReadBlockOp::NotFound, })),
+
+                        (Some(block_bytes), task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(context))) =>
+                            Some(EventOp::ReadBlock(TaskDoneOp { context, op: ReadBlockOp::Done { block_bytes, }, }, )),
+
+                        (
+                            None,
+                            task::ReadBlockContext::Process(
+                                task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, },
+                            ),
+                        ) => {
+                            // skip this block, proceed with the next one
+                            self.iter_blocks_stream_next_op(next_block_id, iter_blocks_stream_context)
+                        },
+
+                        (
+                            Some(block_bytes),
+                            task::ReadBlockContext::Process(
+                                task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, },
+                            ),
+                        ) =>
+                            Some(EventOp::IterBlocksItem(IterBlocksItemOp {
+                                block_id: block_id.clone(),
+                                block_bytes,
+                                iter_blocks_state: IterBlocksState {
+                                    iter_blocks_stream_context,
+                                    iter_blocks_cursor: IterBlocksCursor {
+                                        block_id: next_block_id,
+                                    },
+                                },
+                            })),
+
+                        (_, task::ReadBlockContext::Defrag(..)) =>
+                            unreachable!(),
+                    };
+
+                    self.done_task = DoneTask::ReadBlockProcessed {
+                        block_id,
+                        maybe_block_bytes,
+                        pending_contexts,
+                    };
+
+                    return if let Some(op) = maybe_op {
+                        Op::Event(Event { op, performer: Performer { inner: self, }, })
+                    } else {
+                        Op::Idle(Performer { inner: self, })
+                    };
+                }
             },
 
             DoneTask::DeleteBlockRegular { block_id, mut block_entry, freed_space_key, } => {
@@ -655,14 +674,7 @@ impl<C> Inner<C> where C: Context {
                         },
                     }
                 }
-                loop {
-                    let read_block = if let Some(read_block) = lens.pop_read_task(&mut block_get) {
-                        read_block
-                    } else if let Some(read_block) = lens.pop_read_defrag_task(&mut block_get) {
-                        read_block
-                    } else {
-                        break;
-                    };
+                while let Some(read_block) = lens.pop_read_task(&mut block_get) {
                     match read_block.context {
                         task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(context)) => {
                             self.done_task = DoneTask::DeleteBlockRegular {
@@ -714,38 +726,6 @@ impl<C> Inner<C> where C: Context {
                     }
                 }
                 self.freed_space_key = Some(freed_space_key);
-            },
-            DoneTask::DeleteBlockDefrag { block_id, block_bytes, freed_space_key, } => {
-                let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
-                let mut block_get = self.schema.block_get();
-                if let Some(read_block) = lens.pop_read_task(&mut block_get) {
-                    self.done_task = DoneTask::DeleteBlockDefrag {
-                        block_id: block_id.clone(),
-                        block_bytes: block_bytes.clone(),
-                        freed_space_key,
-                    };
-                    let block_header = block_get
-                        .by_id(&block_id)
-                        .unwrap()
-                        .header
-                        .clone();
-                    match read_block.context {
-                        task::ReadBlockContext::Process(process_context) =>
-                            return Op::Event(Event {
-                                op: EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
-                                    storage_layout: self.schema.storage_layout().clone(),
-                                    block_header,
-                                    block_bytes,
-                                    context: process_context,
-                                }),
-                                performer: Performer { inner: self, }
-                            }),
-                        task::ReadBlockContext::Defrag(..) =>
-                            unreachable!(),
-                    }
-                }
-                lens.enqueue(block_get);
-                self.freed_space_key = freed_space_key;
             },
         }
 
@@ -1113,8 +1093,25 @@ impl<C> Inner<C> where C: Context {
         }
     }
 
-    fn process_read_block_done(mut self, block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<C>) -> Op<C> {
-        self.done_task = DoneTask::ReadBlockProcessed { block_id, block_bytes, context, };
+    fn process_read_block_done(
+        mut self,
+        block_id: block::Id,
+        block_bytes: Bytes,
+        pending_contexts: task::queue::PendingReadContextBag,
+    )
+        -> Op<C>
+    {
+        match self.schema.process_read_block_task_done(&block_id) {
+            schema::ReadBlockTaskDoneOp::NotFound =>
+                self.done_task = DoneTask::ReadBlockProcessed { block_id, maybe_block_bytes: None, pending_contexts, },
+            schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform) => {
+                self.lru_cache.insert(block_id.clone(), block_bytes.clone());
+                self.done_task = DoneTask::ReadBlockProcessed {
+                    block_id, maybe_block_bytes: Some(block_bytes),
+                    pending_contexts,
+                };
+            },
+        }
         Op::Idle(Performer { inner: self, })
     }
 
@@ -1156,7 +1153,8 @@ impl<C> Inner<C> where C: Context {
                 self.done_task = DoneTask::ReadBlockRaw {
                     block_header,
                     block_bytes: read_block.block_bytes.freeze(),
-                    context: read_block.context,
+                    maybe_context: Some(read_block.context),
+                    pending_contexts: task::queue::PendingReadContextBag::default(),
                 };
                 Op::Idle(Performer { inner: self, })
             },
@@ -1205,23 +1203,29 @@ impl<C> Inner<C> where C: Context {
                                             (),
                                     }
                                 }
-                                self.tasks_queue.focus_block_id(block_id.clone())
-                                    .push_task(
-                                        task::Task {
-                                            block_id: block_id.clone(),
-                                            kind: task::TaskKind::WriteBlock(task::WriteBlock {
-                                                write_block_bytes: block_bytes.clone(),
-                                                commit: task::Commit::None,
-                                                context: task::WriteBlockContext::Defrag,
-                                            }),
-                                        },
-                                        self.schema.block_get(),
-                                    );
-                                self.done_task = DoneTask::DeleteBlockDefrag {
-                                    block_id,
-                                    block_bytes,
-                                    freed_space_key: task_op.freed_space_key,
-                                };
+                                let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
+                                let mut block_get = self.schema.block_get();
+                                lens.push_task(
+                                    task::Task {
+                                        block_id: block_id.clone(),
+                                        kind: task::TaskKind::WriteBlock(task::WriteBlock {
+                                            write_block_bytes: block_bytes.clone(),
+                                            commit: task::Commit::None,
+                                            context: task::WriteBlockContext::Defrag,
+                                        }),
+                                    },
+                                    &mut block_get,
+                                );
+                                if let Some(read_block) = lens.pop_read_task(&mut block_get) {
+                                    self.done_task = DoneTask::ReadBlockRaw {
+                                        block_header: block_get.by_id(&block_id).unwrap().header.clone(),
+                                        block_bytes,
+                                        maybe_context: Some(read_block.context),
+                                        pending_contexts: task::queue::PendingReadContextBag::default(),
+                                    };
+                                }
+                                lens.enqueue(&mut block_get);
+                                self.freed_space_key = task_op.freed_space_key;
                                 Op::Idle(Performer { inner: self, })
                             },
                         },

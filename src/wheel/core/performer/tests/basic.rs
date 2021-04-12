@@ -215,7 +215,7 @@ fn script_basic() {
         ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone {
             expect_block_id: block::Id::init(),
             expect_block_bytes: hello_world_bytes().freeze(),
-            expect_context: task::ReadBlockProcessContext::External("ectx03"),
+            expect_pending_contexts: task::queue::PendingReadContextBag::default(),
         }),
         // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task in progress @ 24, 1: ready @ 85 .. 130 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -301,7 +301,7 @@ fn script_basic() {
         ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone {
             block_id: block::Id::init(),
             block_bytes: hello_world_bytes().freeze(),
-            context: task::ReadBlockProcessContext::External("ectx03"),
+            pending_contexts: task::queue::PendingReadContextBag::default(),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         // { 1: ready @ 85 .. 130 }
@@ -408,14 +408,14 @@ fn script_basic() {
         ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone {
             expect_block_id: block::Id::init().next(),
             expect_block_bytes: hello_world_bytes().freeze(),
-            expect_context: task::ReadBlockProcessContext::External("ectx0a"),
+            expect_pending_contexts: task::queue::PendingReadContextBag::default(),
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
         // { 1: ready @ 85 .. 130, 1: read task done process done, 2: ready @ 24 .. 85 }
         ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone {
             block_id: block::Id::init().next(),
             block_bytes: hello_world_bytes().freeze(),
-            context: task::ReadBlockProcessContext::External("ectx0a"),
+            pending_contexts: task::queue::PendingReadContextBag::default(),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::ReadBlockDone {
@@ -617,19 +617,21 @@ fn script_iter() {
         ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone {
             expect_block_id: block::Id::init(),
             expect_block_bytes: hello_world_bytes().freeze(),
-            expect_context: task::ReadBlockProcessContext::IterBlocks {
-                iter_blocks_stream_context: "sctx00",
-                next_block_id: block::Id::init().next(),
-            },
+            expect_pending_contexts: task::queue::PendingReadContextBag::default(),
+            // expect_context: task::ReadBlockProcessContext::IterBlocks {
+            //     iter_blocks_stream_context: "sctx00",
+            //     next_block_id: block::Id::init().next(),
+            // },
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone {
             block_id: block::Id::init(),
             block_bytes: hello_world_bytes().freeze(),
-            context: task::ReadBlockProcessContext::IterBlocks {
-                iter_blocks_stream_context: "sctx00",
-                next_block_id: block::Id::init().next(),
-            },
+            pending_contexts: task::queue::PendingReadContextBag::default(),
+            // context: task::ReadBlockProcessContext::IterBlocks {
+            //     iter_blocks_stream_context: "sctx00",
+            //     next_block_id: block::Id::init().next(),
+            // },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::IterBlocksItem {
@@ -687,19 +689,21 @@ fn script_iter() {
         ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone {
             expect_block_id: block::Id::init().next(),
             expect_block_bytes: hello_world_bytes().freeze(),
-            expect_context: task::ReadBlockProcessContext::IterBlocks {
-                iter_blocks_stream_context: "sctx00",
-                next_block_id: block::Id::init().next().next(),
-            },
+            expect_pending_contexts: task::queue::PendingReadContextBag::default(),
+            // expect_context: task::ReadBlockProcessContext::IterBlocks {
+            //     iter_blocks_stream_context: "sctx00",
+            //     next_block_id: block::Id::init().next().next(),
+            // },
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
         ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone {
             block_id: block::Id::init().next(),
             block_bytes: hello_world_bytes().freeze(),
-            context: task::ReadBlockProcessContext::IterBlocks {
-                iter_blocks_stream_context: "sctx00",
-                next_block_id: block::Id::init().next().next(),
-            },
+            pending_contexts: task::queue::PendingReadContextBag::default(),
+            // context: task::ReadBlockProcessContext::IterBlocks {
+            //     iter_blocks_stream_context: "sctx00",
+            //     next_block_id: block::Id::init().next().next(),
+            // },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::IterBlocksItem {

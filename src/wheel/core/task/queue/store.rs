@@ -16,7 +16,6 @@ use crate::wheel::core::{
         DeleteBlock,
         Flush,
         Context,
-        ReadBlockContext,
     },
 };
 
@@ -44,21 +43,13 @@ impl<C> Tasks<C> where C: Context {
                 let node_ref = self.tasks_write.insert(write_block);
                 tasks_head.head_write = Some(node_ref);
             },
-            TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Process(..), .. }) =>
+            TaskKind::ReadBlock(read_block) =>
                 if let Some(prev_ref) = tasks_head.head_read.take() {
                     let node_ref = self.tasks_read.make_node(prev_ref, read_block);
                     tasks_head.head_read = Some(node_ref);
                 } else {
                     let node_ref = self.tasks_read.make_root(read_block);
                     tasks_head.head_read = Some(node_ref);
-                },
-            TaskKind::ReadBlock(read_block @ ReadBlock { context: ReadBlockContext::Defrag(..), .. }) =>
-                if let Some(prev_ref) = tasks_head.head_read_defrag.take() {
-                    let node_ref = self.tasks_read.make_node(prev_ref, read_block);
-                    tasks_head.head_read_defrag = Some(node_ref);
-                } else {
-                    let node_ref = self.tasks_read.make_root(read_block);
-                    tasks_head.head_read_defrag = Some(node_ref);
                 },
             TaskKind::DeleteBlock(delete_block) =>
                 if let Some(prev_ref) = tasks_head.head_delete.take() {
@@ -90,10 +81,6 @@ impl<C> Tasks<C> where C: Context {
             return Some(TaskKind::ReadBlock(task));
         }
 
-        if let Some(task) = self.pop_read_defrag(tasks_head) {
-            return Some(TaskKind::ReadBlock(task));
-        }
-
         if let Some(task) = self.pop_delete(tasks_head) {
             return Some(TaskKind::DeleteBlock(task));
         }
@@ -110,13 +97,6 @@ impl<C> Tasks<C> where C: Context {
         let node_ref = tasks_head.head_read.take()?;
         let node = self.tasks_read.remove(node_ref).unwrap();
         tasks_head.head_read = node.parent;
-        Some(node.item)
-    }
-
-    pub fn pop_read_defrag(&mut self, tasks_head: &mut TasksHead) -> Option<ReadBlock<C>> {
-        let node_ref = tasks_head.head_read_defrag.take()?;
-        let node = self.tasks_read.remove(node_ref).unwrap();
-        tasks_head.head_read_defrag = node.parent;
         Some(node.item)
     }
 

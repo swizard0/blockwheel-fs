@@ -171,11 +171,6 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
         self.queue.tasks.pop_read(&mut block_entry.tasks_head)
     }
 
-    pub fn pop_read_defrag_task<'a, B>(&mut self, mut block_get: B) -> Option<ReadBlock<C>> where B: BlockGet {
-        let block_entry = block_get.by_id(&self.block_id)?;
-        self.queue.tasks.pop_read_defrag(&mut block_entry.tasks_head)
-    }
-
     pub fn pop_delete_task<'a, B>(&mut self, mut block_get: B) -> Option<DeleteBlock<C::DeleteBlock>> where B: BlockGet {
         let block_entry = block_get.by_id(&self.block_id)?;
         self.queue.tasks.pop_delete(&mut block_entry.tasks_head)
@@ -187,11 +182,16 @@ pub struct PendingReadContextBag {
     head: Option<Ref>,
 }
 
+impl PendingReadContextBag {
+    pub fn is_empty(&self) -> bool {
+        self.head.is_none()
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
 pub struct TasksHead {
     head_write: Option<Ref>,
     head_read: Option<Ref>,
-    head_read_defrag: Option<Ref>,
     head_delete: Option<Ref>,
     queue_state: QueueState,
 }
@@ -213,7 +213,6 @@ impl TasksHead {
     pub fn is_empty(&self) -> bool {
         self.head_write.is_none()
             && self.head_read.is_none()
-            && self.head_read_defrag.is_none()
             && self.head_delete.is_none()
     }
 }

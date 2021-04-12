@@ -39,8 +39,8 @@ use super::{
 use crate::Info;
 
 mod basic;
-mod defrag;
-mod defrag_disturb;
+// mod defrag;
+// mod defrag_disturb;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Context;
@@ -126,7 +126,7 @@ enum ExpectOp {
     IterBlocksFinish { expect_context: C, },
     PrepareInterpretTaskWriteBlock { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: task::WriteBlockContext<C>, },
     PrepareInterpretTaskDeleteBlock { expect_block_id: block::Id, expect_context: task::DeleteBlockContext<C>, },
-    ProcessReadBlockTaskDone { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: task::ReadBlockProcessContext<Context>, },
+    ProcessReadBlockTaskDone { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_pending_contexts: task::queue::PendingReadContextBag, },
 }
 
 #[allow(dead_code)]
@@ -150,14 +150,18 @@ enum DoOp {
     RequestAndInterpreterIncomingProcessReadBlockDone {
         block_id: block::Id,
         block_bytes: Bytes,
-        context: task::ReadBlockProcessContext<Context>,
+        pending_contexts: task::queue::PendingReadContextBag,
         interpreter_context: C,
     },
     RequestIncomingRequest { request: proto::Request<Context>, },
     RequestIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, },
     RequestIncomingPreparedWriteBlockDone { block_id: block::Id, write_block_bytes: BytesMut, context: task::WriteBlockContext<C>, },
     RequestIncomingPreparedDeleteBlockDone { block_id: block::Id, delete_block_bytes: BytesMut, context: task::DeleteBlockContext<C>, },
-    RequestIncomingProcessReadBlockDone { block_id: block::Id, block_bytes: Bytes, context: task::ReadBlockProcessContext<Context>, },
+    RequestIncomingProcessReadBlockDone {
+        block_id: block::Id,
+        block_bytes: Bytes,
+        pending_contexts: task::queue::PendingReadContextBag,
+    },
     TaskAccept { interpreter_context: C, },
     StreamReady { iter_context: C, },
 }
@@ -241,10 +245,10 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingProcessReadBlockDone {
                                 block_id,
                                 block_bytes,
-                                context,
+                                pending_contexts,
                                 interpreter_context,
                             })) =>
-                                poll.next.process_read_block_done(block_id, block_bytes, context, interpreter_context),
+                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts, interpreter_context),
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
                                 block_id,
                                 delete_block_bytes,
@@ -280,8 +284,8 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 poll.next.incoming_iter_blocks(iter_blocks_state),
                             Some(ScriptOp::Do(DoOp::RequestIncomingPreparedWriteBlockDone { block_id, write_block_bytes, context, })) =>
                                 poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
-                            Some(ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone { block_id, block_bytes, context, })) =>
-                                poll.next.process_read_block_done(block_id, block_bytes, context),
+                            Some(ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone { block_id, block_bytes, pending_contexts, })) =>
+                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
                             Some(ScriptOp::Do(DoOp::RequestIncomingPreparedDeleteBlockDone { block_id, delete_block_bytes, context, })) =>
                                 poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
                             Some(other_op) =>
@@ -575,7 +579,7 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                 op: EventOp::ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp {
                     block_header,
                     block_bytes,
-                    context,
+                    pending_contexts,
                     ..
                 }),
                 performer,
@@ -586,8 +590,8 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                             "unexpected script end on ProcessReadBlockTaskDoneOp, expecting ExpectOp::ProcessReadBlockTaskDone @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone { expect_block_id, expect_block_bytes, expect_context, }))
-                        if expect_block_id == block_header.block_id && expect_block_bytes == block_bytes && expect_context == context =>
+                    Some(ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone { expect_block_id, expect_block_bytes, expect_pending_contexts, }))
+                        if expect_block_id == block_header.block_id && expect_block_bytes == block_bytes && expect_pending_contexts == pending_contexts =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(

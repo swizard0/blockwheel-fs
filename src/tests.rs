@@ -101,8 +101,8 @@ fn stress_ram() {
     };
 
     let limits = Limits {
-        active_tasks: 128,
-        actions: 1024,
+        active_tasks: 192,
+        actions: 1536,
         block_size_bytes: work_block_size_bytes - 256,
     };
 
