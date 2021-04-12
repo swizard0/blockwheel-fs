@@ -1,4 +1,7 @@
-use std::mem;
+use std::{
+    mem,
+    collections::HashSet,
+};
 
 use alloc_pool::bytes::{
     Bytes,
@@ -32,6 +35,7 @@ mod tests;
 struct Inner<C> where C: Context {
     schema: schema::Schema,
     lru_cache: lru::Cache,
+    pending_write_external: HashSet<block::Id>,
     defrag: Option<Defrag<C::WriteBlock>>,
     freed_space_key: Option<SpaceKey>,
     bg_task: BackgroundTask<C::Interpreter>,
@@ -507,6 +511,7 @@ impl<C> Inner<C> where C: Context {
         Inner {
             schema,
             lru_cache,
+            pending_write_external: HashSet::new(),
             tasks_queue: task::queue::Queue::new(),
             defrag,
             freed_space_key: None,
@@ -742,6 +747,7 @@ impl<C> Inner<C> where C: Context {
                                 schema::DefragOp::None =>
                                     (),
                             }
+                            self.pending_write_external.insert(write_block_perform.task_op.block_id.clone());
 
                             return Op::Event(Event {
                                 op: EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
@@ -772,7 +778,7 @@ impl<C> Inner<C> where C: Context {
                 if defrag.in_progress_tasks_count >= defrag.in_progress_tasks_limit {
                     break;
                 }
-                if let Some((defrag_gaps, moving_block_id)) = defrag.queues.tasks.pop(self.schema.block_get()) {
+                if let Some((defrag_gaps, moving_block_id)) = defrag.queues.tasks.pop(&self.pending_write_external, self.schema.block_get()) {
                     let mut block_get = self.schema.block_get();
                     let block_entry = block_get.by_id(&moving_block_id).unwrap();
                     let mut lens = self.tasks_queue.focus_block_id(block_entry.header.block_id.clone());
@@ -879,6 +885,7 @@ impl<C> Inner<C> where C: Context {
                             (),
                     }
                 }
+                self.pending_write_external.insert(task_op.block_id.clone());
 
                 Op::Event(Event {
                     op: EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
@@ -1122,15 +1129,18 @@ impl<C> Inner<C> where C: Context {
                 let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
                 lens.finish(self.schema.block_get());
                 lens.enqueue(self.schema.block_get());
+
                 match write_block.context {
-                    task::WriteBlockContext::External(context) =>
+                    task::WriteBlockContext::External(context) => {
+                        assert!(self.pending_write_external.remove(&block_id));
                         Op::Event(Event {
                             op: EventOp::WriteBlock(TaskDoneOp {
                                 context,
                                 op: WriteBlockOp::Done { block_id, },
                             }),
                             performer: Performer { inner: self, },
-                        }),
+                        })
+                    },
                     task::WriteBlockContext::Defrag => {
                         let defrag = self.defrag.as_mut().unwrap();
                         assert!(defrag.in_progress_tasks_count > 0);

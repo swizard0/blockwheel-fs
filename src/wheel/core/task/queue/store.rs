@@ -39,7 +39,14 @@ impl<C> Tasks<C> where C: Context {
     pub fn push(&mut self, tasks_head: &mut TasksHead, task: Task<C>) {
         match task.kind {
             TaskKind::WriteBlock(write_block) => {
-                assert!(tasks_head.head_write.is_none());
+                if let Some(prev_task_ref) = &tasks_head.head_write {
+                    let prev_write_task = self.tasks_write.remove(prev_task_ref.clone()).unwrap();
+                    panic!(
+                        "pushing write task for {:?} but previous write task {:?} exists",
+                        write_block,
+                        prev_write_task,
+                    );
+                }
                 let node_ref = self.tasks_write.insert(write_block);
                 tasks_head.head_write = Some(node_ref);
             },
