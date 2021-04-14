@@ -1133,7 +1133,7 @@ impl Builder {
                 (DefragOp::None, block::Id::init())
             },
             Some(tracker) => {
-                let space_total = (size_bytes_total - total_service_size) as u64;
+                let space_total = size_bytes_total as u64 - self.storage_layout.terminator_tag_size as u64;
                 let prev_block_end_offset = tracker.prev_block_offset + tracker.prev_block_size as u64;
                 assert!(space_total >= prev_block_end_offset);
                 match space_total - prev_block_end_offset {

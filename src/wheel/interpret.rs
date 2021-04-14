@@ -133,6 +133,7 @@ pub fn block_prepare_write_job(
     -> BlockPrepareWriteJobOutput
 {
     let mut write_block_bytes = blocks_pool.lend();
+    let mut write_block_bytes_len = 0;
 
     let block_header = storage::BlockHeader {
         block_id: block_id.clone(),
@@ -142,7 +143,12 @@ pub fn block_prepare_write_job(
     storage::bincode_options()
         .serialize_into(&mut **write_block_bytes, &block_header)
         .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
+    assert!(write_block_bytes.len() > write_block_bytes_len);
+    write_block_bytes_len = write_block_bytes.len();
+
     write_block_bytes.extend_from_slice(&block_bytes);
+    assert!(write_block_bytes.len() > write_block_bytes_len);
+    write_block_bytes_len = write_block_bytes.len();
 
     let commit_tag = storage::CommitTag {
         block_id: block_id.clone(),
@@ -152,6 +158,7 @@ pub fn block_prepare_write_job(
     storage::bincode_options()
         .serialize_into(&mut **write_block_bytes, &commit_tag)
         .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
+    assert!(write_block_bytes.len() > write_block_bytes_len);
 
     Ok(BlockPrepareWriteJobDone { write_block_bytes, })
 }

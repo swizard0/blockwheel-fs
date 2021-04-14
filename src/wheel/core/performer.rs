@@ -802,7 +802,12 @@ impl<C> Inner<C> where C: Context {
             }
         }
 
-        if self.tasks_queue.is_empty_tasks() && self.defrag.as_ref().map_or(true, |defrag| defrag.in_progress_tasks_count == 0) {
+        let tasks_queue_is_empty = self.tasks_queue.is_empty_tasks();
+        let no_defrag_pending = self.defrag.as_ref().map_or(true, |defrag| {
+            defrag.in_progress_tasks_count == 0 &&
+                defrag.queues.tasks.is_empty()
+        });
+        if tasks_queue_is_empty && no_defrag_pending {
             if let Some(task::Flush { context, }) = self.tasks_queue.pop_flush() {
                 return Op::Event(Event {
                     op: EventOp::Flush(TaskDoneOp { context, op: FlushOp::Flushed, }),
@@ -1344,6 +1349,7 @@ impl<C> Inner<C> where C: Context {
                 self.bg_task.state = BackgroundTaskState::Await {
                     block_id: lens.block_id().clone(),
                 };
+
                 return Op::Query(QueryOp::InterpretTask(InterpretTask {
                     offset,
                     task: task::Task {

@@ -46,10 +46,8 @@ fn stress_fixed_file() {
         .build()
         .unwrap();
     let wheel_filename = "/tmp/blockwheel_stress";
-    // let work_block_size_bytes = 16 * 1024;
-    // let init_wheel_size_bytes = 1 * 1024 * 1024;
-    let work_block_size_bytes = 128 * 1024;
-    let init_wheel_size_bytes = 128 * 1024 * 1024;
+    let work_block_size_bytes = 16 * 1024;
+    let init_wheel_size_bytes = 1 * 1024 * 1024;
 
     let params = Params {
         interpreter: InterpreterParams::FixedFile(FixedFileInterpreterParams {
@@ -63,10 +61,8 @@ fn stress_fixed_file() {
     };
 
     let limits = Limits {
-        active_tasks: 1024,
-        actions: 64 * 1024,
-        // active_tasks: 128,
-        // actions: 1024,
+        active_tasks: 128,
+        actions: 1024,
         block_size_bytes: work_block_size_bytes - 256,
     };
 
@@ -325,6 +321,8 @@ async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut 
     }
 
     assert!(done_rx.next().await.is_none());
+
+    log::info!("finish | invoking flush");
 
     let Flushed = pid.flush().await
         .map_err(|ero::NoProcError| Error::WheelGoneDuringFlush)?;

@@ -50,6 +50,8 @@ impl<C> Queue<C> where C: Context {
     where B: BlockGet
     {
         let mut rewind_performed = false;
+
+        #[derive(Debug)]
         enum Outcome {
             Found { block_id: block::Id, offset: u64, },
             Adjust { block_id: block::Id, old_offset: u64, new_offset: u64, },
@@ -77,7 +79,7 @@ impl<C> Queue<C> where C: Context {
                 }
             }
             for offset in self.remove_buf.drain(..) {
-                self.triggers.remove(&offset);
+                assert!(self.triggers.remove(&offset).is_some());
             }
             match outcome {
                 Outcome::Found { block_id, offset, } =>

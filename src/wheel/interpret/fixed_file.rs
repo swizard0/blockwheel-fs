@@ -371,19 +371,15 @@ impl<C> GenServer<C> where C: Context {
                         }
                         break;
                     },
-                    Ok(..) | Err(..) => {
-
-                        panic!("failed to deserialize block @ {}", cursor);
-
-                        // match storage::bincode_options().deserialize_from::<_, storage::TerminatorTag>(area) {
-                        //     Ok(terminator_tag) if terminator_tag.magic == storage::TERMINATOR_TAG_MAGIC => {
-                        //         log::debug!("terminator found @ {:?}, loading done", cursor);
-                        //         break 'outer;
-                        //     },
-                        //     Ok(..) | Err(..) =>
-                        //         (),
-                        // }
-                    },
+                    Ok(..) | Err(..) =>
+                        match storage::bincode_options().deserialize_from::<_, storage::TerminatorTag>(area) {
+                            Ok(terminator_tag) if terminator_tag.magic == storage::TERMINATOR_TAG_MAGIC => {
+                                log::debug!("terminator found @ {:?}, loading done", cursor);
+                                break 'outer;
+                            },
+                            Ok(..) | Err(..) =>
+                                (),
+                        },
                 };
                 start += 1;
                 cursor += 1;
@@ -579,6 +575,15 @@ where C: Context,
 
                 match task.kind {
                     task::TaskKind::WriteBlock(write_block) => {
+
+                        log::debug!(
+                            "write block {:?} @ {} of {} bytes, context: {:?}",
+                            task.block_id,
+                            cursor,
+                            write_block.write_block_bytes.len(),
+                            write_block.context,
+                        );
+
                         let now = Instant::now();
                         wheel_file.write_all(&write_block.write_block_bytes).await
                             .map_err(Error::BlockWrite)?;
@@ -609,6 +614,15 @@ where C: Context,
                     task::TaskKind::ReadBlock(task::ReadBlock { block_header, context, }) => {
                         let total_chunk_size = storage_layout.data_size_block_min()
                             + block_header.block_size;
+
+                        log::debug!(
+                            "read block {:?} @ {} of {} bytes, context = {:?}",
+                            task.block_id,
+                            cursor,
+                            total_chunk_size,
+                            context,
+                        );
+
                         let mut block_bytes = blocks_pool.lend();
                         block_bytes.resize(total_chunk_size, 0);
                         let now = Instant::now();
@@ -633,6 +647,9 @@ where C: Context,
                     },
 
                     task::TaskKind::DeleteBlock(delete_block) => {
+
+                        log::debug!("delete block {:?} @ {}, context: {:?}", task.block_id, cursor, delete_block.context);
+
                         let now = Instant::now();
                         wheel_file.write_all(&delete_block.delete_block_bytes).await
                             .map_err(Error::BlockWrite)?;
@@ -669,6 +686,7 @@ where C: Context,
                     wheel_file.write_all(&terminator_block_bytes).await
                         .map_err(Error::TerminatorWrite)?;
                     pending_terminator = false;
+                    cursor += terminator_block_bytes.len() as u64;
                 } else {
                     log::debug!("flushed with no pending_terminator (cursor @ {})", cursor);
                 }

@@ -67,24 +67,8 @@ pub enum DefragGaps {
 impl DefragGaps {
     pub fn is_still_relevant<B>(&self, block_id: &block::Id, mut block_get: B) -> bool where B: BlockGet {
         if let Some(block_entry) = block_get.by_id(block_id) {
-            match self {
-                DefragGaps::OnlyLeft { space_key_left, } =>
-                    match &block_entry.environs.left {
-                        LeftEnvirons::Space { space_key, } if space_key == space_key_left =>
-                            return true,
-                        _ =>
-                            (),
-                    },
-                DefragGaps::Both { space_key_left, space_key_right, } =>
-                    match &block_entry.environs {
-                        Environs {
-                            left: LeftEnvirons::Space { space_key: env_space_key_left, },
-                            right: RightEnvirons::Space { space_key: env_space_key_right, },
-                        } if env_space_key_left == space_key_left && env_space_key_right == space_key_right =>
-                            return true,
-                        _ =>
-                            (),
-                    },
+            if let LeftEnvirons::Space { .. } = &block_entry.environs.left {
+                return true;
             }
         }
         false

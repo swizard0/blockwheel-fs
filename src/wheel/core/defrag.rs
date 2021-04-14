@@ -101,24 +101,25 @@ impl TaskQueue {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
     pub fn push(&mut self, defrag_gaps: DefragGaps, moving_block_id: block::Id) {
         self.queue.push(DefragTask { defrag_gaps, moving_block_id, });
     }
 
     pub fn pop<B>(&mut self, pending_write: &HashSet<block::Id>, mut block_get: B) -> Option<(DefragGaps, block::Id)> where B: BlockGet {
         let mut output = None;
-        loop {
-            if let Some(defrag_task) = self.queue.pop() {
-                if defrag_task.defrag_gaps.is_still_relevant(&defrag_task.moving_block_id, &mut block_get) {
-                    if !pending_write.contains(&defrag_task.moving_block_id) {
-                        output = Some((defrag_task.defrag_gaps, defrag_task.moving_block_id));
-                    } else {
-                        self.postpone.push(defrag_task);
-                        continue;
-                    }
+        while let Some(defrag_task) = self.queue.pop() {
+            if defrag_task.defrag_gaps.is_still_relevant(&defrag_task.moving_block_id, &mut block_get) {
+                if !pending_write.contains(&defrag_task.moving_block_id) {
+                    output = Some((defrag_task.defrag_gaps, defrag_task.moving_block_id));
+                    break;
+                } else {
+                    self.postpone.push(defrag_task);
                 }
             }
-            break;
         }
         self.queue.extend(self.postpone.drain(..));
         output
