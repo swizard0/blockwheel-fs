@@ -29,5 +29,7 @@ impl Id {
 }
 
 pub fn crc(bytes: &[u8]) -> u64 {
-    crc::crc64::checksum_ecma(bytes)
+    let mut hasher = crc64fast::Digest::new();
+    hasher.write(bytes);
+    hasher.sum64()
 }
