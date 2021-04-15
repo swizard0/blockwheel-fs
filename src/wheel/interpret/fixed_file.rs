@@ -547,11 +547,6 @@ where C: Context,
             Event::Command(Some(Command::Request(Request { offset, task, reply_tx, }))) => {
                 stats.count_total += 1;
 
-                // TODO: remove
-                let file_cursor = wheel_file.seek(io::SeekFrom::Current(0)).await
-                    .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
-                assert_eq!(file_cursor, cursor);
-
                 if cursor != offset {
                     if cursor < offset {
                         stats.count_seek_forward += 1;
