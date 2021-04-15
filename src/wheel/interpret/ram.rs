@@ -1,10 +1,15 @@
-use std::io;
+use std::{
+    io,
+    thread,
+    sync::{
+        mpsc,
+    },
+};
 
 use futures::{
     channel::{
-        mpsc,
+        oneshot,
     },
-    StreamExt,
 };
 
 use bincode::Options;
@@ -37,6 +42,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Error {
     AppendTerminator(AppendTerminatorError),
+    ThreadSpawn(io::Error),
 }
 
 #[derive(Debug)]
@@ -49,8 +55,13 @@ pub enum WheelCreateError {
     TerminatorTagSerialize(bincode::Error),
 }
 
+#[derive(Debug)]
+pub enum TaskJoinError {
+    Create(tokio::task::JoinError),
+}
+
 pub struct WheelData<C> where C: Context {
-    pub gen_server: GenServer<C>,
+    pub sync_gen_server: SyncGenServer<C>,
     pub performer: performer::Performer<C>,
 }
 
@@ -59,15 +70,15 @@ pub struct CreateParams {
     pub init_wheel_size_bytes: usize,
 }
 
-pub struct GenServer<C> where C: Context {
+pub struct SyncGenServer<C> where C: Context {
     memory: Vec<u8>,
     request_tx: mpsc::Sender<Command<C>>,
     request_rx: mpsc::Receiver<Command<C>>,
     storage_layout: storage::Layout,
 }
 
-impl<C> GenServer<C> where C: Context {
-    pub async fn create(
+impl<C> SyncGenServer<C> where C: Context {
+    pub fn create(
         params: CreateParams,
         performer_builder: performer::PerformerBuilderInit<C>,
     )
@@ -106,12 +117,12 @@ impl<C> GenServer<C> where C: Context {
         log::debug!("ram file create success");
         let storage_layout = performer_builder.storage_layout().clone();
 
-        let (request_tx, request_rx) = mpsc::channel(0);
+        let (request_tx, request_rx) = mpsc::channel();
 
         let (performer_builder, _work_block) = performer_builder.start_fill();
 
         Ok(WheelData {
-            gen_server: GenServer {
+            sync_gen_server: SyncGenServer {
                 memory,
                 request_tx,
                 request_rx,
@@ -128,17 +139,41 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub async fn run(self, blocks_pool: BytesPool) -> Result<(), Error> {
-        busyloop(
-            self.request_rx,
-            self.memory,
-            self.storage_layout,
-            blocks_pool,
-        ).await
+    pub fn run<F, E>(
+        self,
+        blocks_pool: BytesPool,
+        error_tx: oneshot::Sender<E>,
+        error_map: F,
+    )
+        -> Result<(), Error>
+    where F: FnOnce(Error) -> E + Send + 'static,
+          E: Send + 'static,
+          C: 'static,
+          C::WriteBlock: Send,
+          C::ReadBlock: Send,
+          C::DeleteBlock: Send,
+          C::IterBlocksStream: Send,
+    {
+        thread::Builder::new()
+            .name("wheel::interpret::ram".to_string())
+            .spawn(move || {
+                let result = busyloop(
+                    self.request_rx,
+                    self.memory,
+                    self.storage_layout,
+                    blocks_pool,
+                );
+                if let Err(error) = result {
+                    log::error!("wheel::interpret::ram terminated with {:?}", error);
+                    error_tx.send(error_map(error)).ok();
+                }
+            })
+            .map_err(Error::ThreadSpawn)?;
+        Ok(())
     }
 }
 
-async fn busyloop<C>(
+fn busyloop<C>(
     request_rx: mpsc::Receiver<Command<C>>,
     memory: Vec<u8>,
     storage_layout: storage::Layout,
@@ -148,8 +183,6 @@ async fn busyloop<C>(
 where C: Context,
 {
     let mut stats = InterpretStats::default();
-
-    let mut fused_request_rx = request_rx.fuse();
 
     let mut terminator_block_bytes = blocks_pool.lend();
     block_append_terminator(&mut terminator_block_bytes)
@@ -161,7 +194,12 @@ where C: Context,
     loop {
         enum Event<C> { Command(C), }
 
-        let event = Event::Command(fused_request_rx.next().await);
+        let event = match request_rx.recv() {
+            Ok(command) =>
+                Event::Command(Some(command)),
+            Err(mpsc::RecvError) =>
+                Event::Command(None),
+        };
 
         match event {
 

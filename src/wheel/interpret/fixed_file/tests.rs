@@ -3,6 +3,9 @@ use std::{
 };
 
 use futures::{
+    channel::{
+        oneshot,
+    },
     select,
     pin_mut,
     Future,
@@ -53,7 +56,7 @@ fn create_read_empty() {
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
-        ).await.map_err(Error::Create)?;
+        ).map_err(Error::Create)?;
         let _wheel_open_status = GenServer::open(
             OpenParams {
                 wheel_filename,
@@ -63,7 +66,7 @@ fn create_read_empty() {
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
-        ).await.map_err(Error::Open)?;
+        ).map_err(Error::Open)?;
         Ok::<_, Error>(())
     }).unwrap();
     fs::remove_file(wheel_filename).unwrap();
@@ -77,7 +80,7 @@ fn create_read_one() {
     let wheel_filename = "/tmp/blockwheel_create_read_one";
     let context = "ectx00";
     runtime.block_on(async {
-        let WheelData { gen_server, performer, } = GenServer::create(
+        let WheelData { sync_gen_server: gen_server, performer, } = GenServer::create(
             CreateParams {
                 wheel_filename,
                 init_wheel_size_bytes: 256 * 1024,
@@ -87,7 +90,7 @@ fn create_read_one() {
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
-        ).await.map_err(Error::Create)?;
+        ).map_err(Error::Create)?;
         let schema = performer.decompose();
         with_gen_server(gen_server, |mut pid, blocks_pool| async move {
             let block_id = block::Id::init();
@@ -136,8 +139,8 @@ fn create_read_one() {
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
-        ).await.map_err(Error::Open)?;
-        let WheelData { gen_server, performer, } = match open_status {
+        ).map_err(Error::Open)?;
+        let WheelData { sync_gen_server: gen_server, performer, } = match open_status {
             WheelOpenStatus::Success(wheel_data) =>
                 wheel_data,
             WheelOpenStatus::FileNotFound { .. } =>
@@ -204,7 +207,7 @@ fn create_write_overlap_read_one() {
     let wheel_filename = "/tmp/create_write_overlap_read_one";
     let context = "ectx01";
     runtime.block_on(async {
-        let WheelData { gen_server, performer, } = GenServer::create(
+        let WheelData { sync_gen_server: gen_server, performer, } = GenServer::create(
             CreateParams {
                 wheel_filename,
                 init_wheel_size_bytes: 256 * 1024,
@@ -214,7 +217,7 @@ fn create_write_overlap_read_one() {
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
-        ).await.map_err(Error::Create)?;
+        ).map_err(Error::Create)?;
         let schema = performer.decompose();
         with_gen_server(gen_server, |mut pid, blocks_pool| async move {
 
@@ -271,8 +274,8 @@ fn create_write_overlap_read_one() {
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
-        ).await.map_err(Error::Open)?;
-        let WheelData { gen_server, performer, } = match open_status {
+        ).map_err(Error::Open)?;
+        let WheelData { sync_gen_server: gen_server, performer, } = match open_status {
             WheelOpenStatus::Success(wheel_data) =>
                 wheel_data,
             WheelOpenStatus::FileNotFound { .. } =>
@@ -347,7 +350,7 @@ fn create_write_delete_read_one() {
     let wheel_filename = "/tmp/create_write_delete_read_one";
     let context = "ectx02";
     runtime.block_on(async {
-        let WheelData { gen_server, performer, } = GenServer::create(
+        let WheelData { sync_gen_server: gen_server, performer, } = GenServer::create(
             CreateParams {
                 wheel_filename,
                 init_wheel_size_bytes: 256 * 1024,
@@ -357,7 +360,7 @@ fn create_write_delete_read_one() {
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
-        ).await.map_err(Error::Create)?;
+        ).map_err(Error::Create)?;
         let schema = performer.decompose();
         with_gen_server(gen_server, |mut pid, blocks_pool| async move {
 
@@ -444,8 +447,8 @@ fn create_write_delete_read_one() {
                 None,
                 64 * 1024,
             ).map_err(Error::PerformerBuild)?,
-        ).await.map_err(Error::Open)?;
-        let WheelData { gen_server, performer, } = match open_status {
+        ).map_err(Error::Open)?;
+        let WheelData { sync_gen_server: gen_server, performer, } = match open_status {
             WheelOpenStatus::Success(wheel_data) =>
                 wheel_data,
             WheelOpenStatus::FileNotFound { .. } =>
@@ -565,7 +568,7 @@ impl Context for LocalContext {
     type Interpreter = C;
 }
 
-type GenServer = super::GenServer<LocalContext>;
+type GenServer = super::SyncGenServer<LocalContext>;
 type Pid = super::Pid<LocalContext>;
 
 async fn with_gen_server<F, FF>(
@@ -578,11 +581,11 @@ where F: FnOnce(Pid, BytesPool) -> FF,
 {
     let pid = gen_server.pid();
     let blocks_pool = BytesPool::new();
-    let interpreter_run = gen_server.run(blocks_pool.clone());
-    let (interpreter_task, interpreter_handle) = interpreter_run.remote_handle();
-    let interpreter_handle_fused = interpreter_handle.fuse();
-    pin_mut!(interpreter_handle_fused);
-    tokio::spawn(interpreter_task);
+
+    let (error_tx, mut error_rx) = oneshot::channel();
+    gen_server.run(blocks_pool.clone(), error_tx, std::convert::identity)
+        .map_err(Error::Run)?;
+
     let body_task = body(pid, blocks_pool);
     let body_task_fused = body_task.fuse();
     pin_mut!(body_task_fused);
@@ -591,11 +594,11 @@ where F: FnOnce(Pid, BytesPool) -> FF,
         select! {
             result = body_task_fused =>
                 return result,
-            result = interpreter_handle_fused =>
+            result = &mut error_rx =>
                 match result {
-                    Ok(()) =>
+                    Err(oneshot::Canceled) =>
                         (),
-                    Err(error) =>
+                    Ok(error) =>
                         return Err(Error::Run(error)),
                 },
         }
@@ -610,7 +613,7 @@ async fn request_reply(
 )
     -> Result<task::Done<LocalContext>, Error>
 {
-    let reply_rx = pid.push_request(offset, task::Task { block_id, kind, }).await
+    let reply_rx = pid.push_request(offset, task::Task { block_id, kind, })
         .map_err(|ero::NoProcError| Error::InterpreterDetach)?;
     let super::DoneTask { task_done, .. } = reply_rx.await.map_err(|_| Error::InterpreterDetach)?;
     Ok(task_done)

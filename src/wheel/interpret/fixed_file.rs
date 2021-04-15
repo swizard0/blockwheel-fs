@@ -1,5 +1,12 @@
 use std::{
-    io,
+    fs,
+    thread,
+    io::{
+        self,
+        Seek,
+        Read,
+        Write,
+    },
     path::{
         Path,
         PathBuf,
@@ -8,21 +15,14 @@ use std::{
         Instant,
         Duration,
     },
+    sync::{
+        mpsc,
+    },
 };
 
 use futures::{
     channel::{
-        mpsc,
-    },
-    StreamExt,
-};
-
-use tokio::{
-    fs,
-    io::{
-        AsyncSeekExt,
-        AsyncReadExt,
-        AsyncWriteExt,
+        oneshot,
     },
 };
 
@@ -70,6 +70,7 @@ pub enum Error {
     TerminatorWrite(io::Error),
     BlockRead(io::Error),
     DeviceSyncFlush(io::Error),
+    ThreadSpawn(io::Error),
 }
 
 #[derive(Debug)]
@@ -132,8 +133,14 @@ pub enum WheelOpenError {
     BlockSeekEnd(io::Error),
 }
 
+#[derive(Debug)]
+pub enum TaskJoinError {
+    Create(tokio::task::JoinError),
+    Open(tokio::task::JoinError),
+}
+
 pub struct WheelData<C> where C: Context {
-    pub gen_server: GenServer<C>,
+    pub sync_gen_server: SyncGenServer<C>,
     pub performer: performer::Performer<C>,
 }
 
@@ -155,15 +162,15 @@ pub struct OpenParams<P> {
     pub wheel_filename: P,
 }
 
-pub struct GenServer<C> where C: Context {
+pub struct SyncGenServer<C> where C: Context {
     wheel_file: fs::File,
     request_tx: mpsc::Sender<Command<C>>,
     request_rx: mpsc::Receiver<Command<C>>,
     storage_layout: storage::Layout,
 }
 
-impl<C> GenServer<C> where C: Context {
-    pub async fn create<P>(
+impl<C> SyncGenServer<C> where C: Context {
+    pub fn create<P>(
         params: CreateParams<P>,
         mut performer_builder: performer::PerformerBuilderInit<C>,
     )
@@ -176,7 +183,6 @@ impl<C> GenServer<C> where C: Context {
             .write(true)
             .create(true)
             .open(params.wheel_filename.as_ref())
-            .await
             .map_err(|error| WheelCreateError::FileCreate {
                 wheel_filename: params.wheel_filename.as_ref().to_owned(),
                 error,
@@ -198,7 +204,7 @@ impl<C> GenServer<C> where C: Context {
         let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size
             + performer_builder.storage_layout().terminator_tag_size;
         assert_eq!(cursor, min_wheel_file_size);
-        wheel_file.write_all(performer_builder.work_block()).await
+        wheel_file.write_all(performer_builder.work_block())
             .map_err(WheelCreateError::HeaderTagWrite)?;
 
         let work_block_size_bytes = performer_builder.work_block().capacity();
@@ -221,22 +227,22 @@ impl<C> GenServer<C> where C: Context {
             } else {
                 work_block_size_bytes
             };
-            wheel_file.write_all(&performer_builder.work_block()[.. write_amount]).await
+            wheel_file.write_all(&performer_builder.work_block()[.. write_amount])
                 .map_err(WheelCreateError::ZeroChunkWrite)?;
             cursor += write_amount;
         }
-        wheel_file.flush().await
+        wheel_file.flush()
             .map_err(WheelCreateError::Flush)?;
 
         log::debug!("interpret::fixed_file create success");
         let storage_layout = performer_builder.storage_layout().clone();
 
-        let (request_tx, request_rx) = mpsc::channel(0);
+        let (request_tx, request_rx) = mpsc::channel();
 
         let (performer_builder, _work_block) = performer_builder.start_fill();
 
         Ok(WheelData {
-            gen_server: GenServer {
+            sync_gen_server: SyncGenServer {
                 wheel_file,
                 request_tx,
                 request_rx,
@@ -247,7 +253,7 @@ impl<C> GenServer<C> where C: Context {
         })
     }
 
-    pub async fn open<P>(
+    pub fn open<P>(
         params: OpenParams<P>,
         mut performer_builder: performer::PerformerBuilderInit<C>,
     )
@@ -255,7 +261,7 @@ impl<C> GenServer<C> where C: Context {
     {
         log::debug!("opening existing wheel file [ {:?} ]", params.wheel_filename.as_ref());
 
-        let file_size = match fs::metadata(&params.wheel_filename).await {
+        let file_size = match fs::metadata(&params.wheel_filename) {
             Ok(ref metadata) if metadata.file_type().is_file() =>
                 metadata.len(),
             Ok(..) =>
@@ -273,7 +279,6 @@ impl<C> GenServer<C> where C: Context {
             .write(true)
             .create(false)
             .open(params.wheel_filename.as_ref())
-            .await
             .map_err(|error| WheelOpenError::FileOpen {
                 wheel_filename: params.wheel_filename.as_ref().to_owned(),
                 error,
@@ -287,7 +292,7 @@ impl<C> GenServer<C> where C: Context {
         performer_builder
             .work_block_cleared()
             .extend((0 .. wheel_header_size).map(|_| 0));
-        wheel_file.read_exact(performer_builder.work_block()).await
+        wheel_file.read_exact(performer_builder.work_block())
             .map_err(WheelOpenError::HeaderRead)?;
         let wheel_header: storage::WheelHeader = storage::bincode_options()
             .deserialize_from(&performer_builder.work_block()[..])
@@ -323,7 +328,7 @@ impl<C> GenServer<C> where C: Context {
         work_block.resize(work_block_size_bytes, 0);
         let mut offset = 0;
         'outer: loop {
-            let bytes_read = match wheel_file.read(&mut work_block[offset ..]).await {
+            let bytes_read = match wheel_file.read(&mut work_block[offset ..]) {
                 Ok(0) => {
                     assert!(
                         cursor + builder.storage_layout().block_header_size as u64 >= file_size,
@@ -353,7 +358,7 @@ impl<C> GenServer<C> where C: Context {
                             cursor,
                             &block_header,
                             builder.storage_layout(),
-                        ).await?;
+                        )?;
                         work_block.resize(work_block_size_bytes, 0);
                         offset = 0;
                         start = 0;
@@ -392,10 +397,10 @@ impl<C> GenServer<C> where C: Context {
 
         log::debug!("loaded wheel schema");
 
-        let (request_tx, request_rx) = mpsc::channel(0);
+        let (request_tx, request_rx) = mpsc::channel();
 
         Ok(WheelOpenStatus::Success(WheelData {
-            gen_server: GenServer {
+            sync_gen_server: SyncGenServer {
                 wheel_file,
                 request_tx,
                 request_rx,
@@ -414,13 +419,37 @@ impl<C> GenServer<C> where C: Context {
         }
     }
 
-    pub async fn run(self, blocks_pool: BytesPool) -> Result<(), Error> {
-        busyloop(
-            self.request_rx,
-            self.wheel_file,
-            self.storage_layout,
-            blocks_pool,
-        ).await
+    pub fn run<F, E>(
+        self,
+        blocks_pool: BytesPool,
+        error_tx: oneshot::Sender<E>,
+        error_map: F,
+    )
+        -> Result<(), Error>
+    where F: FnOnce(Error) -> E + Send + 'static,
+          E: Send + 'static,
+          C: 'static,
+          C::WriteBlock: Send,
+          C::ReadBlock: Send,
+          C::DeleteBlock: Send,
+          C::IterBlocksStream: Send,
+    {
+        thread::Builder::new()
+            .name("wheel::interpret::fixed_file".to_string())
+            .spawn(move || {
+                let result = busyloop(
+                    self.request_rx,
+                    self.wheel_file,
+                    self.storage_layout,
+                    blocks_pool,
+                );
+                if let Err(error) = result {
+                    log::error!("wheel::interpret::fixed_file terminated with {:?}", error);
+                    error_tx.send(error_map(error)).ok();
+                }
+            })
+            .map_err(Error::ThreadSpawn)?;
+        Ok(())
     }
 }
 
@@ -429,7 +458,7 @@ enum ReadBlockStatus {
     BlockFound { next_cursor: u64, },
 }
 
-async fn try_read_block(
+fn try_read_block(
     wheel_file: &mut fs::File,
     work_block: &mut Vec<u8>,
     cursor: u64,
@@ -441,11 +470,10 @@ async fn try_read_block(
     // seek to commit tag position
     let commit_offset = wheel_file
         .seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64 + block_header.block_size as u64))
-        .await
         .map_err(WheelOpenError::BlockSeekCommitTag)?;
     // read commit tag
     work_block.resize(storage_layout.commit_tag_size, 0);
-    wheel_file.read_exact(work_block).await
+    wheel_file.read_exact(work_block)
         .map_err(WheelOpenError::BlockReadCommitTag)?;
     let commit_tag: storage::CommitTag = storage::bincode_options()
         .deserialize_from(&work_block[..])
@@ -453,7 +481,7 @@ async fn try_read_block(
     if commit_tag.magic != storage::COMMIT_TAG_MAGIC {
         // not a block: rewind and step
         let next_cursor = cursor + 1;
-        wheel_file.seek(io::SeekFrom::Start(next_cursor)).await
+        wheel_file.seek(io::SeekFrom::Start(next_cursor))
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
 
         log::debug!("NotABlock because of commit magic {:?} != {:?}", commit_tag.magic, storage::COMMIT_TAG_MAGIC);
@@ -463,7 +491,7 @@ async fn try_read_block(
     if commit_tag.block_id != block_header.block_id {
         // some other block terminator: rewind
         let next_cursor = cursor + 1;
-        wheel_file.seek(io::SeekFrom::Start(next_cursor)).await
+        wheel_file.seek(io::SeekFrom::Start(next_cursor))
             .map_err(WheelOpenError::BlockRewindCommitTag)?;
 
         log::debug!("NotABlock because of commit block_id {:?} != header.block_id {:?}", commit_tag.block_id, block_header.block_id);
@@ -477,11 +505,11 @@ async fn try_read_block(
         });
     }
     // seek to block contents
-    wheel_file.seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64)).await
+    wheel_file.seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64))
         .map_err(WheelOpenError::BlockSeekContents)?;
     // read block contents
     work_block.resize(block_header.block_size, 0);
-    wheel_file.read_exact(work_block).await
+    wheel_file.read_exact(work_block)
         .map_err(WheelOpenError::BlockReadContents)?;
     let crc = block::crc(work_block);
     if crc != commit_tag.crc {
@@ -491,7 +519,7 @@ async fn try_read_block(
         });
     }
     // seek to the end of commit tag
-    let next_cursor = wheel_file.seek(io::SeekFrom::Current(storage_layout.commit_tag_size as i64)).await
+    let next_cursor = wheel_file.seek(io::SeekFrom::Current(storage_layout.commit_tag_size as i64))
         .map_err(WheelOpenError::BlockSeekEnd)?;
 
     assert_eq!(next_cursor, commit_offset + storage_layout.commit_tag_size as u64);
@@ -510,7 +538,7 @@ struct Timings {
     total: Duration,
 }
 
-async fn busyloop<C>(
+fn busyloop<C>(
     request_rx: mpsc::Receiver<Command<C>>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
@@ -521,14 +549,12 @@ where C: Context,
 {
     let mut stats = InterpretStats::default();
 
-    let mut fused_request_rx = request_rx.fuse();
-
     let mut terminator_block_bytes = blocks_pool.lend();
     block_append_terminator(&mut terminator_block_bytes)
         .map_err(Error::AppendTerminator)?;
 
     let mut cursor = storage_layout.wheel_header_size as u64;
-    wheel_file.seek(io::SeekFrom::Start(cursor)).await
+    wheel_file.seek(io::SeekFrom::Start(cursor))
         .map_err(Error::WheelFileInitialSeek)?;
     let mut pending_terminator = false;
     let mut timings = Timings::default();
@@ -536,7 +562,12 @@ where C: Context,
         let now_loop = Instant::now();
 
         enum Event<C> { Command(C), }
-        let event = Event::Command(fused_request_rx.next().await);
+        let event = match request_rx.recv() {
+            Ok(command) =>
+                Event::Command(Some(command)),
+            Err(mpsc::RecvError) =>
+                Event::Command(None),
+        };
         timings.event_wait += now_loop.elapsed();
 
         match event {
@@ -554,13 +585,13 @@ where C: Context,
                         stats.count_seek_backward += 1;
                         if pending_terminator {
                             log::debug!("writing pending_terminator during seek @ {}", cursor);
-                            wheel_file.write_all(&terminator_block_bytes).await
+                            wheel_file.write_all(&terminator_block_bytes)
                                 .map_err(Error::TerminatorWrite)?;
                             pending_terminator = false;
                         }
                     }
                     let now = Instant::now();
-                    wheel_file.seek(io::SeekFrom::Start(offset)).await
+                    wheel_file.seek(io::SeekFrom::Start(offset))
                         .map_err(|error| Error::WheelFileSeek { offset, cursor, error, })?;
                     timings.seek += now.elapsed();
                     cursor = offset;
@@ -580,7 +611,7 @@ where C: Context,
                         );
 
                         let now = Instant::now();
-                        wheel_file.write_all(&write_block.write_block_bytes).await
+                        wheel_file.write_all(&write_block.write_block_bytes)
                             .map_err(Error::BlockWrite)?;
                         cursor += write_block.write_block_bytes.len() as u64;
                         timings.write_write += now.elapsed();
@@ -621,7 +652,7 @@ where C: Context,
                         let mut block_bytes = blocks_pool.lend();
                         block_bytes.resize(total_chunk_size, 0);
                         let now = Instant::now();
-                        wheel_file.read_exact(&mut block_bytes).await
+                        wheel_file.read_exact(&mut block_bytes)
                             .map_err(Error::BlockRead)?;
                         cursor += block_bytes.len() as u64;
                         timings.read += now.elapsed();
@@ -646,7 +677,7 @@ where C: Context,
                         log::debug!("delete block {:?} @ {}, context: {:?}", task.block_id, cursor, delete_block.context);
 
                         let now = Instant::now();
-                        wheel_file.write_all(&delete_block.delete_block_bytes).await
+                        wheel_file.write_all(&delete_block.delete_block_bytes)
                             .map_err(Error::BlockWrite)?;
                         cursor += delete_block.delete_block_bytes.len() as u64;
                         timings.write_delete += now.elapsed();
@@ -678,14 +709,14 @@ where C: Context,
                 let now = Instant::now();
                 if pending_terminator {
                     log::debug!("writing pending_terminator during flush @ {}", cursor);
-                    wheel_file.write_all(&terminator_block_bytes).await
+                    wheel_file.write_all(&terminator_block_bytes)
                         .map_err(Error::TerminatorWrite)?;
                     pending_terminator = false;
                     cursor += terminator_block_bytes.len() as u64;
                 } else {
                     log::debug!("flushed with no pending_terminator (cursor @ {})", cursor);
                 }
-                wheel_file.flush().await
+                wheel_file.flush()
                     .map_err(Error::DeviceSyncFlush)?;
                 timings.flush += now.elapsed();
                 if let Err(_send_error) = reply_tx.send(Synced) {

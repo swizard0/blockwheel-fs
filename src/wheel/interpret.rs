@@ -1,9 +1,13 @@
+use std::{
+    sync::{
+        mpsc,
+    },
+};
+
 use futures::{
     channel::{
-        mpsc,
         oneshot,
     },
-    SinkExt,
 };
 
 use bincode::Options;
@@ -64,17 +68,21 @@ pub enum RunError {
     Ram(ram::Error),
 }
 
+#[derive(Debug)]
+pub enum TaskJoinError {
+    FixedFile(fixed_file::TaskJoinError),
+    Ram(ram::TaskJoinError),
+}
+
 #[derive(Clone)]
 pub struct Pid<C> where C: Context {
     request_tx: mpsc::Sender<Command<C>>,
 }
 
 impl<C> Pid<C> where C: Context {
-    pub async fn push_request(&mut self, offset: u64, task: task::Task<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
+    pub fn push_request(&mut self, offset: u64, task: task::Task<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.request_tx
-            .send(Command::Request(Request { offset, task, reply_tx, }))
-            .await
+        self.request_tx.send(Command::Request(Request { offset, task, reply_tx, }))
             .map_err(|_send_error| ero::NoProcError)?;
         Ok(reply_rx)
     }
@@ -82,7 +90,7 @@ impl<C> Pid<C> where C: Context {
     pub async fn device_sync(&mut self) -> Result<Synced, ero::NoProcError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
-            self.request_tx.send(Command::DeviceSync { reply_tx, }).await
+            self.request_tx.send(Command::DeviceSync { reply_tx, })
                 .map_err(|_send_error| ero::NoProcError)?;
             match reply_rx.await {
                 Ok(Synced) =>

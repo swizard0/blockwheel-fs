@@ -58,6 +58,7 @@ pub enum Error {
     InterpreterInit(performer::BuilderError),
     InterpreterOpen(interpret::OpenError),
     InterpreterCreate(interpret::CreateError),
+    InterpreterTaskJoin(interpret::TaskJoinError),
     InterpreterRun(interpret::RunError),
     InterpreterCrash,
     ThreadPoolGone,
@@ -76,7 +77,7 @@ pub struct State<J> where J: edeltraud::Job {
     pub params: Params,
 }
 
-pub async fn busyloop_init<J>(mut supervisor_pid: SupervisorPid, state: State<J>) -> Result<(), ErrorSeverity<State<J>, Error>>
+pub async fn busyloop_init<J>(supervisor_pid: SupervisorPid, state: State<J>) -> Result<(), ErrorSeverity<State<J>, Error>>
 where J: edeltraud::Job + From<job::Job>,
       J::Output: From<job::JobOutput>,
       job::JobOutput: From<J::Output>,
@@ -96,72 +97,111 @@ where J: edeltraud::Job + From<job::Job>,
     let (interpreter_pid, performer, interpret_error_rx) = match state.params.interpreter {
 
         InterpreterParams::FixedFile(ref interpreter_params) => {
-            let open_async = interpret::fixed_file::GenServer::open(
-                interpret::fixed_file::OpenParams {
-                    wheel_filename: &interpreter_params.wheel_filename,
-                },
-                performer_builder,
-            );
-            let interpret::fixed_file::WheelData { gen_server: interpreter_gen_server, performer, } = match open_async.await {
-                Ok(interpret::fixed_file::WheelOpenStatus::Success(wheel_data)) =>
+            let cloned_interpreter_params = interpreter_params.clone();
+            let open_async = tokio::task::spawn_blocking(move || {
+                interpret::fixed_file::SyncGenServer::open(
+                    interpret::fixed_file::OpenParams {
+                        wheel_filename: &cloned_interpreter_params.wheel_filename,
+                    },
+                    performer_builder,
+                )
+            });
+            let interpret::fixed_file::WheelData { sync_gen_server: interpreter_gen_server, performer, } = match open_async.await {
+                Ok(Ok(interpret::fixed_file::WheelOpenStatus::Success(wheel_data))) =>
                     wheel_data,
-                Ok(interpret::fixed_file::WheelOpenStatus::FileNotFound { performer_builder, }) => {
-                    let create_async = interpret::fixed_file::GenServer::create(
-                        interpret::fixed_file::CreateParams {
-                            wheel_filename: &interpreter_params.wheel_filename,
-                            init_wheel_size_bytes: interpreter_params.init_wheel_size_bytes,
-                        },
-                        performer_builder,
-                    );
-                    create_async.await
-                        .map_err(interpret::CreateError::FixedFile)
-                        .map_err(Error::InterpreterCreate)
-                        .map_err(ErrorSeverity::Fatal)?
+                Ok(Ok(interpret::fixed_file::WheelOpenStatus::FileNotFound { performer_builder, })) => {
+                    let cloned_interpreter_params = interpreter_params.clone();
+                    let create_async = tokio::task::spawn_blocking(move || {
+                        interpret::fixed_file::SyncGenServer::create(
+                            interpret::fixed_file::CreateParams {
+                                wheel_filename: &cloned_interpreter_params.wheel_filename,
+                                init_wheel_size_bytes: cloned_interpreter_params.init_wheel_size_bytes,
+                            },
+                            performer_builder,
+                        )
+                    });
+                    match create_async.await {
+                        Ok(Ok(data)) =>
+                            data,
+                        Ok(Err(error)) =>
+                            return Err(ErrorSeverity::Fatal(Error::InterpreterCreate(interpret::CreateError::FixedFile(error)))),
+                        Err(error) =>
+                            return Err(ErrorSeverity::Fatal(
+                                Error::InterpreterTaskJoin(
+                                    interpret::TaskJoinError::FixedFile(
+                                        interpret::fixed_file::TaskJoinError::Create(error),
+                                    ),
+                                ),
+                            )),
+                    }
                 },
-                Err(interpret::fixed_file::WheelOpenError::FileWrongType) => {
+                Ok(Err(interpret::fixed_file::WheelOpenError::FileWrongType)) => {
                     log::error!("[ {:?} ] is not a file", interpreter_params.wheel_filename);
                     return Err(ErrorSeverity::Recoverable { state, });
                 },
-                Err(error) =>
+                Ok(Err(error)) =>
                     return Err(ErrorSeverity::Fatal(Error::InterpreterOpen(interpret::OpenError::FixedFile(error)))),
+                Err(error) =>
+                    return Err(ErrorSeverity::Fatal(
+                        Error::InterpreterTaskJoin(
+                            interpret::TaskJoinError::FixedFile(
+                                interpret::fixed_file::TaskJoinError::Open(error),
+                            ),
+                        ),
+                    )),
             };
 
             let interpreter_pid = interpreter_gen_server.pid();
-            let interpreter_task = interpreter_gen_server.run(state.blocks_pool.clone());
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
-            supervisor_pid.spawn_link_permanent(
-                async move {
-                    if let Err(interpret_error) = interpreter_task.await {
-                        interpret_error_tx.send(ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::FixedFile(interpret_error)))).ok();
-                    }
-                },
-            );
+            interpreter_gen_server
+                .run(
+                    state.blocks_pool.clone(),
+                    interpret_error_tx,
+                    |error| ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::FixedFile(error))),
+                )
+                .map_err(interpret::RunError::FixedFile)
+                .map_err(Error::InterpreterRun)
+                .map_err(ErrorSeverity::Fatal)?;
 
             (interpreter_pid, performer, interpret_error_rx)
         },
 
         InterpreterParams::Ram(ref interpreter_params) => {
-            let create_async = interpret::ram::GenServer::create(
-                interpret::ram::CreateParams {
-                    init_wheel_size_bytes: interpreter_params.init_wheel_size_bytes,
-                },
-                performer_builder,
-            );
-            let interpret::ram::WheelData { gen_server: interpreter_gen_server, performer, } = create_async.await
-                .map_err(interpret::CreateError::Ram)
-                .map_err(Error::InterpreterCreate)
-                .map_err(ErrorSeverity::Fatal)?;
+            let cloned_interpreter_params = interpreter_params.clone();
+            let create_async = tokio::task::spawn_blocking(move || {
+                interpret::ram::SyncGenServer::create(
+                    interpret::ram::CreateParams {
+                        init_wheel_size_bytes: cloned_interpreter_params.init_wheel_size_bytes,
+                    },
+                    performer_builder,
+                )
+            });
+            let interpret::ram::WheelData { sync_gen_server: interpreter_gen_server, performer, } = match create_async.await {
+                Ok(Ok(data)) =>
+                    data,
+                Ok(Err(error)) =>
+                    return Err(ErrorSeverity::Fatal(Error::InterpreterCreate(interpret::CreateError::Ram(error)))),
+                Err(error) =>
+                    return Err(ErrorSeverity::Fatal(
+                        Error::InterpreterTaskJoin(
+                            interpret::TaskJoinError::Ram(
+                                interpret::ram::TaskJoinError::Create(error),
+                            ),
+                        ),
+                    )),
+            };
 
             let interpreter_pid = interpreter_gen_server.pid();
-            let interpreter_task = interpreter_gen_server.run(state.blocks_pool.clone());
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
-            supervisor_pid.spawn_link_permanent(
-                async move {
-                    if let Err(interpret_error) = interpreter_task.await {
-                        interpret_error_tx.send(ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::Ram(interpret_error)))).ok();
-                    }
-                },
-            );
+            interpreter_gen_server
+                .run(
+                    state.blocks_pool.clone(),
+                    interpret_error_tx,
+                    |error| ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::Ram(error))),
+                )
+                .map_err(interpret::RunError::Ram)
+                .map_err(Error::InterpreterRun)
+                .map_err(ErrorSeverity::Fatal)?;
 
             (interpreter_pid, performer, interpret_error_rx)
         },
@@ -437,7 +477,7 @@ where J: edeltraud::Job + From<job::Job>,
             },
 
             performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
-                let reply_rx = interpreter_pid.push_request(offset, task).await
+                let reply_rx = interpreter_pid.push_request(offset, task)
                     .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
                 let performer = next.task_accepted(reply_rx.fuse());
                 performer.next()
