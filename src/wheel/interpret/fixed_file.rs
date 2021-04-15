@@ -650,6 +650,7 @@ where C: Context,
                         );
 
                         let mut block_bytes = blocks_pool.lend();
+                        block_bytes.reserve(total_chunk_size);
                         let now = Instant::now();
                         let wheel_file_ref = Read::by_ref(&mut wheel_file);
                         wheel_file_ref
