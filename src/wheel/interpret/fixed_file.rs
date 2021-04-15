@@ -650,9 +650,11 @@ where C: Context,
                         );
 
                         let mut block_bytes = blocks_pool.lend();
-                        block_bytes.resize(total_chunk_size, 0);
                         let now = Instant::now();
-                        wheel_file.read_exact(&mut block_bytes)
+                        let wheel_file_ref = Read::by_ref(&mut wheel_file);
+                        wheel_file_ref
+                            .take(total_chunk_size as u64)
+                            .read_to_end(&mut block_bytes)
                             .map_err(Error::BlockRead)?;
                         cursor += block_bytes.len() as u64;
                         timings.read += now.elapsed();
