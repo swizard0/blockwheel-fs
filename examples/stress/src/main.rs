@@ -2,19 +2,9 @@ use clap::{
     Parser,
 };
 
-use log::{
-    debug,
-};
-
 use ero::{
     supervisor::{
         SupervisorGenServer,
-    },
-};
-
-use alloc_pool::{
-    bytes::{
-        BytesPool,
     },
 };
 
@@ -40,6 +30,12 @@ struct CliArgs {
     /// parallel background defragmentation tasks count
     #[clap(long, default_value = "4")]
     defrag_parallel_tasks_limit: usize,
+    /// stress parallel tasks count
+    #[clap(long, default_value = "128")]
+    stress_active_tasks_count: usize,
+    /// total number of stress actions
+    #[clap(long, default_value = "1024")]
+    stress_actions_count: usize,
 }
 
 #[tokio::main]
@@ -60,25 +56,31 @@ async fn main() {
         ..Default::default()
     };
 
-    let blocks_pool = BytesPool::new();
-    let thread_pool: edeltraud::Edeltraud<blockwheel::job::Job> = edeltraud::Builder::new()
-        .build()
-        .unwrap();
+    let limits = blockwheel::stress::Limits {
+        active_tasks: cli_args.stress_active_tasks_count,
+        actions: cli_args.stress_actions_count,
+        block_size_bytes: cli_args.work_block_size_bytes - 256,
+    };
 
-    debug!("creating supervisor");
+    log::debug!("creating supervisor");
     let supervisor_gen_server = SupervisorGenServer::new();
     let mut supervisor_pid = supervisor_gen_server.pid();
 
-    debug!("creating blockwheel gen_server");
+    log::debug!("creating blockwheel gen_server");
     let blockwheel_gen_server = blockwheel::GenServer::new();
     let _blockwheel_pid = blockwheel_gen_server.pid();
 
-    supervisor_pid.spawn_link_permanent(blockwheel_gen_server.run(
-        supervisor_pid.clone(),
-        thread_pool,
-        blocks_pool,
-        params,
-    ));
+    supervisor_pid.spawn_link_permanent(async move {
+        let mut blocks = Vec::new();
+        let mut counter = blockwheel::stress::Counter::default();
+        let stress_task = blockwheel::stress::stress_loop(params, &mut blocks, &mut counter, &limits);
+        match stress_task.await {
+            Ok(()) =>
+                log::info!("stress task done: counters = {counter:?}"),
+            Err(error) =>
+                log::error!("stress task error: {error:?}"),
+        }
+    });
 
     supervisor_gen_server.run().await;
 }

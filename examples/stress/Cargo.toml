@@ -1,14 +1,12 @@
 [package]
 name = "stress"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Stress test utility for ero-blockwheel library."
 edition = "2021"
 
 [dependencies]
 ero = { git = "https://github.com/swizard0/ero.git" }
-edeltraud = { git = "https://github.com/swizard0/edeltraud.git" }
-alloc-pool = { git = "https://github.com/swizard0/alloc-pool.git" }
 ero-blockwheel-fs = { path = "../.." }
 
 log = "^0.4"
