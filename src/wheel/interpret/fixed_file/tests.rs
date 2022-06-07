@@ -531,7 +531,7 @@ enum Error {
 }
 
 #[derive(Debug)]
-enum UnexpectedError {
+pub enum UnexpectedError {
     WriteDoneTask {
         expected: String,
         received: task::Done<LocalContext>,
@@ -553,7 +553,7 @@ enum UnexpectedError {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct LocalContext;
+pub struct LocalContext;
 
 type C = &'static str;
 

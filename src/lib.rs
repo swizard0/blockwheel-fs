@@ -32,6 +32,7 @@ use ero::{
 
 pub mod job;
 pub mod block;
+pub mod stress;
 
 mod wheel;
 mod proto;
