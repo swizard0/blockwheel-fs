@@ -46,7 +46,7 @@ async fn main() {
     let params = blockwheel::Params {
         interpreter: blockwheel::InterpreterParams::FixedFile(
             blockwheel::FixedFileInterpreterParams {
-                wheel_filename: cli_args.wheel_filename.into(),
+                wheel_filename: cli_args.wheel_filename.clone().into(),
                 init_wheel_size_bytes: cli_args.init_wheel_size_bytes,
             },
         ),
@@ -70,6 +70,8 @@ async fn main() {
     let blockwheel_gen_server = blockwheel::GenServer::new();
     let _blockwheel_pid = blockwheel_gen_server.pid();
 
+    std::fs::remove_file(&cli_args.wheel_filename).ok();
+
     supervisor_pid.spawn_link_permanent(async move {
         let mut blocks = Vec::new();
         let mut counter = blockwheel::stress::Counter::default();
@@ -77,8 +79,10 @@ async fn main() {
         match stress_task.await {
             Ok(()) =>
                 log::info!("stress task done: counters = {counter:?}"),
-            Err(error) =>
-                log::error!("stress task error: {error:?}"),
+            Err(error) => {
+                log::error!("stress task error: {error:?}");
+                log::error!("blocks: {blocks:?}");
+            },
         }
     });
 

@@ -14,3 +14,6 @@ pretty_env_logger = "^0.4"
 
 clap = { version = "^3.0", features = ["cargo", "derive"] }
 tokio = { version = "^1", features = ["full"] }
+
+[profile.release]
+debug = true
