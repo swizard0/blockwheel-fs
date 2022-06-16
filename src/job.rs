@@ -1,17 +1,22 @@
 use crate::{
-    wheel::interpret,
+    wheel::{
+        interpret,
+        performer_job,
+    },
 };
 
 pub enum Job {
     BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs),
     BlockProcessRead(interpret::BlockProcessReadJobArgs),
     BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs),
+    PerformerJobRun(performer_job::RunJobArgs),
 }
 
 pub enum JobOutput {
     BlockPrepareWrite(BlockPrepareWriteDone),
     BlockProcessRead(BlockProcessReadDone),
     BlockPrepareDelete(BlockPrepareDeleteDone),
+    PerformerJobRun(PerformerJobRunDone),
 }
 
 impl edeltraud::Job for Job {
@@ -25,6 +30,8 @@ impl edeltraud::Job for Job {
                 JobOutput::BlockProcessRead(BlockProcessReadDone(interpret::block_process_read_job(args))),
             Job::BlockPrepareDelete(args) =>
                 JobOutput::BlockPrepareDelete(BlockPrepareDeleteDone(interpret::block_prepare_delete_job(args))),
+            Job::PerformerJobRun(args) =>
+                JobOutput::PerformerJobRun(PerformerJobRunDone(performer_job::run_job(args))),
         }
     }
 }
@@ -64,6 +71,19 @@ impl From<JobOutput> for BlockPrepareDeleteDone {
                 done,
             _other =>
                 panic!("expected JobOutput::BlockPrepareDelete but got other"),
+        }
+    }
+}
+
+pub struct PerformerJobRunDone(pub performer_job::RunJobOutput);
+
+impl From<JobOutput> for PerformerJobRunDone {
+    fn from(output: JobOutput) -> Self {
+        match output {
+            JobOutput::PerformerJobRun(done) =>
+                done,
+            _other =>
+                panic!("expected JobOutput::PerformerJobRun but got other"),
         }
     }
 }

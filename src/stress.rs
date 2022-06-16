@@ -200,7 +200,7 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
         // construct action and run task
         let info = pid.info().await
             .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
-        if blocks.is_empty() || rand::thread_rng().gen_range(0.0 .. 1.0) < 0.5 {
+        if blocks.is_empty() || rand::thread_rng().gen_range(0.0f32 .. 1.0) < 0.5 {
             // write or delete task
             let write_prob = if info.bytes_free * 2 >= info.wheel_size_bytes {
                 1.0

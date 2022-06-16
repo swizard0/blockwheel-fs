@@ -28,7 +28,7 @@ use alloc_pool::bytes::{
     BytesPool,
 };
 
-use super::{
+use crate::{
     job,
     block,
     proto,
@@ -50,6 +50,7 @@ use self::core::{
 };
 
 pub mod interpret;
+pub mod performer_job;
 
 mod lru;
 
