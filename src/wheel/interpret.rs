@@ -1,8 +1,4 @@
-use std::{
-    sync::{
-        mpsc,
-    },
-};
+use crossbeam_channel as channel;
 
 use futures::{
     channel::{
@@ -76,7 +72,7 @@ pub enum TaskJoinError {
 
 #[derive(Clone)]
 pub struct Pid<C> where C: Context {
-    request_tx: mpsc::Sender<Command<C>>,
+    request_tx: channel::Sender<Command<C>>,
 }
 
 impl<C> Pid<C> where C: Context {

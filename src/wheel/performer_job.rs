@@ -13,7 +13,7 @@ use crate::{
 };
 
 pub struct Common {
-//    pub interpreter_pid: interpret::Pid<Context>,
+    pub interpreter_pid: interpret::Pid<Context>,
 }
 
 pub struct RunJobArgs {

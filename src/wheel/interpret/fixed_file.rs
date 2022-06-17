@@ -15,10 +15,9 @@ use std::{
         Instant,
         Duration,
     },
-    sync::{
-        mpsc,
-    },
 };
+
+use crossbeam_channel as channel;
 
 use futures::{
     channel::{
@@ -164,8 +163,8 @@ pub struct OpenParams<P> {
 
 pub struct SyncGenServer<C> where C: Context {
     wheel_file: fs::File,
-    request_tx: mpsc::Sender<Command<C>>,
-    request_rx: mpsc::Receiver<Command<C>>,
+    request_tx: channel::Sender<Command<C>>,
+    request_rx: channel::Receiver<Command<C>>,
     storage_layout: storage::Layout,
 }
 
@@ -237,7 +236,7 @@ impl<C> SyncGenServer<C> where C: Context {
         log::debug!("interpret::fixed_file create success");
         let storage_layout = performer_builder.storage_layout().clone();
 
-        let (request_tx, request_rx) = mpsc::channel();
+        let (request_tx, request_rx) = channel::unbounded();
 
         let (performer_builder, _work_block) = performer_builder.start_fill();
 
@@ -397,7 +396,7 @@ impl<C> SyncGenServer<C> where C: Context {
 
         log::debug!("loaded wheel schema");
 
-        let (request_tx, request_rx) = mpsc::channel();
+        let (request_tx, request_rx) = channel::unbounded();
 
         Ok(WheelOpenStatus::Success(WheelData {
             sync_gen_server: SyncGenServer {
@@ -539,7 +538,7 @@ struct Timings {
 }
 
 fn busyloop<C>(
-    request_rx: mpsc::Receiver<Command<C>>,
+    request_rx: channel::Receiver<Command<C>>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
     blocks_pool: BytesPool,
@@ -565,7 +564,7 @@ where C: Context,
         let event = match request_rx.recv() {
             Ok(command) =>
                 Event::Command(Some(command)),
-            Err(mpsc::RecvError) =>
+            Err(channel::RecvError) =>
                 Event::Command(None),
         };
         timings.event_wait += now_loop.elapsed();

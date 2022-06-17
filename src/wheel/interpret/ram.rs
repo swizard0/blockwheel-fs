@@ -1,10 +1,9 @@
 use std::{
     io,
     thread,
-    sync::{
-        mpsc,
-    },
 };
+
+use crossbeam_channel as channel;
 
 use futures::{
     channel::{
@@ -72,8 +71,8 @@ pub struct CreateParams {
 
 pub struct SyncGenServer<C> where C: Context {
     memory: Vec<u8>,
-    request_tx: mpsc::Sender<Command<C>>,
-    request_rx: mpsc::Receiver<Command<C>>,
+    request_tx: channel::Sender<Command<C>>,
+    request_rx: channel::Receiver<Command<C>>,
     storage_layout: storage::Layout,
 }
 
@@ -117,7 +116,7 @@ impl<C> SyncGenServer<C> where C: Context {
         log::debug!("ram file create success");
         let storage_layout = performer_builder.storage_layout().clone();
 
-        let (request_tx, request_rx) = mpsc::channel();
+        let (request_tx, request_rx) = channel::unbounded();
 
         let (performer_builder, _work_block) = performer_builder.start_fill();
 
@@ -174,7 +173,7 @@ impl<C> SyncGenServer<C> where C: Context {
 }
 
 fn busyloop<C>(
-    request_rx: mpsc::Receiver<Command<C>>,
+    request_rx: channel::Receiver<Command<C>>,
     memory: Vec<u8>,
     storage_layout: storage::Layout,
     blocks_pool: BytesPool,
@@ -197,7 +196,7 @@ where C: Context,
         let event = match request_rx.recv() {
             Ok(command) =>
                 Event::Command(Some(command)),
-            Err(mpsc::RecvError) =>
+            Err(channel::RecvError) =>
                 Event::Command(None),
         };
 
