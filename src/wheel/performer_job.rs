@@ -1,4 +1,8 @@
 use futures::{
+    channel::{
+        mpsc,
+        oneshot,
+    },
     FutureExt,
 };
 
@@ -13,6 +17,8 @@ use crate::{
     blockwheel_context::{
         Context,
     },
+    IterBlocks,
+    IterBlocksItem,
 };
 
 pub struct Common {
@@ -28,9 +34,18 @@ pub enum Kont {
     Init {
         performer: performer::Performer<Context>,
     },
+    MakeIterBlocksStream {
+        next: performer::MakeIterBlocksStreamNext<Context>,
+        iter_blocks_tx: mpsc::Sender<IterBlocksItem>,
+    },
 }
 
-pub struct RunJobDone {
+pub enum RunJobDone {
+    MakeIterBlocksStream {
+        next: performer::MakeIterBlocksStreamNext<Context>,
+        iter_blocks: IterBlocks,
+        iter_blocks_tx: mpsc::Sender<IterBlocksItem>,
+    },
 }
 
 #[derive(Debug)]
@@ -51,6 +66,8 @@ pub fn run_job(
     let mut op = match kont {
         Kont::Init { performer, } =>
             performer.next(),
+        Kont::MakeIterBlocksStream { next, iter_blocks_tx, } =>
+            next.stream_ready(iter_blocks_tx),
     };
 
     loop {
@@ -82,8 +99,17 @@ pub fn run_job(
                 iter_blocks_context: reply_tx,
                 next,
             })) => {
-
-                todo!();
+                let (iter_blocks_tx, iter_blocks_rx) = mpsc::channel(0);
+                let iter_blocks = IterBlocks {
+                    blocks_total_count,
+                    blocks_total_size,
+                    blocks_rx: iter_blocks_rx,
+                };
+                return Ok(RunJobDone::MakeIterBlocksStream {
+                    next,
+                    iter_blocks,
+                    iter_blocks_tx,
+                });
             },
 
             performer::Op::Event(performer::Event {
