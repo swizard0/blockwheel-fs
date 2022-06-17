@@ -1,3 +1,6 @@
+use futures::{
+    FutureExt,
+};
 
 use crate::{
     job,
@@ -30,7 +33,12 @@ pub enum Kont {
 pub struct RunJobDone {
 }
 
-pub type RunJobOutput = RunJobDone;
+#[derive(Debug)]
+pub enum RunJobError {
+    InterpreterCrash,
+}
+
+pub type RunJobOutput = Result<RunJobDone, RunJobError>;
 
 pub fn run_job(
     RunJobArgs {
@@ -62,8 +70,10 @@ pub fn run_job(
             },
 
             performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
-
-                todo!();
+                let reply_rx = common.interpreter_pid.push_request(offset, task)
+                    .map_err(|ero::NoProcError| RunJobError::InterpreterCrash)?;
+                let performer = next.task_accepted(reply_rx.fuse());
+                performer.next()
             },
 
             performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
