@@ -66,6 +66,7 @@ pub enum Error {
     BlockPrepareWrite(interpret::BlockPrepareWriteJobError),
     BlockProcessRead(interpret::BlockProcessReadJobError),
     BlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
+    PerformerJobRun(performer_job::RunJobError),
 }
 
 type Request = proto::Request<Context>;
@@ -214,7 +215,7 @@ where J: edeltraud::Job + From<job::Job>,
 
 async fn busyloop<J>(
     _supervisor_pid: SupervisorPid,
-    mut interpreter_pid: interpret::Pid<Context>,
+    interpreter_pid: interpret::Pid<Context>,
     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
     mut state: State<J>,
     performer: performer::Performer<Context>,
@@ -224,489 +225,517 @@ where J: edeltraud::Job + From<job::Job>,
       J::Output: From<job::JobOutput>,
       job::JobOutput: From<J::Output>,
 {
-    let mut job_tasks = FuturesUnordered::new();
-    let mut iter_tasks = FuturesUnordered::new();
-
-    let mut op = performer.next();
+    let mut env = performer_job::Env { interpreter_pid, };
+    let mut kont = performer_job::Kont::Next { performer, };
     loop {
-        op = match op {
+        let job = job::Job::PerformerJobRun(performer_job::RunJobArgs { env, kont, });
+        let job_output = state.thread_pool.spawn(job).await
+            .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)
+            .map_err(ErrorSeverity::Fatal)?;
+        let job_output: job::JobOutput = job_output.into();
+        let job::PerformerJobRunDone(performer_job_result) = job_output.into();
+        let job_done = performer_job_result
+            .map_err(Error::PerformerJobRun)
+            .map_err(ErrorSeverity::Fatal)?;
 
-            performer::Op::Idle(performer) =>
-                performer.next(),
-
-            performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
-                enum Source<A, B, C, D, E> {
-                    Pid(A),
-                    InterpreterDone(B),
-                    InterpreterError(C),
-                    IterTask(D),
-                    JobTask(E),
-                }
-
-                let mut fused_interpret_result_rx = poll.interpreter_context;
-                loop {
-                    let source = match (iter_tasks.is_empty(), job_tasks.is_empty()) {
-                        (true, true) =>
-                            select! {
-                                result = state.fused_request_rx.next() =>
-                                    Source::Pid(result),
-                                result = fused_interpret_result_rx =>
-                                    Source::InterpreterDone(result),
-                                result = fused_interpret_error_rx =>
-                                    Source::InterpreterError(result),
-                            },
-                        (false, true) =>
-                            select! {
-                                result = state.fused_request_rx.next() =>
-                                    Source::Pid(result),
-                                result = fused_interpret_result_rx =>
-                                    Source::InterpreterDone(result),
-                                result = fused_interpret_error_rx =>
-                                    Source::InterpreterError(result),
-                                result = iter_tasks.next() => match result {
-                                    None =>
-                                        unreachable!(),
-                                    Some(iter_task_done) =>
-                                        Source::IterTask(iter_task_done),
-                                },
-                            },
-                        (true, false) =>
-                            select! {
-                                result = state.fused_request_rx.next() =>
-                                    Source::Pid(result),
-                                result = fused_interpret_result_rx =>
-                                    Source::InterpreterDone(result),
-                                result = fused_interpret_error_rx =>
-                                    Source::InterpreterError(result),
-                                result = job_tasks.next() => match result {
-                                    None =>
-                                        unreachable!(),
-                                    Some(job_task_done) =>
-                                        Source::JobTask(job_task_done),
-                                },
-                            },
-                        (false, false) =>
-                            select! {
-                                result = state.fused_request_rx.next() =>
-                                    Source::Pid(result),
-                                result = fused_interpret_result_rx =>
-                                    Source::InterpreterDone(result),
-                                result = fused_interpret_error_rx =>
-                                    Source::InterpreterError(result),
-                                result = iter_tasks.next() => match result {
-                                    None =>
-                                        unreachable!(),
-                                    Some(iter_task_done) =>
-                                        Source::IterTask(iter_task_done),
-                                },
-                                result = job_tasks.next() => match result {
-                                    None =>
-                                        unreachable!(),
-                                    Some(job_task_done) =>
-                                        Source::JobTask(job_task_done),
-                                },
-                            },
-                    };
-                    break match source {
-                        Source::Pid(Some(request)) =>
-                            poll.next.incoming_request(request, fused_interpret_result_rx),
-                        Source::InterpreterDone(Ok(interpret::DoneTask { task_done, stats, })) =>
-                            poll.next.incoming_task_done_stats(task_done, stats),
-                        Source::Pid(None) => {
-                            log::debug!("all Pid frontends have been terminated");
-                            return Ok(());
-                        },
-                        Source::InterpreterDone(Err(oneshot::Canceled)) => {
-                            log::debug!("interpreter reply channel closed: shutting down");
-                            return Ok(());
-                        },
-                        Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-                            return Err(ErrorSeverity::Recoverable { state, }),
-                        Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-                            return Err(ErrorSeverity::Fatal(error)),
-                        Source::InterpreterError(Err(oneshot::Canceled)) => {
-                            log::debug!("interpreter error channel closed: shutting down");
-                            return Ok(());
-                        },
-                        Source::IterTask(IterTaskDone::PeerLost) => {
-                            log::debug!("client closed iteration channel");
-                            continue;
-                        },
-                        Source::IterTask(IterTaskDone::ItemSent(iter_block_state)) =>
-                            poll.next.incoming_iter_blocks(iter_block_state, fused_interpret_result_rx),
-                        Source::IterTask(IterTaskDone::Finished) => {
-                            log::debug!("iteration finished");
-                            continue;
-                        },
-                        Source::JobTask(Ok(JobDone::BlockPrepareWrite { block_id, context, done, })) =>
-                            poll.next.prepared_write_block_done(
-                                block_id,
-                                done.write_block_bytes,
-                                context,
-                                fused_interpret_result_rx,
-                            ),
-                        Source::JobTask(Ok(JobDone::BlockProcessRead { pending_contexts, done, })) =>
-                            poll.next.process_read_block_done(
-                                done.block_id,
-                                done.block_bytes,
-                                pending_contexts,
-                                fused_interpret_result_rx,
-                            ),
-                        Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
-                            poll.next.prepared_delete_block_done(
-                                block_id,
-                                done.delete_block_bytes,
-                                context,
-                                fused_interpret_result_rx,
-                            ),
-                        Source::JobTask(Err(error)) =>
-                            return Err(ErrorSeverity::Fatal(error)),
-                    }
-                }
-            },
-
-            performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
-                enum Source<A, B, C, D> {
-                    Pid(A),
-                    InterpreterError(B),
-                    IterTask(C),
-                    JobTask(D),
-                }
-
-                loop {
-                    let source = match (iter_tasks.is_empty(), job_tasks.is_empty()) {
-                        (true, true) =>
-                            select! {
-                                result = state.fused_request_rx.next() =>
-                                    Source::Pid(result),
-                                result = fused_interpret_error_rx =>
-                                    Source::InterpreterError(result),
-                            },
-                        (false, true) =>
-                            select! {
-                                result = state.fused_request_rx.next() =>
-                                    Source::Pid(result),
-                                result = fused_interpret_error_rx =>
-                                    Source::InterpreterError(result),
-                                result = iter_tasks.next() => match result {
-                                    None =>
-                                        unreachable!(),
-                                    Some(iter_task_done) =>
-                                        Source::IterTask(iter_task_done),
-                                },
-                            },
-                        (true, false) =>
-                            select! {
-                                result = state.fused_request_rx.next() =>
-                                    Source::Pid(result),
-                                result = fused_interpret_error_rx =>
-                                    Source::InterpreterError(result),
-                                result = job_tasks.next() => match result {
-                                    None =>
-                                        unreachable!(),
-                                    Some(job_task_done) =>
-                                        Source::JobTask(job_task_done),
-                                },
-                            },
-                        (false, false) =>
-                            select! {
-                                result = state.fused_request_rx.next() =>
-                                    Source::Pid(result),
-                                result = fused_interpret_error_rx =>
-                                    Source::InterpreterError(result),
-                                result = iter_tasks.next() => match result {
-                                    None =>
-                                        unreachable!(),
-                                    Some(iter_task_done) =>
-                                        Source::IterTask(iter_task_done),
-                                },
-                                result = job_tasks.next() => match result {
-                                    None =>
-                                        unreachable!(),
-                                    Some(job_task_done) =>
-                                        Source::JobTask(job_task_done),
-                                },
-                            },
-                    };
-                    break match source {
-                        Source::Pid(Some(request)) =>
-                            poll.next.incoming_request(request),
-                        Source::Pid(None) => {
-                            log::debug!("all Pid frontends have been terminated");
-                            return Ok(());
-                        },
-                        Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-                            return Err(ErrorSeverity::Recoverable { state, }),
-                        Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-                            return Err(ErrorSeverity::Fatal(error)),
-                        Source::InterpreterError(Err(oneshot::Canceled)) => {
-                            log::debug!("interpreter error channel closed: shutting down");
-                            return Ok(());
-                        },
-                        Source::IterTask(IterTaskDone::PeerLost) => {
-                            log::debug!("client closed iteration channel");
-                            continue;
-                        },
-                        Source::IterTask(IterTaskDone::ItemSent(iter_block_state)) =>
-                            poll.next.incoming_iter_blocks(iter_block_state),
-                        Source::IterTask(IterTaskDone::Finished) => {
-                            log::debug!("iteration finished");
-                            continue;
-                        },
-                        Source::JobTask(Ok(JobDone::BlockPrepareWrite { block_id, context, done, })) =>
-                            poll.next.prepared_write_block_done(
-                                block_id,
-                                done.write_block_bytes,
-                                context,
-                            ),
-                        Source::JobTask(Ok(JobDone::BlockProcessRead { pending_contexts, done, })) =>
-                            poll.next.process_read_block_done(
-                                done.block_id,
-                                done.block_bytes,
-                                pending_contexts,
-                            ),
-                        Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
-                            poll.next.prepared_delete_block_done(
-                                block_id,
-                                done.delete_block_bytes,
-                                context,
-                            ),
-                        Source::JobTask(Err(error)) =>
-                            return Err(ErrorSeverity::Fatal(error)),
-                    }
-                }
-            },
-
-            performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
-                let reply_rx = interpreter_pid.push_request(offset, task)
-                    .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
-                let performer = next.task_accepted(reply_rx.fuse());
-                performer.next()
-            },
-
-            performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
-                blocks_total_count,
-                blocks_total_size,
-                iter_blocks_context: reply_tx,
-                next,
-            })) => {
-                let (iter_blocks_tx, iter_blocks_rx) = mpsc::channel(0);
-                let iter_blocks = IterBlocks {
-                    blocks_total_count,
-                    blocks_total_size,
-                    blocks_rx: iter_blocks_rx,
-                };
-                if let Err(_send_error) = reply_tx.send(iter_blocks) {
-                    log::warn!("Pid is gone during IterBlocks query result send");
-                }
-                next.stream_ready(iter_blocks_tx)
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::Info(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::InfoOp::Success { info, }, },
-                ),
-                performer,
-            }) => {
-                if let Err(_send_error) = reply_tx.send(info) {
-                    log::warn!("Pid is gone during Info query result send");
-                }
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::Flush(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::FlushOp::Flushed, },
-                ),
-                performer,
-            }) => {
-                let interpret::Synced = interpreter_pid.device_sync().await
+        env = job_done.env;
+        match job_done.done {
+            performer_job::Done::TaskDoneFlush { performer, reply_tx, } => {
+                let interpret::Synced = env.interpreter_pid.device_sync().await
                     .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
                 if let Err(_send_error) = reply_tx.send(Flushed) {
                     log::warn!("Pid is gone during Flush query result send");
                 }
-                performer.next()
+                kont = performer_job::Kont::Next { performer, };
             },
+        }
 
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::WriteBlock(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::WriteBlockOp::NoSpaceLeft, },
-                ),
-                performer,
-            }) => {
-                if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) {
-                    log::warn!("reply channel has been closed during WriteBlock result send");
-                }
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::WriteBlock(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::WriteBlockOp::Done { block_id, }, },
-                ),
-                performer,
-            }) => {
-                if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
-                    log::warn!("client channel was closed before a block is actually written");
-                }
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::ReadBlock(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::NotFound, },
-                ),
-                performer,
-            }) => {
-                if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestReadBlockError::NotFound)) {
-                    log::warn!("reply channel has been closed during ReadBlock result send");
-                }
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::ReadBlock(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::Done { block_bytes, }, },
-                ),
-                performer,
-            }) => {
-                if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-                    log::warn!("client channel was closed before a block is actually read");
-                }
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::DeleteBlock(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::DeleteBlockOp::NotFound, },
-                ),
-                performer,
-            }) => {
-                if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestDeleteBlockError::NotFound)) {
-                    log::warn!("reply channel has been closed during DeleteBlock result send");
-                }
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::DeleteBlock(
-                    performer::TaskDoneOp { context: reply_tx, op: performer::DeleteBlockOp::Done { .. }, },
-                ),
-                performer,
-            }) => {
-                if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
-                    log::warn!("client channel was closed before a block is actually deleted");
-                }
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::IterBlocksItem(
-                    performer::IterBlocksItemOp {
-                        block_id,
-                        block_bytes,
-                        iter_blocks_state: performer::IterBlocksState {
-                            iter_blocks_stream_context: blocks_tx,
-                            iter_blocks_cursor,
-                        },
-                    },
-                ),
-                performer,
-            }) => {
-                iter_tasks.push(push_iter_blocks_item(
-                    blocks_tx,
-                    IterTask::Item {
-                        block_id,
-                        block_bytes,
-                        iter_blocks_cursor,
-                    },
-                ));
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::IterBlocksFinish(
-                    performer::IterBlocksFinishOp {
-                        iter_blocks_stream_context: blocks_tx,
-                    },
-                ),
-                performer,
-            }) => {
-                iter_tasks.push(push_iter_blocks_item(blocks_tx, IterTask::Finish));
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::PrepareInterpretTask(
-                    performer::PrepareInterpretTaskOp {
-                        block_id,
-                        task: performer::PrepareInterpretTaskKind::WriteBlock(performer::PrepareInterpretTaskWriteBlock {
-                            block_bytes,
-                            context,
-                        }),
-                    },
-                ),
-                performer,
-            }) => {
-                job_tasks.push(make_job_task::<Context, _>(
-                    JobTask::BlockPrepareWrite {
-                        block_id,
-                        block_bytes,
-                        blocks_pool: state.blocks_pool.clone(),
-                        context,
-                    },
-                    state.thread_pool.clone(),
-                ));
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::PrepareInterpretTask(
-                    performer::PrepareInterpretTaskOp {
-                        block_id,
-                        task: performer::PrepareInterpretTaskKind::DeleteBlock(performer::PrepareInterpretTaskDeleteBlock {
-                            context,
-                        }),
-                    },
-                ),
-                performer,
-            }) => {
-                job_tasks.push(make_job_task(
-                    JobTask::BlockPrepareDelete {
-                        block_id,
-                        blocks_pool: state.blocks_pool.clone(),
-                        context,
-                    },
-                    state.thread_pool.clone(),
-                ));
-                performer.next()
-            },
-
-            performer::Op::Event(performer::Event {
-                op: performer::EventOp::ProcessReadBlockTaskDone(
-                    performer::ProcessReadBlockTaskDoneOp {
-                        storage_layout,
-                        block_header,
-                        block_bytes,
-                        pending_contexts,
-                    },
-                ),
-                performer,
-            }) => {
-                job_tasks.push(make_job_task(
-                    JobTask::BlockProcessRead {
-                        storage_layout,
-                        block_header,
-                        block_bytes,
-                        pending_contexts,
-                    },
-                    state.thread_pool.clone(),
-                ));
-                performer.next()
-            },
-
-        };
+        todo!()
     }
+
+    // let mut job_tasks = FuturesUnordered::new();
+    // let mut iter_tasks = FuturesUnordered::new();
+
+    // let mut op = performer.next();
+    // loop {
+    //     op = match op {
+
+    //         performer::Op::Idle(performer) =>
+    //             performer.next(),
+
+    //         performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
+    //             enum Source<A, B, C, D, E> {
+    //                 Pid(A),
+    //                 InterpreterDone(B),
+    //                 InterpreterError(C),
+    //                 IterTask(D),
+    //                 JobTask(E),
+    //             }
+
+    //             let mut fused_interpret_result_rx = poll.interpreter_context;
+    //             loop {
+    //                 let source = match (iter_tasks.is_empty(), job_tasks.is_empty()) {
+    //                     (true, true) =>
+    //                         select! {
+    //                             result = state.fused_request_rx.next() =>
+    //                                 Source::Pid(result),
+    //                             result = fused_interpret_result_rx =>
+    //                                 Source::InterpreterDone(result),
+    //                             result = fused_interpret_error_rx =>
+    //                                 Source::InterpreterError(result),
+    //                         },
+    //                     (false, true) =>
+    //                         select! {
+    //                             result = state.fused_request_rx.next() =>
+    //                                 Source::Pid(result),
+    //                             result = fused_interpret_result_rx =>
+    //                                 Source::InterpreterDone(result),
+    //                             result = fused_interpret_error_rx =>
+    //                                 Source::InterpreterError(result),
+    //                             result = iter_tasks.next() => match result {
+    //                                 None =>
+    //                                     unreachable!(),
+    //                                 Some(iter_task_done) =>
+    //                                     Source::IterTask(iter_task_done),
+    //                             },
+    //                         },
+    //                     (true, false) =>
+    //                         select! {
+    //                             result = state.fused_request_rx.next() =>
+    //                                 Source::Pid(result),
+    //                             result = fused_interpret_result_rx =>
+    //                                 Source::InterpreterDone(result),
+    //                             result = fused_interpret_error_rx =>
+    //                                 Source::InterpreterError(result),
+    //                             result = job_tasks.next() => match result {
+    //                                 None =>
+    //                                     unreachable!(),
+    //                                 Some(job_task_done) =>
+    //                                     Source::JobTask(job_task_done),
+    //                             },
+    //                         },
+    //                     (false, false) =>
+    //                         select! {
+    //                             result = state.fused_request_rx.next() =>
+    //                                 Source::Pid(result),
+    //                             result = fused_interpret_result_rx =>
+    //                                 Source::InterpreterDone(result),
+    //                             result = fused_interpret_error_rx =>
+    //                                 Source::InterpreterError(result),
+    //                             result = iter_tasks.next() => match result {
+    //                                 None =>
+    //                                     unreachable!(),
+    //                                 Some(iter_task_done) =>
+    //                                     Source::IterTask(iter_task_done),
+    //                             },
+    //                             result = job_tasks.next() => match result {
+    //                                 None =>
+    //                                     unreachable!(),
+    //                                 Some(job_task_done) =>
+    //                                     Source::JobTask(job_task_done),
+    //                             },
+    //                         },
+    //                 };
+    //                 break match source {
+    //                     Source::Pid(Some(request)) =>
+    //                         poll.next.incoming_request(request, fused_interpret_result_rx),
+    //                     Source::InterpreterDone(Ok(interpret::DoneTask { task_done, stats, })) =>
+    //                         poll.next.incoming_task_done_stats(task_done, stats),
+    //                     Source::Pid(None) => {
+    //                         log::debug!("all Pid frontends have been terminated");
+    //                         return Ok(());
+    //                     },
+    //                     Source::InterpreterDone(Err(oneshot::Canceled)) => {
+    //                         log::debug!("interpreter reply channel closed: shutting down");
+    //                         return Ok(());
+    //                     },
+    //                     Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+    //                         return Err(ErrorSeverity::Recoverable { state, }),
+    //                     Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+    //                         return Err(ErrorSeverity::Fatal(error)),
+    //                     Source::InterpreterError(Err(oneshot::Canceled)) => {
+    //                         log::debug!("interpreter error channel closed: shutting down");
+    //                         return Ok(());
+    //                     },
+    //                     Source::IterTask(IterTaskDone::PeerLost) => {
+    //                         log::debug!("client closed iteration channel");
+    //                         continue;
+    //                     },
+    //                     Source::IterTask(IterTaskDone::ItemSent(iter_block_state)) =>
+    //                         poll.next.incoming_iter_blocks(iter_block_state, fused_interpret_result_rx),
+    //                     Source::IterTask(IterTaskDone::Finished) => {
+    //                         log::debug!("iteration finished");
+    //                         continue;
+    //                     },
+    //                     Source::JobTask(Ok(JobDone::BlockPrepareWrite { block_id, context, done, })) =>
+    //                         poll.next.prepared_write_block_done(
+    //                             block_id,
+    //                             done.write_block_bytes,
+    //                             context,
+    //                             fused_interpret_result_rx,
+    //                         ),
+    //                     Source::JobTask(Ok(JobDone::BlockProcessRead { pending_contexts, done, })) =>
+    //                         poll.next.process_read_block_done(
+    //                             done.block_id,
+    //                             done.block_bytes,
+    //                             pending_contexts,
+    //                             fused_interpret_result_rx,
+    //                         ),
+    //                     Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
+    //                         poll.next.prepared_delete_block_done(
+    //                             block_id,
+    //                             done.delete_block_bytes,
+    //                             context,
+    //                             fused_interpret_result_rx,
+    //                         ),
+    //                     Source::JobTask(Err(error)) =>
+    //                         return Err(ErrorSeverity::Fatal(error)),
+    //                 }
+    //             }
+    //         },
+
+    //         performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
+    //             enum Source<A, B, C, D> {
+    //                 Pid(A),
+    //                 InterpreterError(B),
+    //                 IterTask(C),
+    //                 JobTask(D),
+    //             }
+
+    //             loop {
+    //                 let source = match (iter_tasks.is_empty(), job_tasks.is_empty()) {
+    //                     (true, true) =>
+    //                         select! {
+    //                             result = state.fused_request_rx.next() =>
+    //                                 Source::Pid(result),
+    //                             result = fused_interpret_error_rx =>
+    //                                 Source::InterpreterError(result),
+    //                         },
+    //                     (false, true) =>
+    //                         select! {
+    //                             result = state.fused_request_rx.next() =>
+    //                                 Source::Pid(result),
+    //                             result = fused_interpret_error_rx =>
+    //                                 Source::InterpreterError(result),
+    //                             result = iter_tasks.next() => match result {
+    //                                 None =>
+    //                                     unreachable!(),
+    //                                 Some(iter_task_done) =>
+    //                                     Source::IterTask(iter_task_done),
+    //                             },
+    //                         },
+    //                     (true, false) =>
+    //                         select! {
+    //                             result = state.fused_request_rx.next() =>
+    //                                 Source::Pid(result),
+    //                             result = fused_interpret_error_rx =>
+    //                                 Source::InterpreterError(result),
+    //                             result = job_tasks.next() => match result {
+    //                                 None =>
+    //                                     unreachable!(),
+    //                                 Some(job_task_done) =>
+    //                                     Source::JobTask(job_task_done),
+    //                             },
+    //                         },
+    //                     (false, false) =>
+    //                         select! {
+    //                             result = state.fused_request_rx.next() =>
+    //                                 Source::Pid(result),
+    //                             result = fused_interpret_error_rx =>
+    //                                 Source::InterpreterError(result),
+    //                             result = iter_tasks.next() => match result {
+    //                                 None =>
+    //                                     unreachable!(),
+    //                                 Some(iter_task_done) =>
+    //                                     Source::IterTask(iter_task_done),
+    //                             },
+    //                             result = job_tasks.next() => match result {
+    //                                 None =>
+    //                                     unreachable!(),
+    //                                 Some(job_task_done) =>
+    //                                     Source::JobTask(job_task_done),
+    //                             },
+    //                         },
+    //                 };
+    //                 break match source {
+    //                     Source::Pid(Some(request)) =>
+    //                         poll.next.incoming_request(request),
+    //                     Source::Pid(None) => {
+    //                         log::debug!("all Pid frontends have been terminated");
+    //                         return Ok(());
+    //                     },
+    //                     Source::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+    //                         return Err(ErrorSeverity::Recoverable { state, }),
+    //                     Source::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+    //                         return Err(ErrorSeverity::Fatal(error)),
+    //                     Source::InterpreterError(Err(oneshot::Canceled)) => {
+    //                         log::debug!("interpreter error channel closed: shutting down");
+    //                         return Ok(());
+    //                     },
+    //                     Source::IterTask(IterTaskDone::PeerLost) => {
+    //                         log::debug!("client closed iteration channel");
+    //                         continue;
+    //                     },
+    //                     Source::IterTask(IterTaskDone::ItemSent(iter_block_state)) =>
+    //                         poll.next.incoming_iter_blocks(iter_block_state),
+    //                     Source::IterTask(IterTaskDone::Finished) => {
+    //                         log::debug!("iteration finished");
+    //                         continue;
+    //                     },
+    //                     Source::JobTask(Ok(JobDone::BlockPrepareWrite { block_id, context, done, })) =>
+    //                         poll.next.prepared_write_block_done(
+    //                             block_id,
+    //                             done.write_block_bytes,
+    //                             context,
+    //                         ),
+    //                     Source::JobTask(Ok(JobDone::BlockProcessRead { pending_contexts, done, })) =>
+    //                         poll.next.process_read_block_done(
+    //                             done.block_id,
+    //                             done.block_bytes,
+    //                             pending_contexts,
+    //                         ),
+    //                     Source::JobTask(Ok(JobDone::BlockPrepareDelete { block_id, context, done, })) =>
+    //                         poll.next.prepared_delete_block_done(
+    //                             block_id,
+    //                             done.delete_block_bytes,
+    //                             context,
+    //                         ),
+    //                     Source::JobTask(Err(error)) =>
+    //                         return Err(ErrorSeverity::Fatal(error)),
+    //                 }
+    //             }
+    //         },
+
+    //         performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
+    //             let reply_rx = interpreter_pid.push_request(offset, task)
+    //                 .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
+    //             let performer = next.task_accepted(reply_rx.fuse());
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
+    //             blocks_total_count,
+    //             blocks_total_size,
+    //             iter_blocks_context: reply_tx,
+    //             next,
+    //         })) => {
+    //             let (iter_blocks_tx, iter_blocks_rx) = mpsc::channel(0);
+    //             let iter_blocks = IterBlocks {
+    //                 blocks_total_count,
+    //                 blocks_total_size,
+    //                 blocks_rx: iter_blocks_rx,
+    //             };
+    //             if let Err(_send_error) = reply_tx.send(iter_blocks) {
+    //                 log::warn!("Pid is gone during IterBlocks query result send");
+    //             }
+    //             next.stream_ready(iter_blocks_tx)
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::Info(
+    //                 performer::TaskDoneOp { context: reply_tx, op: performer::InfoOp::Success { info, }, },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             if let Err(_send_error) = reply_tx.send(info) {
+    //                 log::warn!("Pid is gone during Info query result send");
+    //             }
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::Flush(
+    //                 performer::TaskDoneOp { context: reply_tx, op: performer::FlushOp::Flushed, },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             let interpret::Synced = interpreter_pid.device_sync().await
+    //                 .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
+    //             if let Err(_send_error) = reply_tx.send(Flushed) {
+    //                 log::warn!("Pid is gone during Flush query result send");
+    //             }
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::WriteBlock(
+    //                 performer::TaskDoneOp { context: reply_tx, op: performer::WriteBlockOp::NoSpaceLeft, },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) {
+    //                 log::warn!("reply channel has been closed during WriteBlock result send");
+    //             }
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::WriteBlock(
+    //                 performer::TaskDoneOp { context: reply_tx, op: performer::WriteBlockOp::Done { block_id, }, },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
+    //                 log::warn!("client channel was closed before a block is actually written");
+    //             }
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::ReadBlock(
+    //                 performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::NotFound, },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestReadBlockError::NotFound)) {
+    //                 log::warn!("reply channel has been closed during ReadBlock result send");
+    //             }
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::ReadBlock(
+    //                 performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::Done { block_bytes, }, },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+    //                 log::warn!("client channel was closed before a block is actually read");
+    //             }
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::DeleteBlock(
+    //                 performer::TaskDoneOp { context: reply_tx, op: performer::DeleteBlockOp::NotFound, },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             if let Err(_send_error) = reply_tx.send(Err(super::blockwheel_context::RequestDeleteBlockError::NotFound)) {
+    //                 log::warn!("reply channel has been closed during DeleteBlock result send");
+    //             }
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::DeleteBlock(
+    //                 performer::TaskDoneOp { context: reply_tx, op: performer::DeleteBlockOp::Done { .. }, },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
+    //                 log::warn!("client channel was closed before a block is actually deleted");
+    //             }
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::IterBlocksItem(
+    //                 performer::IterBlocksItemOp {
+    //                     block_id,
+    //                     block_bytes,
+    //                     iter_blocks_state: performer::IterBlocksState {
+    //                         iter_blocks_stream_context: blocks_tx,
+    //                         iter_blocks_cursor,
+    //                     },
+    //                 },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             iter_tasks.push(push_iter_blocks_item(
+    //                 blocks_tx,
+    //                 IterTask::Item {
+    //                     block_id,
+    //                     block_bytes,
+    //                     iter_blocks_cursor,
+    //                 },
+    //             ));
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::IterBlocksFinish(
+    //                 performer::IterBlocksFinishOp {
+    //                     iter_blocks_stream_context: blocks_tx,
+    //                 },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             iter_tasks.push(push_iter_blocks_item(blocks_tx, IterTask::Finish));
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::PrepareInterpretTask(
+    //                 performer::PrepareInterpretTaskOp {
+    //                     block_id,
+    //                     task: performer::PrepareInterpretTaskKind::WriteBlock(performer::PrepareInterpretTaskWriteBlock {
+    //                         block_bytes,
+    //                         context,
+    //                     }),
+    //                 },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             job_tasks.push(make_job_task::<Context, _>(
+    //                 JobTask::BlockPrepareWrite {
+    //                     block_id,
+    //                     block_bytes,
+    //                     blocks_pool: state.blocks_pool.clone(),
+    //                     context,
+    //                 },
+    //                 state.thread_pool.clone(),
+    //             ));
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::PrepareInterpretTask(
+    //                 performer::PrepareInterpretTaskOp {
+    //                     block_id,
+    //                     task: performer::PrepareInterpretTaskKind::DeleteBlock(performer::PrepareInterpretTaskDeleteBlock {
+    //                         context,
+    //                     }),
+    //                 },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             job_tasks.push(make_job_task(
+    //                 JobTask::BlockPrepareDelete {
+    //                     block_id,
+    //                     blocks_pool: state.blocks_pool.clone(),
+    //                     context,
+    //                 },
+    //                 state.thread_pool.clone(),
+    //             ));
+    //             performer.next()
+    //         },
+
+    //         performer::Op::Event(performer::Event {
+    //             op: performer::EventOp::ProcessReadBlockTaskDone(
+    //                 performer::ProcessReadBlockTaskDoneOp {
+    //                     storage_layout,
+    //                     block_header,
+    //                     block_bytes,
+    //                     pending_contexts,
+    //                 },
+    //             ),
+    //             performer,
+    //         }) => {
+    //             job_tasks.push(make_job_task(
+    //                 JobTask::BlockProcessRead {
+    //                     storage_layout,
+    //                     block_header,
+    //                     block_bytes,
+    //                     pending_contexts,
+    //                 },
+    //                 state.thread_pool.clone(),
+    //             ));
+    //             performer.next()
+    //         },
+
+    //     };
+    // }
 }
 
 enum IterTask {

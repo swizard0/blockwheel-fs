@@ -15,36 +15,40 @@ use crate::{
         },
     },
     blockwheel_context::{
+        self,
         Context,
     },
+    Info,
+    Flushed,
+    Deleted,
     IterBlocks,
     IterBlocksItem,
 };
 
-pub struct Common {
+pub struct Env {
     pub interpreter_pid: interpret::Pid<Context>,
 }
 
 pub struct RunJobArgs {
-    pub common: Common,
+    pub env: Env,
     pub kont: Kont,
 }
 
 pub enum Kont {
-    Init {
+    Next {
         performer: performer::Performer<Context>,
-    },
-    MakeIterBlocksStream {
-        next: performer::MakeIterBlocksStreamNext<Context>,
-        iter_blocks_tx: mpsc::Sender<IterBlocksItem>,
     },
 }
 
-pub enum RunJobDone {
-    MakeIterBlocksStream {
-        next: performer::MakeIterBlocksStreamNext<Context>,
-        iter_blocks: IterBlocks,
-        iter_blocks_tx: mpsc::Sender<IterBlocksItem>,
+pub struct RunJobDone {
+    pub env: Env,
+    pub done: Done,
+}
+
+pub enum Done {
+    TaskDoneFlush {
+        performer: performer::Performer<Context>,
+        reply_tx: oneshot::Sender<Flushed>,
     },
 }
 
@@ -57,17 +61,15 @@ pub type RunJobOutput = Result<RunJobDone, RunJobError>;
 
 pub fn run_job(
     RunJobArgs {
-        mut common,
+        mut env,
         kont,
     }: RunJobArgs,
 )
     -> RunJobOutput
 {
     let mut op = match kont {
-        Kont::Init { performer, } =>
+        Kont::Next { performer, } =>
             performer.next(),
-        Kont::MakeIterBlocksStream { next, iter_blocks_tx, } =>
-            next.stream_ready(iter_blocks_tx),
     };
 
     loop {
@@ -87,7 +89,7 @@ pub fn run_job(
             },
 
             performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
-                let reply_rx = common.interpreter_pid.push_request(offset, task)
+                let reply_rx = env.interpreter_pid.push_request(offset, task)
                     .map_err(|ero::NoProcError| RunJobError::InterpreterCrash)?;
                 let performer = next.task_accepted(reply_rx.fuse());
                 performer.next()
@@ -105,11 +107,10 @@ pub fn run_job(
                     blocks_total_size,
                     blocks_rx: iter_blocks_rx,
                 };
-                return Ok(RunJobDone::MakeIterBlocksStream {
-                    next,
-                    iter_blocks,
-                    iter_blocks_tx,
-                });
+                if let Err(_send_error) = reply_tx.send(iter_blocks) {
+                    log::warn!("Pid is gone during IterBlocks query result send");
+                }
+                next.stream_ready(iter_blocks_tx)
             },
 
             performer::Op::Event(performer::Event {
@@ -118,8 +119,11 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
+                if let Err(_send_error) = reply_tx.send(info) {
+                    log::warn!("Pid is gone during Info query result send");
+                }
+                performer.next()
 
-                todo!();
             },
 
             performer::Op::Event(performer::Event {
@@ -127,10 +131,11 @@ pub fn run_job(
                     performer::TaskDoneOp { context: reply_tx, op: performer::FlushOp::Flushed, },
                 ),
                 performer,
-            }) => {
-
-                todo!();
-            },
+            }) =>
+                return Ok(RunJobDone { env, done: Done::TaskDoneFlush {
+                    performer,
+                    reply_tx,
+                }}),
 
             performer::Op::Event(performer::Event {
                 op: performer::EventOp::WriteBlock(
@@ -138,8 +143,10 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
-
-                todo!();
+                if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) {
+                    log::warn!("reply channel has been closed during WriteBlock result send");
+                }
+                performer.next()
             },
 
             performer::Op::Event(performer::Event {
@@ -148,8 +155,10 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
-
-                todo!();
+                if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
+                    log::warn!("client channel was closed before a block is actually written");
+                }
+                performer.next()
             },
 
             performer::Op::Event(performer::Event {
@@ -158,8 +167,10 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
-
-                todo!();
+                if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestReadBlockError::NotFound)) {
+                    log::warn!("reply channel has been closed during ReadBlock result send");
+                }
+                performer.next()
             },
 
             performer::Op::Event(performer::Event {
@@ -168,8 +179,10 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
-
-                todo!();
+                if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+                    log::warn!("client channel was closed before a block is actually read");
+                }
+                performer.next()
             },
 
             performer::Op::Event(performer::Event {
@@ -178,8 +191,10 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
-
-                todo!();
+                if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestDeleteBlockError::NotFound)) {
+                    log::warn!("reply channel has been closed during DeleteBlock result send");
+                }
+                performer.next()
             },
 
             performer::Op::Event(performer::Event {
@@ -188,8 +203,10 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
-
-                todo!();
+                if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
+                    log::warn!("client channel was closed before a block is actually deleted");
+                }
+                performer.next()
             },
 
             performer::Op::Event(performer::Event {
