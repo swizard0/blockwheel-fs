@@ -225,7 +225,10 @@ where J: edeltraud::Job + From<job::Job>,
       J::Output: From<job::JobOutput>,
       job::JobOutput: From<J::Output>,
 {
-    let mut env = performer_job::Env { interpreter_pid, };
+    // let mut job_tasks = FuturesUnordered::new();
+    let iter_tasks: FuturesUnordered<IterTask> = FuturesUnordered::new();
+
+    let mut env = performer_job::Env { interpreter_pid, iter_tasks, };
     let mut kont = performer_job::Kont::Next { performer, };
     loop {
         let job = job::Job::PerformerJobRun(performer_job::RunJobArgs { env, kont, });
@@ -252,9 +255,6 @@ where J: edeltraud::Job + From<job::Job>,
 
         todo!()
     }
-
-    // let mut job_tasks = FuturesUnordered::new();
-    // let mut iter_tasks = FuturesUnordered::new();
 
     // let mut op = performer.next();
     // loop {
@@ -739,12 +739,15 @@ where J: edeltraud::Job + From<job::Job>,
 }
 
 enum IterTask {
+    Taken,
     Item {
-        block_id: block::Id,
-        block_bytes: Bytes,
+        blocks_tx: mpsc::Sender<IterBlocksItem>,
+        item: IterBlocksItem,
         iter_blocks_cursor: performer::IterBlocksCursor,
     },
-    Finish,
+    Finish {
+        blocks_tx: mpsc::Sender<IterBlocksItem>,
+    },
 }
 
 enum IterTaskDone {
@@ -753,27 +756,62 @@ enum IterTaskDone {
     Finished,
 }
 
-async fn push_iter_blocks_item(mut blocks_tx: mpsc::Sender<IterBlocksItem>, task: IterTask) -> IterTaskDone {
-    match task {
-        IterTask::Item { block_id, block_bytes, iter_blocks_cursor, } => {
-            let item = IterBlocksItem::Block { block_id, block_bytes, };
-            match blocks_tx.send(item).await {
-                Ok(()) =>
-                    IterTaskDone::ItemSent(performer::IterBlocksState {
-                        iter_blocks_stream_context: blocks_tx,
-                        iter_blocks_cursor,
-                    }),
-                Err(_send_error) =>
-                    IterTaskDone::PeerLost,
-            }
-        },
-        IterTask::Finish =>
-            match blocks_tx.send(IterBlocksItem::NoMoreBlocks).await {
-                Ok(()) =>
-                    IterTaskDone::Finished,
-                Err(_send_error) =>
-                    IterTaskDone::PeerLost,
-            }
+use std::{
+    mem,
+    pin::Pin,
+    task::Poll,
+};
+
+impl future::Future for IterTask {
+    type Output = IterTaskDone;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        match mem::replace(this, IterTask::Taken) {
+            IterTask::Taken =>
+                panic!("polled IterTask after completion"),
+            IterTask::Item { mut blocks_tx, item, iter_blocks_cursor, } => {
+                let mut sink = Pin::new(&mut blocks_tx);
+                match sink.as_mut().poll_ready(cx) {
+                    Poll::Ready(Ok(())) =>
+                        (),
+                    Poll::Ready(Err(_send_error)) =>
+                        return Poll::Ready(IterTaskDone::PeerLost),
+                    Poll::Pending => {
+                        *this = IterTask::Item { blocks_tx, item, iter_blocks_cursor, };
+                        return Poll::Pending;
+                    },
+                }
+                match sink.as_mut().start_send(item) {
+                    Ok(()) =>
+                        Poll::Ready(IterTaskDone::ItemSent(performer::IterBlocksState {
+                            iter_blocks_stream_context: blocks_tx,
+                            iter_blocks_cursor,
+                        })),
+                    Err(_send_error) =>
+                        Poll::Ready(IterTaskDone::PeerLost),
+                }
+            },
+            IterTask::Finish { mut blocks_tx, } => {
+                let mut sink = Pin::new(&mut blocks_tx);
+                match sink.as_mut().poll_ready(cx) {
+                    Poll::Ready(Ok(())) =>
+                        (),
+                    Poll::Ready(Err(_send_error)) =>
+                        return Poll::Ready(IterTaskDone::PeerLost),
+                    Poll::Pending => {
+                        *this = IterTask::Finish { blocks_tx, };
+                        return Poll::Pending;
+                    },
+                }
+                match sink.as_mut().start_send(IterBlocksItem::NoMoreBlocks) {
+                    Ok(()) =>
+                        Poll::Ready(IterTaskDone::Finished),
+                    Err(_send_error) =>
+                        Poll::Ready(IterTaskDone::PeerLost),
+                }
+            },
+        }
     }
 }
 

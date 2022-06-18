@@ -3,6 +3,9 @@ use futures::{
         mpsc,
         oneshot,
     },
+    stream::{
+        FuturesUnordered,
+    },
     FutureExt,
 };
 
@@ -13,6 +16,7 @@ use crate::{
         core::{
             performer,
         },
+        IterTask,
     },
     blockwheel_context::{
         self,
@@ -27,6 +31,7 @@ use crate::{
 
 pub struct Env {
     pub interpreter_pid: interpret::Pid<Context>,
+    pub(super) iter_tasks: FuturesUnordered<IterTask>,
 }
 
 pub struct RunJobArgs {
@@ -222,8 +227,15 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
-
-                todo!();
+                env.iter_tasks.push(IterTask::Item {
+                    blocks_tx,
+                    item: IterBlocksItem::Block {
+                        block_id,
+                        block_bytes,
+                    },
+                    iter_blocks_cursor,
+                });
+                performer.next()
             },
 
             performer::Op::Event(performer::Event {
@@ -234,8 +246,8 @@ pub fn run_job(
                 ),
                 performer,
             }) => {
-
-                todo!();
+                env.iter_tasks.push(IterTask::Finish { blocks_tx, });
+                performer.next()
             },
 
             performer::Op::Event(performer::Event {
