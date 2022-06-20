@@ -223,9 +223,26 @@ where C: Context,
                     task::TaskKind::WriteBlock(write_block) => {
                         let start = cursor.position() as usize;
                         let slice = cursor.get_mut();
-                        slice[start .. start + write_block.write_block_bytes.len()]
-                            .copy_from_slice(&write_block.write_block_bytes);
-                        let written = write_block.write_block_bytes.len();
+                        let written = match write_block.write_block_bytes {
+                            task::WriteBlockBytes::Chunk(write_block_bytes) => {
+                                slice[start .. start + write_block_bytes.len()]
+                                    .copy_from_slice(&write_block_bytes);
+                                write_block_bytes.len()
+                            },
+                            task::WriteBlockBytes::Composite(task::WriteBlockBytesComposite { block_header, block_bytes, commit_tag, }) => {
+                                let mut offset = start;
+                                slice[offset .. offset + block_header.len()]
+                                    .copy_from_slice(&block_header);
+                                offset += block_header.len();
+                                slice[offset .. offset + block_bytes.len()]
+                                    .copy_from_slice(&block_bytes);
+                                offset += block_bytes.len();
+                                slice[offset .. offset + commit_tag.len()]
+                                    .copy_from_slice(&commit_tag);
+                                offset += commit_tag.len();
+                                offset - start
+                            },
+                        };
 
                         match write_block.commit {
                             task::Commit::None =>

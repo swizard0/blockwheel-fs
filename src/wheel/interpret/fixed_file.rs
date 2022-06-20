@@ -610,8 +610,20 @@ where C: Context,
                         );
 
                         let now = Instant::now();
-                        wheel_file.write_all(&write_block.write_block_bytes)
-                            .map_err(Error::BlockWrite)?;
+                        match &write_block.write_block_bytes {
+                            task::WriteBlockBytes::Chunk(write_block_bytes) => {
+                                wheel_file.write_all(write_block_bytes)
+                                    .map_err(Error::BlockWrite)?;
+                            },
+                            task::WriteBlockBytes::Composite(task::WriteBlockBytesComposite { block_header, block_bytes, commit_tag, }) => {
+                                wheel_file.write_all(block_header)
+                                    .map_err(Error::BlockWrite)?;
+                                wheel_file.write_all(block_bytes)
+                                    .map_err(Error::BlockWrite)?;
+                                wheel_file.write_all(commit_tag)
+                                    .map_err(Error::BlockWrite)?;
+                            },
+                        }
                         cursor += write_block.write_block_bytes.len() as u64;
                         timings.write_write += now.elapsed();
 

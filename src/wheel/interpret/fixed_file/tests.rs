@@ -106,7 +106,7 @@ fn create_read_one() {
                 schema.storage_layout().wheel_header_size as u64,
                 block_id,
                 task::TaskKind::WriteBlock(task::WriteBlock {
-                    write_block_bytes: write_block_bytes.freeze(),
+                    write_block_bytes,
                     commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::External(context),
                 }),
@@ -235,7 +235,7 @@ fn create_write_overlap_read_one() {
                 schema.storage_layout().wheel_header_size as u64,
                 block_id,
                 task::TaskKind::WriteBlock(task::WriteBlock {
-                    write_block_bytes: write_block_bytes.freeze(),
+                    write_block_bytes,
                     commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::External(context),
                 }),
@@ -256,7 +256,7 @@ fn create_write_overlap_read_one() {
                     + schema.storage_layout().block_header_size as u64,
                 block_id,
                 task::TaskKind::WriteBlock(task::WriteBlock {
-                    write_block_bytes: write_block_bytes.freeze(),
+                    write_block_bytes,
                     commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::External(context),
                 }),
@@ -378,7 +378,7 @@ fn create_write_delete_read_one() {
                 schema.storage_layout().wheel_header_size as u64,
                 block_id.clone(),
                 task::TaskKind::WriteBlock(task::WriteBlock {
-                    write_block_bytes: write_block_bytes.freeze(),
+                    write_block_bytes,
                     commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::External(context),
                 }),
@@ -398,7 +398,7 @@ fn create_write_delete_read_one() {
                 current_offset,
                 block_id,
                 task::TaskKind::WriteBlock(task::WriteBlock {
-                    write_block_bytes: write_block_bytes.freeze(),
+                    write_block_bytes,
                     commit: task::Commit::WithTerminator,
                     context: task::WriteBlockContext::External(context),
                 }),

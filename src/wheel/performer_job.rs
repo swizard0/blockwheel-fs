@@ -72,7 +72,7 @@ pub enum Kont {
     PollRequestAndInterpreterPreparedWriteBlockDone {
         next: performer::PollRequestAndInterpreterNext<Context>,
         block_id: block::Id,
-        write_block_bytes: BytesMut,
+        write_block_bytes: task::WriteBlockBytes,
         context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
         fused_interpret_result_rx: <Context as context::Context>::Interpreter,
     },
@@ -101,7 +101,7 @@ pub enum Kont {
     PollRequestPreparedWriteBlockDone {
         next: performer::PollRequestNext<Context>,
         block_id: block::Id,
-        write_block_bytes: BytesMut,
+        write_block_bytes: task::WriteBlockBytes,
         context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
     },
     PollRequestProcessReadBlockDone {

@@ -8,19 +8,25 @@ use futures::{
 
 use bincode::Options;
 
-use alloc_pool::bytes::{
-    Bytes,
-    BytesMut,
-    BytesPool,
+use alloc_pool::{
+    bytes::{
+        Bytes,
+        BytesMut,
+        BytesPool,
+    },
 };
 
 use crate::{
     InterpretStats,
-    context::Context,
+    context::{
+        Context,
+    },
     wheel::{
         block,
         storage,
-        core::task,
+        core::{
+            task,
+        },
     },
 };
 
@@ -116,7 +122,7 @@ pub enum BlockPrepareWriteJobError {
 }
 
 pub struct BlockPrepareWriteJobDone {
-    pub write_block_bytes: BytesMut,
+    pub write_block_bytes: task::WriteBlockBytes,
 }
 
 pub struct BlockPrepareWriteJobArgs {
@@ -136,35 +142,35 @@ pub fn block_prepare_write_job(
 )
     -> BlockPrepareWriteJobOutput
 {
-    let mut write_block_bytes = blocks_pool.lend();
-    let mut write_block_bytes_len = 0;
-
     let block_header = storage::BlockHeader {
         block_id: block_id.clone(),
         block_size: block_bytes.len(),
         ..Default::default()
     };
+    let mut block_header_bytes = blocks_pool.lend();
     storage::bincode_options()
-        .serialize_into(&mut **write_block_bytes, &block_header)
+        .serialize_into(&mut **block_header_bytes, &block_header)
         .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
-    assert!(write_block_bytes.len() > write_block_bytes_len);
-    write_block_bytes_len = write_block_bytes.len();
-
-    write_block_bytes.extend_from_slice(&block_bytes);
-    assert!(write_block_bytes.len() > write_block_bytes_len);
-    write_block_bytes_len = write_block_bytes.len();
 
     let commit_tag = storage::CommitTag {
         block_id: block_id.clone(),
         crc: block::crc(&block_bytes),
         ..Default::default()
     };
+    let mut commit_tag_bytes = blocks_pool.lend();
     storage::bincode_options()
-        .serialize_into(&mut **write_block_bytes, &commit_tag)
+        .serialize_into(&mut **commit_tag_bytes, &commit_tag)
         .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
-    assert!(write_block_bytes.len() > write_block_bytes_len);
 
-    Ok(BlockPrepareWriteJobDone { write_block_bytes, })
+    Ok(BlockPrepareWriteJobDone {
+        write_block_bytes: task::WriteBlockBytes::Composite(
+            task::WriteBlockBytesComposite {
+                block_header: block_header_bytes.freeze(),
+                block_bytes,
+                commit_tag: commit_tag_bytes.freeze(),
+            },
+        ),
+    })
 }
 
 #[derive(Debug)]

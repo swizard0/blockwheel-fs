@@ -3,9 +3,11 @@ use std::{
     cmp,
 };
 
-use alloc_pool::bytes::{
-    Bytes,
-    BytesMut,
+use alloc_pool::{
+    bytes::{
+        Bytes,
+        BytesMut,
+    },
 };
 
 use super::{
@@ -50,9 +52,33 @@ pub enum Commit {
 }
 
 pub struct WriteBlock<C> {
-    pub write_block_bytes: Bytes,
+    pub write_block_bytes: WriteBlockBytes,
     pub commit: Commit,
     pub context: WriteBlockContext<C>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum WriteBlockBytes {
+    Composite(WriteBlockBytesComposite),
+    Chunk(Bytes),
+}
+
+impl WriteBlockBytes {
+    pub fn len(&self) -> usize {
+        match self {
+            WriteBlockBytes::Composite(composite) =>
+                composite.block_header.len() + composite.block_bytes.len() + composite.commit_tag.len(),
+            WriteBlockBytes::Chunk(bytes) =>
+                bytes.len(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct WriteBlockBytesComposite {
+    pub block_header: Bytes,
+    pub block_bytes: Bytes,
+    pub commit_tag: Bytes,
 }
 
 impl<C> fmt::Debug for WriteBlock<C> {

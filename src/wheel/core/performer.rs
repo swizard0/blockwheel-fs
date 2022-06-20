@@ -368,7 +368,7 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
     pub fn prepared_write_block_done(
         mut self,
         block_id: block::Id,
-        write_block_bytes: BytesMut,
+        write_block_bytes: task::WriteBlockBytes,
         context: task::WriteBlockContext<C::WriteBlock>,
         interpreter_context: C::Interpreter,
     )
@@ -434,7 +434,7 @@ impl<C> PollRequestNext<C> where C: Context {
     pub fn prepared_write_block_done(
         self,
         block_id: block::Id,
-        write_block_bytes: BytesMut,
+        write_block_bytes: task::WriteBlockBytes,
         context: task::WriteBlockContext<C::WriteBlock>,
     )
         -> Op<C>
@@ -1029,7 +1029,7 @@ impl<C> Inner<C> where C: Context {
     fn prepared_write_block_done(
         mut self,
         block_id: block::Id,
-        write_block_bytes: BytesMut,
+        write_block_bytes: task::WriteBlockBytes,
         context: task::WriteBlockContext<C::WriteBlock>,
     )
         -> Op<C>
@@ -1040,7 +1040,7 @@ impl<C> Inner<C> where C: Context {
             task::Task {
                 block_id,
                 kind: task::TaskKind::WriteBlock(task::WriteBlock {
-                    write_block_bytes: write_block_bytes.freeze(),
+                    write_block_bytes,
                     commit: task::Commit::None,
                     context,
                 }),
@@ -1223,7 +1223,7 @@ impl<C> Inner<C> where C: Context {
                                     task::Task {
                                         block_id: block_id.clone(),
                                         kind: task::TaskKind::WriteBlock(task::WriteBlock {
-                                            write_block_bytes: block_bytes.clone(),
+                                            write_block_bytes: task::WriteBlockBytes::Chunk(block_bytes.clone()),
                                             commit: task::Commit::None,
                                             context: task::WriteBlockContext::Defrag,
                                         }),
