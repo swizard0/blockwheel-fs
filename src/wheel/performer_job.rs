@@ -33,7 +33,6 @@ use crate::{
         self,
         Context,
     },
-    Info,
     Flushed,
     Deleted,
     IterBlocks,
@@ -90,6 +89,32 @@ pub enum Kont {
         delete_block_bytes: BytesMut,
         context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
         fused_interpret_result_rx: <Context as context::Context>::Interpreter,
+    },
+    PollRequestIncomingRequest {
+        next: performer::PollRequestNext<Context>,
+        request: proto::Request<Context>,
+    },
+    PollRequestIncomingIterBlocks {
+        next: performer::PollRequestNext<Context>,
+        iter_block_state: performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>,
+    },
+    PollRequestPreparedWriteBlockDone {
+        next: performer::PollRequestNext<Context>,
+        block_id: block::Id,
+        write_block_bytes: BytesMut,
+        context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
+    },
+    PollRequestProcessReadBlockDone {
+        next: performer::PollRequestNext<Context>,
+        block_id: block::Id,
+        block_bytes: Bytes,
+        pending_contexts: task::queue::PendingReadContextBag,
+    },
+    PollRequestPreparedDeleteBlockDone {
+        next: performer::PollRequestNext<Context>,
+        block_id: block::Id,
+        delete_block_bytes: BytesMut,
+        context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
     },
 }
 
@@ -173,6 +198,28 @@ pub fn run_job(
                 delete_block_bytes,
                 context,
                 fused_interpret_result_rx,
+            ),
+        Kont::PollRequestIncomingRequest { next, request, } =>
+            next.incoming_request(request),
+        Kont::PollRequestIncomingIterBlocks { next, iter_block_state, } =>
+            next.incoming_iter_blocks(iter_block_state),
+        Kont::PollRequestPreparedWriteBlockDone { next, block_id, write_block_bytes, context, } =>
+            next.prepared_write_block_done(
+                block_id,
+                write_block_bytes,
+                context,
+            ),
+        Kont::PollRequestProcessReadBlockDone { next, block_id, block_bytes, pending_contexts, } =>
+            next.process_read_block_done(
+                block_id,
+                block_bytes,
+                pending_contexts,
+            ),
+        Kont::PollRequestPreparedDeleteBlockDone { next, block_id, delete_block_bytes, context, } =>
+            next.prepared_delete_block_done(
+                block_id,
+                delete_block_bytes,
+                context,
             ),
     };
 
