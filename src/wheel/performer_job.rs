@@ -9,11 +9,22 @@ use futures::{
     FutureExt,
 };
 
+use alloc_pool::{
+    bytes::{
+        Bytes,
+        BytesMut,
+    },
+};
+
 use crate::{
-    job,
+    proto,
+    context,
+    storage,
     wheel::{
+        block,
         interpret,
         core::{
+            task,
             performer,
         },
         IterTask,
@@ -27,6 +38,7 @@ use crate::{
     Deleted,
     IterBlocks,
     IterBlocksItem,
+    InterpretStats,
 };
 
 pub struct Env {
@@ -43,6 +55,42 @@ pub enum Kont {
     Next {
         performer: performer::Performer<Context>,
     },
+    PollRequestAndInterpreterIncomingRequest {
+        next: performer::PollRequestAndInterpreterNext<Context>,
+        request: proto::Request<Context>,
+        fused_interpret_result_rx: <Context as context::Context>::Interpreter,
+    },
+    PollRequestAndInterpreterTaskDoneStats {
+        next: performer::PollRequestAndInterpreterNext<Context>,
+        task_done: task::Done<Context>,
+        stats: InterpretStats,
+    },
+    PollRequestAndInterpreterIncomingIterBlocks {
+        next: performer::PollRequestAndInterpreterNext<Context>,
+        iter_block_state: performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>,
+        fused_interpret_result_rx: <Context as context::Context>::Interpreter,
+    },
+    PollRequestAndInterpreterPreparedWriteBlockDone {
+        next: performer::PollRequestAndInterpreterNext<Context>,
+        block_id: block::Id,
+        write_block_bytes: BytesMut,
+        context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
+        fused_interpret_result_rx: <Context as context::Context>::Interpreter,
+    },
+    PollRequestAndInterpreterProcessReadBlockDone {
+        next: performer::PollRequestAndInterpreterNext<Context>,
+        block_id: block::Id,
+        block_bytes: Bytes,
+        pending_contexts: task::queue::PendingReadContextBag,
+        fused_interpret_result_rx: <Context as context::Context>::Interpreter,
+    },
+    PollRequestAndInterpreterPreparedDeleteBlockDone {
+        next: performer::PollRequestAndInterpreterNext<Context>,
+        block_id: block::Id,
+        delete_block_bytes: BytesMut,
+        context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
+        fused_interpret_result_rx: <Context as context::Context>::Interpreter,
+    },
 }
 
 pub struct RunJobDone {
@@ -51,9 +99,33 @@ pub struct RunJobDone {
 }
 
 pub enum Done {
+    PollRequestAndInterpreter {
+        poll: performer::PollRequestAndInterpreter<Context>,
+    },
+    PollRequest {
+        poll: performer::PollRequest<Context>,
+    },
     TaskDoneFlush {
         performer: performer::Performer<Context>,
         reply_tx: oneshot::Sender<Flushed>,
+    },
+    PrepareWriteBlock {
+        performer: performer::Performer<Context>,
+        block_id: block::Id,
+        block_bytes: Bytes,
+        context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
+    },
+    PrepareDeleteBlock {
+        performer: performer::Performer<Context>,
+        block_id: block::Id,
+        context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
+    },
+    ProcessReadBlock {
+        performer: performer::Performer<Context>,
+        storage_layout: storage::Layout,
+        block_header: storage::BlockHeader,
+        block_bytes: Bytes,
+        pending_contexts: task::queue::PendingReadContextBag,
     },
 }
 
@@ -75,6 +147,33 @@ pub fn run_job(
     let mut op = match kont {
         Kont::Next { performer, } =>
             performer.next(),
+        Kont::PollRequestAndInterpreterIncomingRequest { next, request, fused_interpret_result_rx, } =>
+            next.incoming_request(request, fused_interpret_result_rx),
+        Kont::PollRequestAndInterpreterTaskDoneStats { next, task_done, stats, } =>
+            next.incoming_task_done_stats(task_done, stats),
+        Kont::PollRequestAndInterpreterIncomingIterBlocks { next, iter_block_state, fused_interpret_result_rx, } =>
+            next.incoming_iter_blocks(iter_block_state, fused_interpret_result_rx),
+        Kont::PollRequestAndInterpreterPreparedWriteBlockDone { next, block_id, write_block_bytes, context, fused_interpret_result_rx, } =>
+            next.prepared_write_block_done(
+                block_id,
+                write_block_bytes,
+                context,
+                fused_interpret_result_rx,
+            ),
+        Kont::PollRequestAndInterpreterProcessReadBlockDone { next, block_id, block_bytes, pending_contexts, fused_interpret_result_rx, } =>
+            next.process_read_block_done(
+                block_id,
+                block_bytes,
+                pending_contexts,
+                fused_interpret_result_rx,
+            ),
+        Kont::PollRequestAndInterpreterPreparedDeleteBlockDone { next, block_id, delete_block_bytes, context, fused_interpret_result_rx, } =>
+            next.prepared_delete_block_done(
+                block_id,
+                delete_block_bytes,
+                context,
+                fused_interpret_result_rx,
+            ),
     };
 
     loop {
@@ -83,15 +182,11 @@ pub fn run_job(
             performer::Op::Idle(performer) =>
                 performer.next(),
 
-            performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
+            performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) =>
+                return Ok(RunJobDone { env, done: Done::PollRequestAndInterpreter { poll, } }),
 
-                todo!();
-            },
-
-            performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
-
-                todo!();
-            },
+            performer::Op::Query(performer::QueryOp::PollRequest(poll)) =>
+                return Ok(RunJobDone { env, done: Done::PollRequest { poll, } }),
 
             performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
                 let reply_rx = env.interpreter_pid.push_request(offset, task)
@@ -261,10 +356,13 @@ pub fn run_job(
                     },
                 ),
                 performer,
-            }) => {
-
-                todo!();
-            },
+            }) =>
+                return Ok(RunJobDone { env, done: Done::PrepareWriteBlock {
+                    performer,
+                    block_id,
+                    block_bytes,
+                    context,
+                }}),
 
             performer::Op::Event(performer::Event {
                 op: performer::EventOp::PrepareInterpretTask(
@@ -276,10 +374,12 @@ pub fn run_job(
                     },
                 ),
                 performer,
-            }) => {
-
-                todo!();
-            },
+            }) =>
+                return Ok(RunJobDone { env, done: Done::PrepareDeleteBlock {
+                    performer,
+                    block_id,
+                    context,
+                }}),
 
             performer::Op::Event(performer::Event {
                 op: performer::EventOp::ProcessReadBlockTaskDone(
@@ -291,10 +391,14 @@ pub fn run_job(
                     },
                 ),
                 performer,
-            }) => {
-
-                todo!();
-            },
+            }) =>
+                return Ok(RunJobDone { env, done: Done::ProcessReadBlock {
+                    performer,
+                    storage_layout,
+                    block_header,
+                    block_bytes,
+                    pending_contexts,
+                }}),
 
         };
     }
