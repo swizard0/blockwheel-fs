@@ -40,6 +40,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Error {
     ThreadPool(edeltraud::BuildError),
+    ThreadPoolGone,
     WheelGoneDuringInfo,
     WheelGoneDuringFlush,
     WriteBlock(WriteBlockError),
@@ -103,14 +104,14 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
     tokio::spawn(supervisor_gen_server.run());
 
     let blocks_pool = BytesPool::new();
-    let thread_pool: edeltraud::Edeltraud<job::Job> = edeltraud::Builder::new()
+    let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
         .build()
         .map_err(Error::ThreadPool)?;
 
     let gen_server = GenServer::new();
     let mut pid = gen_server.pid();
     supervisor_pid.spawn_link_permanent(
-        gen_server.run(supervisor_pid.clone(), thread_pool, blocks_pool.clone(), params),
+        gen_server.run(supervisor_pid.clone(), thread_pool.clone(), blocks_pool.clone(), params),
     );
 
     let (done_tx, done_rx) = mpsc::channel(0);
@@ -212,12 +213,14 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
                 // write task
                 let mut blockwheel_pid = pid.clone();
                 let blocks_pool = blocks_pool.clone();
-                let amount = rand::thread_rng().gen_range(1 .. limits.block_size_bytes);
+                let block_size_bytes = limits.block_size_bytes;
+                let thread_pool = thread_pool.clone();
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-                    let mut block = blocks_pool.lend();
-                    block.extend((0 .. amount).map(|_| 0));
-                    rand::thread_rng().fill(&mut block[..]);
-                    let block_bytes = block.freeze();
+                    let job = Job::GenRandomBlock(GenRandomBlockJobArgs { blocks_pool, block_size_bytes, });
+                    let job_output = thread_pool.spawn(job).await
+                        .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                    let job_output: JobOutput = job_output.into();
+                    let GenRandomBlockDone(GenRandomBlockJobOutput { block_bytes, }) = job_output.into();
                     match blockwheel_pid.write_block(block_bytes.clone()).await {
                         Ok(block_id) =>
                             Ok(TaskDone::WriteBlock(BlockTank { block_id, block_bytes, })),
@@ -318,4 +321,81 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
     assert_eq!(actual_count, iter_blocks.blocks_total_count);
 
     Ok::<_, Error>(())
+}
+
+struct GenRandomBlockJobArgs {
+    blocks_pool: BytesPool,
+    block_size_bytes: usize,
+}
+
+struct GenRandomBlockJobOutput {
+    block_bytes: Bytes,
+}
+
+fn run_gen_random_block(GenRandomBlockJobArgs { blocks_pool, block_size_bytes, }: GenRandomBlockJobArgs) -> GenRandomBlockJobOutput {
+    let amount = rand::thread_rng().gen_range(1 .. block_size_bytes);
+    let mut block = blocks_pool.lend();
+    block.extend((0 .. amount).map(|_| 0));
+    rand::thread_rng().fill(&mut block[..]);
+    let block_bytes = block.freeze();
+    GenRandomBlockJobOutput { block_bytes, }
+}
+
+enum Job {
+    BlockwheelFs(job::Job),
+    GenRandomBlock(GenRandomBlockJobArgs),
+}
+
+enum JobOutput {
+    BlockwheelFs(job::JobOutput),
+    GenRandomBlock(GenRandomBlockDone),
+}
+
+impl edeltraud::Job for Job {
+    type Output = JobOutput;
+
+    fn run(self) -> Self::Output {
+        match self {
+            Job::BlockwheelFs(job) =>
+                JobOutput::BlockwheelFs(job.run()),
+            Job::GenRandomBlock(args) =>
+                JobOutput::GenRandomBlock(GenRandomBlockDone(run_gen_random_block(args))),
+        }
+    }
+}
+
+struct GenRandomBlockDone(GenRandomBlockJobOutput);
+
+impl From<JobOutput> for GenRandomBlockDone {
+    fn from(output: JobOutput) -> Self {
+        match output {
+            JobOutput::GenRandomBlock(done) =>
+                done,
+            _other =>
+                panic!("expected JobOutput::GenRandomBlockDone but got other"),
+        }
+    }
+}
+
+impl From<job::Job> for Job {
+    fn from(job: job::Job) -> Job {
+        Job::BlockwheelFs(job)
+    }
+}
+
+impl From<job::JobOutput> for JobOutput {
+    fn from(output: job::JobOutput) -> JobOutput {
+        JobOutput::BlockwheelFs(output)
+    }
+}
+
+impl From<JobOutput> for job::JobOutput {
+    fn from(output: JobOutput) -> job::JobOutput {
+        match output {
+            JobOutput::BlockwheelFs(done) =>
+                done,
+            _other =>
+                panic!("expected JobOutput::BlockwheelFs but got other"),
+        }
+    }
 }
