@@ -244,6 +244,7 @@ mod tests {
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                             },
                             tasks_head: Default::default(),
+                            cached: None,
                         },
                     },
                     right_block: BlockInfo {
@@ -260,6 +261,7 @@ mod tests {
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                             tasks_head: Default::default(),
+                            cached: None,
                         },
                     },
                 },
@@ -290,6 +292,7 @@ mod tests {
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                             tasks_head: Default::default(),
+                            cached: None,
                         },
                     },
                 },
@@ -340,6 +343,7 @@ mod tests {
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 4, serial: 1, }, },
                             },
                             tasks_head: Default::default(),
+                            cached: None,
                         },
                     },
                     right_block: BlockInfo {
@@ -356,6 +360,7 @@ mod tests {
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                             tasks_head: Default::default(),
+                            cached: None,
                         },
                     },
                 },
@@ -380,6 +385,7 @@ mod tests {
                                 right: RightEnvirons::Space { space_key: SpaceKey { space_available: 60, serial: 2, }, },
                             },
                             tasks_head: Default::default(),
+                            cached: None,
                         },
                     },
                 },
@@ -425,6 +431,7 @@ mod tests {
                     right: RightEnvirons::Space { space_key: space_key_a, },
                 },
                 tasks_head: Default::default(),
+                cached: None,
             });
             blocks_index.insert(block_b_id.clone(), BlockEntry {
                 offset: 8,
@@ -438,6 +445,7 @@ mod tests {
                     right: RightEnvirons::Space { space_key: space_key_b, },
                 },
                 tasks_head: Default::default(),
+                cached: None,
             });
 
             Init { block_a_id, block_b_id, blocks_index, gaps_index, }

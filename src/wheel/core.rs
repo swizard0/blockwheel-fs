@@ -1,6 +1,14 @@
-use super::{
-    block,
-    storage,
+use alloc_pool::{
+    bytes::{
+        BytesWeak,
+    },
+};
+
+use crate::{
+    wheel::{
+        block,
+        storage,
+    },
 };
 
 pub mod task;
@@ -12,12 +20,13 @@ mod defrag;
 pub mod schema;
 pub mod performer;
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub struct BlockEntry {
     pub offset: u64,
     pub header: storage::BlockHeader,
     pub environs: Environs,
     pub tasks_head: task::queue::TasksHead,
+    pub cached: Option<BytesWeak>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -107,5 +116,13 @@ impl<'a> BlockGet for BlockEntryGet<'a> {
     fn by_id<'s>(&'s mut self, block_id: &block::Id) -> Option<&'s mut BlockEntry> {
         assert_eq!(&self.block_entry.header.block_id, block_id);
         Some(self.block_entry)
+    }
+}
+
+impl PartialEq for BlockEntry {
+    fn eq(&self, other: &BlockEntry) -> bool {
+        self.offset == other.offset &&
+            self.header == other.header &&
+            self.environs == other.environs
     }
 }

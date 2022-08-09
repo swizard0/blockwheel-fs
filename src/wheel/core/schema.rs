@@ -23,6 +23,8 @@ pub struct Schema {
     storage_layout: storage::Layout,
     blocks_index: blocks::Index,
     gaps_index: gaps::Index,
+    read_block_cache_hits: usize,
+    read_block_cache_misses: usize,
 }
 
 #[derive(Debug)]
@@ -54,12 +56,19 @@ pub struct WriteBlockTaskOp {
 #[derive(Debug)]
 pub enum ReadBlockOp<'a> {
     Perform(ReadBlockPerform<'a>),
+    CacheHit(ReadBlockCacheHit<'a>),
     NotFound,
 }
 
 #[derive(Debug)]
 pub struct ReadBlockPerform<'a> {
     pub block_header: &'a storage::BlockHeader,
+}
+
+#[derive(Debug)]
+pub struct ReadBlockCacheHit<'a> {
+    pub block_header: &'a storage::BlockHeader,
+    pub block_bytes: Bytes,
 }
 
 #[derive(Debug)]
@@ -115,6 +124,8 @@ impl Schema {
             + (blocks_count * self.storage_layout.data_size_block_min());
         let data_bytes_used = self.blocks_index.blocks_total_size();
         let bytes_free = self.gaps_index.space_total();
+        let read_block_cache_hits = self.read_block_cache_hits;
+        let read_block_cache_misses = self.read_block_cache_misses;
         Info {
             blocks_count,
             service_bytes_used,
@@ -124,6 +135,8 @@ impl Schema {
             wheel_size_bytes: service_bytes_used
                 + data_bytes_used
                 + bytes_free,
+            read_block_cache_hits,
+            read_block_cache_misses,
             ..Default::default()
         }
     }
@@ -188,6 +201,7 @@ impl Schema {
                             right: self_env,
                         },
                         tasks_head: Default::default(),
+                        cached: Some(block_bytes.downgrade()),
                     },
                 );
                 self.blocks_index.update_env_left(&right_block_id, right_env);
@@ -241,6 +255,7 @@ impl Schema {
                             right: self_env,
                         },
                         tasks_head: Default::default(),
+                        cached: Some(block_bytes.downgrade()),
                     },
                 );
                 self.blocks_index.update_env_right(&left_block_id, left_env);
@@ -284,6 +299,7 @@ impl Schema {
                             right: self_env,
                         },
                         tasks_head: Default::default(),
+                        cached: Some(block_bytes.downgrade()),
                     },
                 );
                 self.blocks_index.update_env_right(&left_block_id, RightEnvirons::Block { block_id: block_id.clone(), });
@@ -325,6 +341,7 @@ impl Schema {
                         },
                         environs,
                         tasks_head: Default::default(),
+                        cached: Some(block_bytes.downgrade()),
                     },
                 );
                 block_offset
@@ -352,10 +369,23 @@ impl Schema {
 
     pub fn process_read_block_request<'a>(&'a mut self, block_id: &block::Id) -> ReadBlockOp<'a> {
         match self.blocks_index.get_mut(block_id) {
-            Some(block_entry) =>
+            Some(block_entry) => {
+                if let Some(weak) = &block_entry.cached {
+                    if let Some(block_bytes) = weak.upgrade() {
+                        self.read_block_cache_hits += 1;
+                        return ReadBlockOp::CacheHit(ReadBlockCacheHit {
+                            block_header: &block_entry.header,
+                            block_bytes,
+                        });
+                    }
+                    self.read_block_cache_misses += 1;
+                    block_entry.cached = None;
+                }
+
                 ReadBlockOp::Perform(ReadBlockPerform {
                     block_header: &block_entry.header,
-                }),
+                })
+            },
             None =>
                 ReadBlockOp::NotFound,
         }
@@ -370,10 +400,14 @@ impl Schema {
         }
     }
 
-    pub fn process_read_block_task_done(&mut self, read_block_id: &block::Id) -> ReadBlockTaskDoneOp {
+    pub fn process_read_block_task_done(&mut self, read_block_id: &block::Id, maybe_block_bytes: Option<&Bytes>) -> ReadBlockTaskDoneOp {
         match self.blocks_index.get_mut(read_block_id) {
-            Some(..) =>
-                ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform),
+            Some(block_entry) => {
+                if let Some(block_bytes) = maybe_block_bytes {
+                    block_entry.cached = Some(block_bytes.downgrade());
+                }
+                ReadBlockTaskDoneOp::Perform(ReadBlockTaskDonePerform)
+            },
             None =>
                 ReadBlockTaskDoneOp::NotFound,
         }
@@ -1113,6 +1147,7 @@ impl Builder {
                 header: block_header,
                 environs: Environs { left, right: RightEnvirons::End, },
                 tasks_head: Default::default(),
+                cached: None,
             },
         );
 
@@ -1185,6 +1220,8 @@ impl Builder {
             storage_layout: self.storage_layout,
             blocks_index: self.blocks_index,
             gaps_index: self.gaps_index,
+            read_block_cache_hits: 0,
+            read_block_cache_misses: 0,
         };
         (defrag_op, schema)
     }

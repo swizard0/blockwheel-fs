@@ -215,6 +215,8 @@ pub struct Info {
     pub data_bytes_used: usize,
     pub defrag_write_pending_bytes: usize,
     pub bytes_free: usize,
+    pub read_block_cache_hits: usize,
+    pub read_block_cache_misses: usize,
     pub interpret_stats: InterpretStats,
 }
 

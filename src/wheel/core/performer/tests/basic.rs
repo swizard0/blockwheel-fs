@@ -442,6 +442,8 @@ fn script_basic() {
                     count_seek_forward: 0,
                     count_seek_backward: 0,
                 },
+                read_block_cache_hits: 0,
+                read_block_cache_misses: 2,
             },
             expect_context: "ectx0b",
         }),

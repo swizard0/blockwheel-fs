@@ -557,7 +557,7 @@ impl<C> Inner<C> where C: Context {
             }
 
             DoneTask::ReadBlockRaw { block_header, block_bytes, maybe_context: Some(context), mut pending_contexts, } => {
-                let maybe_op = match self.schema.process_read_block_task_done(&block_header.block_id) {
+                let maybe_op = match self.schema.process_read_block_task_done(&block_header.block_id, None) {
                     schema::ReadBlockTaskDoneOp::NotFound =>
                         unreachable!(),
                     schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform) =>
@@ -941,6 +941,18 @@ impl<C> Inner<C> where C: Context {
     fn incoming_request_read_block(mut self, request_read_block: proto::RequestReadBlock<C::ReadBlock>) -> Op<C> {
         match self.schema.process_read_block_request(&request_read_block.block_id) {
 
+            schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { block_bytes, .. }) => {
+                Op::Event(Event {
+                    op: EventOp::ReadBlock(TaskDoneOp {
+                        context: request_read_block.context,
+                        op: ReadBlockOp::Done {
+                            block_bytes,
+                        },
+                    }),
+                    performer: Performer { inner: self, },
+                })
+            },
+
             schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
                 if let Some(block_bytes) = self.lru_cache.get(&request_read_block.block_id) {
                     Op::Event(Event {
@@ -1112,7 +1124,7 @@ impl<C> Inner<C> where C: Context {
     )
         -> Op<C>
     {
-        match self.schema.process_read_block_task_done(&block_id) {
+        match self.schema.process_read_block_task_done(&block_id, Some(&block_bytes)) {
             schema::ReadBlockTaskDoneOp::NotFound =>
                 self.done_task = DoneTask::ReadBlockProcessed { block_id, maybe_block_bytes: None, pending_contexts, },
             schema::ReadBlockTaskDoneOp::Perform(schema::ReadBlockTaskDonePerform) => {
@@ -1270,6 +1282,19 @@ impl<C> Inner<C> where C: Context {
 
             Some(block_id) =>
                 match self.schema.process_read_block_request(&block_id) {
+
+                    schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { block_bytes, .. }) => {
+                        Some(EventOp::IterBlocksItem(IterBlocksItemOp {
+                            block_id: block_id.clone(),
+                            block_bytes: block_bytes,
+                            iter_blocks_state: IterBlocksState {
+                                iter_blocks_stream_context,
+                                iter_blocks_cursor: IterBlocksCursor {
+                                    block_id: block_id.next(),
+                                },
+                            },
+                        }))
+                    },
 
                     schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) =>
                         if let Some(block_bytes) = self.lru_cache.get(&block_id) {

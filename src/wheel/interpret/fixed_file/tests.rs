@@ -151,6 +151,8 @@ fn create_read_one() {
             let block_id = block::Id::init();
             let expected_offset = schema.storage_layout().wheel_header_size as u64;
             let (block_header, block_bytes) = match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadCacheHit { block_id, })),
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
                     let task_done = request_reply(
                         &mut pid,
@@ -285,6 +287,8 @@ fn create_write_overlap_read_one() {
         with_gen_server(gen_server, |mut pid, _blocks_pool| async move {
             let block_id = block::Id::init();
             match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadCacheHit { block_id, })),
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { .. }) =>
                     return Err(Error::Unexpected(UnexpectedError::ReadPerform { block_id, })),
                 schema::ReadBlockOp::NotFound =>
@@ -294,6 +298,8 @@ fn create_write_overlap_read_one() {
             let expected_offset = schema.storage_layout().wheel_header_size as u64
                 + schema.storage_layout().block_header_size as u64;
             let (block_header, block_bytes) = match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadCacheHit { block_id, })),
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
                     let task_done = request_reply(
                         &mut pid,
@@ -458,6 +464,8 @@ fn create_write_delete_read_one() {
         with_gen_server(gen_server, |mut pid, _blocks_pool| async move {
             let block_id = block::Id::init();
             match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadCacheHit { block_id, })),
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { .. }) =>
                     return Err(Error::Unexpected(UnexpectedError::ReadPerform { block_id, })),
                 schema::ReadBlockOp::NotFound =>
@@ -468,6 +476,8 @@ fn create_write_delete_read_one() {
                 + schema.storage_layout().data_size_block_min() as u64
                 + hello_world_bytes().len() as u64;
             let (block_header, block_bytes) = match schema.process_read_block_request(&block_id) {
+                schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
+                    return Err(Error::Unexpected(UnexpectedError::ReadCacheHit { block_id, })),
                 schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
                     let task_done = request_reply(
                         &mut pid,
@@ -545,6 +555,9 @@ pub enum UnexpectedError {
         received: task::Done<LocalContext>,
     },
     ReadPerform {
+        block_id: block::Id,
+    },
+    ReadCacheHit {
         block_id: block::Id,
     },
     ReadNotFound {
