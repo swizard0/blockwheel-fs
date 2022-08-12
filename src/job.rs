@@ -1,3 +1,12 @@
+use std::{
+    sync::{
+        atomic::{
+            Ordering,
+            AtomicUsize,
+        },
+    },
+};
+
 use crate::{
     wheel::{
         interpret,
@@ -19,19 +28,32 @@ pub enum JobOutput {
     PerformerJobRun(PerformerJobRunDone),
 }
 
+pub static JOB_BLOCK_PREPARE_WRITE: AtomicUsize = AtomicUsize::new(0);
+pub static JOB_BLOCK_PROCESS_READ: AtomicUsize = AtomicUsize::new(0);
+pub static JOB_BLOCK_PREPARE_DELETE: AtomicUsize = AtomicUsize::new(0);
+pub static JOB_PERFORMER_JOB_RUN: AtomicUsize = AtomicUsize::new(0);
+
 impl edeltraud::Job for Job {
     type Output = JobOutput;
 
     fn run(self) -> Self::Output {
         match self {
-            Job::BlockPrepareWrite(args) =>
-                JobOutput::BlockPrepareWrite(BlockPrepareWriteDone(interpret::block_prepare_write_job(args))),
-            Job::BlockProcessRead(args) =>
-                JobOutput::BlockProcessRead(BlockProcessReadDone(interpret::block_process_read_job(args))),
-            Job::BlockPrepareDelete(args) =>
-                JobOutput::BlockPrepareDelete(BlockPrepareDeleteDone(interpret::block_prepare_delete_job(args))),
-            Job::PerformerJobRun(args) =>
-                JobOutput::PerformerJobRun(PerformerJobRunDone(performer_job::run_job(args))),
+            Job::BlockPrepareWrite(args) => {
+                JOB_BLOCK_PREPARE_WRITE.fetch_add(1, Ordering::Relaxed);
+                JobOutput::BlockPrepareWrite(BlockPrepareWriteDone(interpret::block_prepare_write_job(args)))
+            },
+            Job::BlockProcessRead(args) => {
+                JOB_BLOCK_PROCESS_READ.fetch_add(1, Ordering::Relaxed);
+                JobOutput::BlockProcessRead(BlockProcessReadDone(interpret::block_process_read_job(args)))
+            },
+            Job::BlockPrepareDelete(args) => {
+                JOB_BLOCK_PREPARE_DELETE.fetch_add(1, Ordering::Relaxed);
+                JobOutput::BlockPrepareDelete(BlockPrepareDeleteDone(interpret::block_prepare_delete_job(args)))
+            },
+            Job::PerformerJobRun(args) => {
+                JOB_PERFORMER_JOB_RUN.fetch_add(1, Ordering::Relaxed);
+                JobOutput::PerformerJobRun(PerformerJobRunDone(performer_job::run_job(args)))
+            },
         }
     }
 }
