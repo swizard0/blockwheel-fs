@@ -3,9 +3,6 @@ use futures::{
         mpsc,
         oneshot,
     },
-    stream::{
-        FuturesUnordered,
-    },
     FutureExt,
 };
 
@@ -49,15 +46,57 @@ pub struct Env {
 #[derive(Default)]
 pub struct Incoming {
     pub incoming_request: Vec<proto::Request<Context>>,
+    pub incoming_task_done_stats: Vec<IncomingTaskDoneStats>,
+    pub incoming_iter_blocks: Vec<IncomingIterBlocks>,
+    pub prepared_write_block_done: Vec<PreparedWriteBlockDone>,
+    pub prepared_delete_block_done: Vec<PreparedDeleteBlockDone>,
+    pub process_read_block_done: Vec<ProcessReadBlockDone>,
+}
+
+pub struct IncomingTaskDoneStats {
+    pub task_done: task::Done<Context>,
+    pub stats: InterpretStats,
+}
+
+pub struct IncomingIterBlocks {
+    pub iter_block_state: performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>,
+}
+
+pub struct PreparedWriteBlockDone {
+    pub block_id: block::Id,
+    pub write_block_bytes: task::WriteBlockBytes,
+    pub context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
+}
+
+pub struct ProcessReadBlockDone {
+    pub block_id: block::Id,
+    pub block_bytes: Bytes,
+    pub pending_contexts: task::queue::PendingReadContextBag,
+}
+
+pub struct PreparedDeleteBlockDone {
+    pub block_id: block::Id,
+    pub delete_block_bytes: BytesMut,
+    pub context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
 }
 
 impl Incoming {
     pub fn is_empty(&self) -> bool {
-        self.incoming_request.is_empty()
+        self.incoming_request.is_empty() &&
+            self.incoming_task_done_stats.is_empty() &&
+            self.incoming_iter_blocks.is_empty() &&
+            self.prepared_write_block_done.is_empty() &&
+            self.prepared_delete_block_done.is_empty() &&
+            self.process_read_block_done.is_empty()
     }
 
     pub fn transfill_from(&mut self, from: &mut Self) {
         self.incoming_request.extend(from.incoming_request.drain(..));
+        self.incoming_task_done_stats.extend(from.incoming_task_done_stats.drain(..));
+        self.incoming_iter_blocks.extend(from.incoming_iter_blocks.drain(..));
+        self.prepared_write_block_done.extend(from.prepared_write_block_done.drain(..));
+        self.prepared_delete_block_done.extend(from.prepared_delete_block_done.drain(..));
+        self.process_read_block_done.extend(from.process_read_block_done.drain(..));
     }
 }
 
@@ -68,6 +107,7 @@ pub struct Outgoing {
     pub prepare_write_blocks: Vec<PrepareWriteBlock>,
     pub prepare_delete_blocks: Vec<PrepareDeleteBlock>,
     pub process_read_blocks: Vec<ProcessReadBlock>,
+    pub task_done_flush: Option<TaskDoneFlush>,
 }
 
 pub struct QueryInterpretTask {
@@ -92,6 +132,10 @@ pub struct ProcessReadBlock {
     pub pending_contexts: task::queue::PendingReadContextBag,
 }
 
+pub struct TaskDoneFlush {
+    pub reply_tx: oneshot::Sender<Flushed>,
+}
+
 pub struct JobArgs {
     pub env: Env,
     pub kont: Kont,
@@ -109,94 +153,9 @@ pub enum Kont {
     },
 }
 
-
-//     PollRequestAndInterpreter {
-//         performer: performer::Performer<Context>,
-//     },
-//     PollRequestAndInterpreterIncomingRequest {
-//         next: performer::PollRequestAndInterpreterNext<Context>,
-//         request: proto::Request<Context>,
-//         fused_interpret_result_rx: <Context as context::Context>::Interpreter,
-//     },
-//     PollRequestAndInterpreterTaskDoneStats {
-//         next: performer::PollRequestAndInterpreterNext<Context>,
-//         task_done: task::Done<Context>,
-//         stats: InterpretStats,
-//     },
-//     PollRequestAndInterpreterIncomingIterBlocks {
-//         next: performer::PollRequestAndInterpreterNext<Context>,
-//         iter_block_state: performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>,
-//         fused_interpret_result_rx: <Context as context::Context>::Interpreter,
-//     },
-//     PollRequestAndInterpreterPreparedWriteBlockDone {
-//         next: performer::PollRequestAndInterpreterNext<Context>,
-//         block_id: block::Id,
-//         write_block_bytes: task::WriteBlockBytes,
-//         context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
-//         fused_interpret_result_rx: <Context as context::Context>::Interpreter,
-//     },
-//     PollRequestAndInterpreterProcessReadBlockDone {
-//         next: performer::PollRequestAndInterpreterNext<Context>,
-//         block_id: block::Id,
-//         block_bytes: Bytes,
-//         pending_contexts: task::queue::PendingReadContextBag,
-//         fused_interpret_result_rx: <Context as context::Context>::Interpreter,
-//     },
-//     PollRequestAndInterpreterPreparedDeleteBlockDone {
-//         next: performer::PollRequestAndInterpreterNext<Context>,
-//         block_id: block::Id,
-//         delete_block_bytes: BytesMut,
-//         context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
-//         fused_interpret_result_rx: <Context as context::Context>::Interpreter,
-//     },
-//     PollRequestIncomingRequest {
-//         next: performer::PollRequestNext<Context>,
-//         request: proto::Request<Context>,
-//     },
-//     PollRequestIncomingIterBlocks {
-//         next: performer::PollRequestNext<Context>,
-//         iter_block_state: performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>,
-//     },
-//     PollRequestPreparedWriteBlockDone {
-//         next: performer::PollRequestNext<Context>,
-//         block_id: block::Id,
-//         write_block_bytes: task::WriteBlockBytes,
-//         context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
-//     },
-//     PollRequestProcessReadBlockDone {
-//         next: performer::PollRequestNext<Context>,
-//         block_id: block::Id,
-//         block_bytes: Bytes,
-//         pending_contexts: task::queue::PendingReadContextBag,
-//     },
-//     PollRequestPreparedDeleteBlockDone {
-//         next: performer::PollRequestNext<Context>,
-//         block_id: block::Id,
-//         delete_block_bytes: BytesMut,
-//         context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
-//     },
-// }
-
-// pub struct RunJobDone {
-//     pub env: Env,
-//     pub done: Done,
-// }
-
 pub enum Done {
     Poll { env: Env, kont: Kont, },
 }
-
-//     PollRequestAndInterpreter {
-//         poll: performer::PollRequestAndInterpreter<Context>,
-//     },
-//     PollRequest {
-//         poll: performer::PollRequest<Context>,
-//     },
-//     TaskDoneFlush {
-//         performer: performer::Performer<Context>,
-//         reply_tx: oneshot::Sender<Flushed>,
-//     },
-// }
 
 #[derive(Debug)]
 pub enum Error {
@@ -210,14 +169,36 @@ pub fn run_job(JobArgs { mut env, mut kont, }: JobArgs) -> Output {
         let mut performer_op = match kont {
             Kont::Start { performer, } =>
                 performer.next(),
-            Kont::PollRequestAndInterpreter { poll, } => {
-
-                todo!()
-            },
-            Kont::PollRequest { poll, } => {
-
-                todo!()
-            },
+            Kont::PollRequestAndInterpreter { poll, } =>
+                if let Some(request) = env.incoming.incoming_request.pop() {
+                    poll.next.incoming_request(request)
+                } else if let Some(IncomingTaskDoneStats { task_done, stats, }) = env.incoming.incoming_task_done_stats.pop() {
+                    poll.next.incoming_task_done_stats(task_done, stats)
+                } else if let Some(IncomingIterBlocks { iter_block_state, }) = env.incoming.incoming_iter_blocks.pop() {
+                    poll.next.incoming_iter_blocks(iter_block_state)
+                } else if let Some(PreparedWriteBlockDone { block_id, write_block_bytes, context, }) = env.incoming.prepared_write_block_done.pop() {
+                    poll.next.prepared_write_block_done(block_id, write_block_bytes, context)
+                } else if let Some(ProcessReadBlockDone { block_id, block_bytes, pending_contexts, }) = env.incoming.process_read_block_done.pop() {
+                    poll.next.process_read_block_done(block_id, block_bytes, pending_contexts)
+                } else if let Some(PreparedDeleteBlockDone { block_id, delete_block_bytes, context, }) = env.incoming.prepared_delete_block_done.pop() {
+                    poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context)
+                } else {
+                    return Ok(Done::Poll { env, kont: Kont::PollRequestAndInterpreter { poll, }, });
+                },
+            Kont::PollRequest { poll, } =>
+                if let Some(request) = env.incoming.incoming_request.pop() {
+                    poll.next.incoming_request(request)
+                } else if let Some(IncomingIterBlocks { iter_block_state, }) = env.incoming.incoming_iter_blocks.pop() {
+                    poll.next.incoming_iter_blocks(iter_block_state)
+                } else if let Some(PreparedWriteBlockDone { block_id, write_block_bytes, context, }) = env.incoming.prepared_write_block_done.pop() {
+                    poll.next.prepared_write_block_done(block_id, write_block_bytes, context)
+                } else if let Some(ProcessReadBlockDone { block_id, block_bytes, pending_contexts, }) = env.incoming.process_read_block_done.pop() {
+                    poll.next.process_read_block_done(block_id, block_bytes, pending_contexts)
+                } else if let Some(PreparedDeleteBlockDone { block_id, delete_block_bytes, context, }) = env.incoming.prepared_delete_block_done.pop() {
+                    poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context)
+                } else {
+                    return Ok(Done::Poll { env, kont: Kont::PollRequest { poll, }, });
+                },
         };
 
         loop {
@@ -283,12 +264,9 @@ pub fn run_job(JobArgs { mut env, mut kont, }: JobArgs) -> Output {
                     ),
                     performer,
                 }) => {
-                    // return Ok(RunJobDone { env, done: Done::TaskDoneFlush {
-                    //     performer,
-                    //     reply_tx,
-                    // }}),
-
-                    todo!()
+                    assert!(env.outgoing.task_done_flush.is_none());
+                    env.outgoing.task_done_flush = Some(TaskDoneFlush { reply_tx, });
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -459,66 +437,5 @@ pub fn run_job(JobArgs { mut env, mut kont, }: JobArgs) -> Output {
 
             };
         }
-
-        todo!();
     }
 }
-
-//     let mut op = match kont {
-//         Kont::Next { performer, } =>
-//             performer.next(),
-//         Kont::PollRequestAndInterpreterIncomingRequest { next, request, fused_interpret_result_rx, } =>
-//             next.incoming_request(request, fused_interpret_result_rx),
-//         Kont::PollRequestAndInterpreterTaskDoneStats { next, task_done, stats, } =>
-//             next.incoming_task_done_stats(task_done, stats),
-//         Kont::PollRequestAndInterpreterIncomingIterBlocks { next, iter_block_state, fused_interpret_result_rx, } =>
-//             next.incoming_iter_blocks(iter_block_state, fused_interpret_result_rx),
-//         Kont::PollRequestAndInterpreterPreparedWriteBlockDone { next, block_id, write_block_bytes, context, fused_interpret_result_rx, } =>
-//             next.prepared_write_block_done(
-//                 block_id,
-//                 write_block_bytes,
-//                 context,
-//                 fused_interpret_result_rx,
-//             ),
-//         Kont::PollRequestAndInterpreterProcessReadBlockDone { next, block_id, block_bytes, pending_contexts, fused_interpret_result_rx, } =>
-//             next.process_read_block_done(
-//                 block_id,
-//                 block_bytes,
-//                 pending_contexts,
-//                 fused_interpret_result_rx,
-//             ),
-//         Kont::PollRequestAndInterpreterPreparedDeleteBlockDone { next, block_id, delete_block_bytes, context, fused_interpret_result_rx, } =>
-//             next.prepared_delete_block_done(
-//                 block_id,
-//                 delete_block_bytes,
-//                 context,
-//                 fused_interpret_result_rx,
-//             ),
-//         Kont::PollRequestIncomingRequest { next, request, } =>
-//             next.incoming_request(request),
-//         Kont::PollRequestIncomingIterBlocks { next, iter_block_state, } =>
-//             next.incoming_iter_blocks(iter_block_state),
-//         Kont::PollRequestPreparedWriteBlockDone { next, block_id, write_block_bytes, context, } =>
-//             next.prepared_write_block_done(
-//                 block_id,
-//                 write_block_bytes,
-//                 context,
-//             ),
-//         Kont::PollRequestProcessReadBlockDone { next, block_id, block_bytes, pending_contexts, } =>
-//             next.process_read_block_done(
-//                 block_id,
-//                 block_bytes,
-//                 pending_contexts,
-//             ),
-//         Kont::PollRequestPreparedDeleteBlockDone { next, block_id, delete_block_bytes, context, } =>
-//             next.prepared_delete_block_done(
-//                 block_id,
-//                 delete_block_bytes,
-//                 context,
-//             ),
-//     };
-
-//     loop {
-//         op = match op {
-
-// }
