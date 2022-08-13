@@ -279,18 +279,13 @@ where J: edeltraud::Job + From<job::Job>,
         match performer_action {
             PerformerAction::Run(mut job_args) => {
                 job_args.env.incoming.transfill_from(&mut incoming);
-                if job_args.env.incoming.is_empty() {
-                    performer_state = PerformerState::Ready { job_args, };
-                } else {
-                    job_args.env.incoming.transfill_from(&mut incoming);
-                    let job = job::Job::PerformerJobRun(job_args);
-                    let job_handle = state.thread_pool.spawn_handle(job)
-                        .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)
-                        .map_err(ErrorSeverity::Fatal)?;
-                    tasks.push(Task::<Context, J>::Job(job_handle).run());
-                    tasks_count += 1;
-                    performer_state = PerformerState::InProgress;
-                }
+                let job = job::Job::PerformerJobRun(job_args);
+                let job_handle = state.thread_pool.spawn_handle(job)
+                    .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)
+                    .map_err(ErrorSeverity::Fatal)?;
+                tasks.push(Task::<Context, J>::Job(job_handle).run());
+                tasks_count += 1;
+                performer_state = PerformerState::InProgress;
             },
             PerformerAction::KeepState(state) =>
                 performer_state = state,
