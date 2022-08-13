@@ -295,55 +295,80 @@ where J: edeltraud::Job + From<job::Job>,
                 performer_state = state,
         }
 
-        // enum Event<R, T> {
-        //     Request(Option<R>),
-        //     Task(T),
-        // }
+        enum Event<R, T, E> {
+            Request(Option<R>),
+            Task(T),
+            InterpreterError(E),
+        }
 
-        // let event = match mode {
-        //     Mode::Regular if tasks_count == 0 =>
-        //         Event::Request(state.fused_request_rx.next().await),
-        //     Mode::Regular =>
-        //         select! {
-        //             result = state.fused_request_rx.next() =>
-        //                 Event::Request(result),
-        //             result = fused_interpret_result_rx =>
-        //                 Source::InterpreterDone(result),
-        //             result = fused_interpret_error_rx =>
-        //                 Source::InterpreterError(result),
+        let event = match mode {
+            Mode::Regular if tasks_count == 0 =>
+                Event::Request(state.fused_request_rx.next().await),
+            Mode::Regular =>
+                select! {
+                    result = state.fused_request_rx.next() =>
+                        Event::Request(result),
+                    result = fused_interpret_error_rx =>
+                        Event::InterpreterError(result),
+                    result = tasks.next() =>
+                        match result {
+                            None =>
+                                unreachable!(),
+                            Some(task) => {
+                                tasks_count -= 1;
+                                Event::Task(task)
+                            },
+                        },
+                },
+            Mode::Flushing =>
+                select! {
+                    result = fused_interpret_error_rx =>
+                        Event::InterpreterError(result),
+                    result = tasks.next() =>
+                        match result {
+                            None =>
+                                unreachable!(),
+                            Some(task) => {
+                                tasks_count -= 1;
+                                Event::Task(task)
+                            },
+                        },
+                },
+        };
 
-        //             result = tasks.next() => match result {
-        //                 None =>
-        //                     unreachable!(),
-        //                 Some(task) => {
-        //                     tasks_count -= 1;
-        //                     Event::Task(task)
-        //                 },
-        //             },
-        //         },
-        //     Mode::Flushing => {
-        //         let task = tasks.next().await.unwrap();
-        //         tasks_count -= 1;
-        //         Event::Task(task)
-        //     },
-        // };
+        match event {
 
-        // match event {
+            Event::Request(None) => {
+                log::info!("requests sink channel depleted: terminating");
+                return Ok(());
+            },
 
-        //     Event::Request(None) => {
-        //         log::info!("requests sink channel depleted: terminating");
-        //         return Ok(());
-        //     },
-        // }
+            Event::Request(Some(request)) => {
 
-        todo!();
+                todo!();
+            },
+
+            Event::Task(Ok(..)) => {
+
+                todo!();
+            },
+
+            Event::Task(Err(error)) =>
+                return Err(ErrorSeverity::Fatal(error)),
+
+            Event::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+                return Err(ErrorSeverity::Recoverable { state, }),
+
+            Event::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+                return Err(ErrorSeverity::Fatal(error)),
+
+            Event::InterpreterError(Err(oneshot::Canceled)) => {
+                log::debug!("interpreter error channel closed: shutting down");
+                return Ok(());
+            },
+
+        }
     }
-
-
-
-
-    // let mut job_tasks = FuturesUnordered::new();
-    // let iter_tasks: FuturesUnordered<IterTask> = FuturesUnordered::new();
 
     // let mut env = performer_job::Env { interpreter_pid, iter_tasks, };
     // let mut kont = performer_job::Kont::Next { performer, };
@@ -675,7 +700,7 @@ where J: edeltraud::Job + From<job::Job>,
     // }
 }
 
-enum IterTask {
+pub enum IterTask {
     Taken,
     Item {
         blocks_tx: mpsc::Sender<IterBlocksItem>,
@@ -687,7 +712,7 @@ enum IterTask {
     },
 }
 
-enum IterTaskDone {
+pub enum IterTaskDone {
     PeerLost,
     ItemSent(performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>),
     Finished,
