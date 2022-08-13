@@ -59,15 +59,12 @@ fn script_simple_defrag() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx00", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx00",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
 
         // { 0: write task in progress @ 24, 1: write req }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx01")),
-            interpreter_context: "ictx00",
         }),
         // { 0: write task in progress @ 24, 1: prep write }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
@@ -75,20 +72,15 @@ fn script_simple_defrag() {
             expect_block_bytes: hello_world_bytes().freeze(),
             expect_context: task::WriteBlockContext::External("ectx01"),
         }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx00",
-        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // { 0: write task in progress @ 24, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
             block_id: block::Id::init().next(),
             write_block_bytes: hello_world_bytes(),
             context: task::WriteBlockContext::External("ectx01"),
-            interpreter_context: "ictx00",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx00",
-        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // { 0: write task done @ 24 .. 85, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -117,10 +109,8 @@ fn script_simple_defrag() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx01", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx01",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // { 0: ready @ 24 .. 85, 1: write task done @ 85 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -169,10 +159,8 @@ fn script_simple_defrag() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx02", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx02",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // { 0: ready @ 24 .. 85, 0: delete task done @ 24, 1: ready @ 85 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -211,10 +199,8 @@ fn script_simple_defrag() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx03", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx03",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 85,
@@ -269,10 +255,8 @@ fn script_simple_defrag() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx04", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx04",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 85,
@@ -301,10 +285,8 @@ fn script_simple_defrag() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx05", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx05",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 85,
@@ -345,10 +327,8 @@ fn script_simple_defrag() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx06", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx06",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 130,

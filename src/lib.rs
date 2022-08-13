@@ -228,12 +228,14 @@ pub struct InterpretStats {
     pub count_seek_backward: usize,
 }
 
+#[derive(Debug)]
 pub struct IterBlocks {
     pub blocks_total_count: usize,
     pub blocks_total_size: usize,
     pub blocks_rx: mpsc::Receiver<IterBlocksItem>,
 }
 
+#[derive(Debug)]
 pub enum IterBlocksItem {
     Block { block_id: block::Id, block_bytes: Bytes, },
     NoMoreBlocks,
@@ -375,6 +377,7 @@ mod blockwheel_context {
         IterBlocksItem,
     };
 
+    #[derive(Debug)]
     pub struct Context;
 
     impl context::Context for Context {

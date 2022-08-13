@@ -113,7 +113,7 @@ enum ScriptOp {
 enum ExpectOp {
     Idle,
     PollRequest,
-    PollRequestAndInterpreter { expect_context: C, },
+    PollRequestAndInterpreter,
     MakeIterBlocksStream,
     InterpretTask { expect_offset: u64, expect_task: ExpectTask, },
     InfoSuccess { expect_info: Info, expect_context: C, },
@@ -134,26 +134,23 @@ enum ExpectOp {
 #[allow(dead_code)]
 #[derive(Debug)]
 enum DoOp {
-    RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, interpreter_context: C, },
+    RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, },
     RequestAndInterpreterIncomingTaskDone { task_done: task::Done<Context>, },
-    RequestAndInterpreterIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, interpreter_context: C, },
+    RequestAndInterpreterIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, },
     RequestAndInterpreterIncomingPreparedWriteBlockDone {
         block_id: block::Id,
         write_block_bytes: BytesMut,
         context: task::WriteBlockContext<C>,
-        interpreter_context: C,
     },
     RequestAndInterpreterIncomingPreparedDeleteBlockDone {
         block_id: block::Id,
         delete_block_bytes: BytesMut,
         context: task::DeleteBlockContext<C>,
-        interpreter_context: C,
     },
     RequestAndInterpreterIncomingProcessReadBlockDone {
         block_id: block::Id,
         block_bytes: Bytes,
         pending_contexts_key: &'static str,
-        interpreter_context: C,
     },
     RequestIncomingRequest { request: proto::Request<Context>, },
     RequestIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, },
@@ -164,7 +161,7 @@ enum DoOp {
         block_bytes: Bytes,
         pending_contexts_key: &'static str,
     },
-    TaskAccept { interpreter_context: C, },
+    TaskAccept,
     StreamReady { iter_context: C, },
 }
 
@@ -228,45 +225,40 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                             "unexpected script end on PollRequestAndInterpreter, expecting ExpectOp::PollRequestAndInterpreter @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter { expect_context, }))
-                        if expect_context == poll.interpreter_context =>
+                    Some(ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter)) =>
                         match script.pop() {
                             None =>
                                 break,
-                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest { request, interpreter_context, })) =>
-                                poll.next.incoming_request(request, interpreter_context),
+                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest { request, })) =>
+                                poll.next.incoming_request(request),
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone { task_done, })) =>
                                 poll.next.incoming_task_done(task_done),
-                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingIterBlocks { iter_blocks_state, interpreter_context, })) =>
-                                poll.next.incoming_iter_blocks(iter_blocks_state, interpreter_context),
+                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingIterBlocks { iter_blocks_state, })) =>
+                                poll.next.incoming_iter_blocks(iter_blocks_state),
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
                                 block_id,
                                 write_block_bytes,
                                 context,
-                                interpreter_context,
                             })) =>
                                 poll.next.prepared_write_block_done(
                                     block_id,
                                     task::WriteBlockBytes::Chunk(write_block_bytes.freeze()),
                                     context,
-                                    interpreter_context,
                                 ),
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingProcessReadBlockDone {
                                 block_id,
                                 block_bytes,
                                 pending_contexts_key,
-                                interpreter_context,
                             })) => {
                                 let pending_contexts = pending_contexts_table.remove(pending_contexts_key).unwrap();
-                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts, interpreter_context)
+                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts)
                             },
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
                                 block_id,
                                 delete_block_bytes,
                                 context,
-                                interpreter_context,
                             })) =>
-                                poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context, interpreter_context),
+                                poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
                             Some(other_op) =>
                                 panic!(
                                     "expected DoOp::RequestAndInterpreterIncoming* but got {:?} @ {}",
@@ -350,8 +342,8 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         match script.pop() {
                             None =>
                                 panic!("unexpected script end on ExpectOp::InterpretTask, expecting DoOp::TaskAccept @ {}", script_len - script.len()),
-                            Some(ScriptOp::Do(DoOp::TaskAccept { interpreter_context, })) => {
-                                let performer = next.task_accepted(interpreter_context);
+                            Some(ScriptOp::Do(DoOp::TaskAccept)) => {
+                                let performer = next.task_accepted();
                                 performer.next()
                             },
                             Some(other_op) =>

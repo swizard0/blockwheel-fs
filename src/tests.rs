@@ -1,5 +1,10 @@
 use std::{
     fs,
+    sync::{
+        atomic::{
+            Ordering,
+        },
+    },
 };
 
 use crate::{
@@ -47,11 +52,21 @@ fn stress_fixed_file() {
 
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
+    log::info!("fixed_file scratch JOB_BLOCK_PREPARE_WRITE: {}", crate::job::JOB_BLOCK_PREPARE_WRITE.load(Ordering::SeqCst));
+    log::info!("fixed_file scratch JOB_BLOCK_PROCESS_READ: {}", crate::job::JOB_BLOCK_PROCESS_READ.load(Ordering::SeqCst));
+    log::info!("fixed_file scratch JOB_BLOCK_PREPARE_DELETE: {}", crate::job::JOB_BLOCK_PREPARE_DELETE.load(Ordering::SeqCst));
+    log::info!("fixed_file scratch JOB_PERFORMER_JOB_RUN: {}", crate::job::JOB_PERFORMER_JOB_RUN.load(Ordering::SeqCst));
+
     // next load existing wheel and repeat stress with blocks
     counter.clear();
     runtime.block_on(stress::stress_loop(params.clone(), &mut blocks, &mut counter, &limits)).unwrap();
 
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
+
+    log::info!("fixed_file existing JOB_BLOCK_PREPARE_WRITE: {}", crate::job::JOB_BLOCK_PREPARE_WRITE.load(Ordering::SeqCst));
+    log::info!("fixed_file existing JOB_BLOCK_PROCESS_READ: {}", crate::job::JOB_BLOCK_PROCESS_READ.load(Ordering::SeqCst));
+    log::info!("fixed_file existing JOB_BLOCK_PREPARE_DELETE: {}", crate::job::JOB_BLOCK_PREPARE_DELETE.load(Ordering::SeqCst));
+    log::info!("fixed_file existing JOB_PERFORMER_JOB_RUN: {}", crate::job::JOB_PERFORMER_JOB_RUN.load(Ordering::SeqCst));
 
     fs::remove_file(wheel_filename).ok();
 }
@@ -87,4 +102,9 @@ fn stress_ram() {
     runtime.block_on(stress::stress_loop(params.clone(), &mut blocks, &mut counter, &limits)).unwrap();
 
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
+
+    log::info!("ram JOB_BLOCK_PREPARE_WRITE: {}", crate::job::JOB_BLOCK_PREPARE_WRITE.load(Ordering::SeqCst));
+    log::info!("ram JOB_BLOCK_PROCESS_READ: {}", crate::job::JOB_BLOCK_PROCESS_READ.load(Ordering::SeqCst));
+    log::info!("ram JOB_BLOCK_PREPARE_DELETE: {}", crate::job::JOB_BLOCK_PREPARE_DELETE.load(Ordering::SeqCst));
+    log::info!("ram JOB_PERFORMER_JOB_RUN: {}", crate::job::JOB_PERFORMER_JOB_RUN.load(Ordering::SeqCst));
 }

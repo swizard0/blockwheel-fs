@@ -60,15 +60,12 @@ fn script_defrag_disturb() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx00", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx00",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
 
         // { 0: write task in progress @ 24, 1: write req }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx01")),
-            interpreter_context: "ictx00",
         }),
         // { 0: write task in progress @ 24, 1: prep write }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
@@ -76,20 +73,15 @@ fn script_defrag_disturb() {
             expect_block_bytes: hello_world_bytes().freeze(),
             expect_context: task::WriteBlockContext::External("ectx01"),
         }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx00",
-        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // { 0: write task in progress @ 24, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
             block_id: block::Id::init().next(),
             write_block_bytes: hello_world_bytes(),
             context: task::WriteBlockContext::External("ectx01"),
-            interpreter_context: "ictx00",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx00",
-        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // { 0: write task done @ 24 .. 85, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -118,10 +110,8 @@ fn script_defrag_disturb() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx01", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx01",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // { 0: ready @ 24 .. 85, 1: write task done @ 85 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -170,10 +160,8 @@ fn script_defrag_disturb() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx02", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx02",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // { 0: ready @ 24 .. 85, 0: delete task done @ 24, 1: ready @ 85 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -212,46 +200,35 @@ fn script_defrag_disturb() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx03", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx03",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
 
         // request user block read as well (expect delay until defrag read)
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init().next(), context: "ectx03", }),
-            interpreter_context: "ictx05",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx05",
-        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // request user block write as well (expected to be immediately scheduled task to write and defrag should be canceled)
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::WriteBlock(proto::RequestWriteBlock {
                 block_bytes: hello_bytes().freeze(),
                 context: "ectx04",
             }),
-            interpreter_context: "ictx06",
         }),
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
             expect_block_id: block::Id::init().next().next(),
             expect_block_bytes: hello_bytes().freeze(),
             expect_context: task::WriteBlockContext::External("ectx04"),
         }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx06",
-        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
             block_id: block::Id::init().next().next(),
             write_block_bytes: hello_bytes(),
             context: task::WriteBlockContext::External("ectx04"),
-            interpreter_context: "ictx06",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx06",
-        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // defrag #0 read done
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -301,10 +278,8 @@ fn script_defrag_disturb() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx07", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx07",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // defrag #0 delete block bytes ready
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
             block_id: block::Id::init().next(),
@@ -316,12 +291,9 @@ fn script_defrag_disturb() {
                     space_key_right: SpaceKey { space_available: 6, serial: 3 },
                 },
             },
-            interpreter_context: "ictx07",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx07",
-        }),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // user write block task done
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -356,10 +328,8 @@ fn script_defrag_disturb() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx08", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx08",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         // defragmentation #0 continue (delete task ready)
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
@@ -391,10 +361,8 @@ fn script_defrag_disturb() {
                 }),
             },
         }),
-        ScriptOp::Do(DoOp::TaskAccept { interpreter_context: "ictx09", }),
-        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter {
-            expect_context: "ictx09",
-        }),
+        ScriptOp::Do(DoOp::TaskAccept),
+        ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 139,

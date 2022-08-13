@@ -252,6 +252,7 @@ where J: edeltraud::Job + From<job::Job>,
     let mut tasks = FuturesUnordered::new();
     let mut tasks_count = 0;
 
+    log::debug!("starting wheel busyloop");
     loop {
         enum PerformerAction<A, S> {
             Run(A),
@@ -303,7 +304,12 @@ where J: edeltraud::Job + From<job::Job>,
 
         let event = match mode {
             Mode::Regular if tasks_count == 0 =>
-                Event::Request(state.fused_request_rx.next().await),
+                select! {
+                    result = state.fused_request_rx.next() =>
+                        Event::Request(result),
+                    result = fused_interpret_error_rx =>
+                        Event::InterpreterError(result),
+                },
             Mode::Regular =>
                 select! {
                     result = state.fused_request_rx.next() =>
@@ -355,6 +361,7 @@ where J: edeltraud::Job + From<job::Job>,
                     let performer_job::QueryInterpretTask { fused_interpret_result_rx, } =
                         interpret_task;
                     tasks.push(Task::InterpreterAwait { fused_interpret_result_rx, }.run());
+                    tasks_count += 1;
                 }
                 if let Some(performer_job::TaskDoneFlush { reply_tx, }) = env.outgoing.task_done_flush.take() {
                     let interpret::Synced = env.interpreter_pid.device_sync().await
@@ -371,6 +378,7 @@ where J: edeltraud::Job + From<job::Job>,
                     let thread_pool = state.thread_pool.clone();
                     let blocks_pool = state.blocks_pool.clone();
                     tasks.push(Task::BlockPrepareWrite { thread_pool, block_id, block_bytes, blocks_pool, context, }.run());
+                    tasks_count += 1;
                 }
                 for prepare_delete_block in env.outgoing.prepare_delete_blocks.drain(..) {
                     let performer_job::PrepareDeleteBlock { block_id, context, } =
@@ -378,15 +386,18 @@ where J: edeltraud::Job + From<job::Job>,
                     let thread_pool = state.thread_pool.clone();
                     let blocks_pool = state.blocks_pool.clone();
                     tasks.push(Task::BlockPrepareDelete { thread_pool, block_id, blocks_pool, context, }.run());
+                    tasks_count += 1;
                 }
                 for process_read_block in env.outgoing.process_read_blocks.drain(..) {
                     let performer_job::ProcessReadBlock { storage_layout, block_header, block_bytes, pending_contexts, } =
                         process_read_block;
                     let thread_pool = state.thread_pool.clone();
                     tasks.push(Task::BlockProcessRead { thread_pool, storage_layout, block_header, block_bytes, pending_contexts, }.run());
+                    tasks_count += 1;
                 }
                 for iter_task in env.outgoing.iter_tasks.drain(..) {
                     tasks.push(Task::Iter(iter_task).run());
+                    tasks_count += 1;
                 }
 
                 performer_state = match performer_state {
