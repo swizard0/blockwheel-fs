@@ -38,7 +38,7 @@ struct Inner<C> where C: Context {
     pending_write_external: HashSet<block::Id>,
     defrag: Option<Defrag<C::WriteBlock>>,
     freed_space_key: Option<SpaceKey>,
-    bg_task: BackgroundTask<C::Interpreter>,
+    bg_task: BackgroundTask,
     tasks_queue: task::queue::Queue<C>,
     done_task: DoneTask<C>,
     interpret_stats: InterpretStats,
@@ -95,7 +95,6 @@ pub struct MakeIterBlocksStream<C> where C: Context {
 }
 
 pub struct PollRequestAndInterpreter<C> where C: Context {
-    pub interpreter_context: C::Interpreter,
     pub next: PollRequestAndInterpreterNext<C>,
 }
 
@@ -350,8 +349,8 @@ impl<C> Performer<C> where C: Context {
 }
 
 impl<C> PollRequestAndInterpreterNext<C> where C: Context {
-    pub fn incoming_request(mut self, request: proto::Request<C>, interpreter_context: C::Interpreter) -> Op<C> {
-        self.inner.rollback_bg_task_state(interpreter_context);
+    pub fn incoming_request(mut self, request: proto::Request<C>) -> Op<C> {
+        self.inner.rollback_bg_task_state();
         self.inner.incoming_request(request)
     }
 
@@ -370,11 +369,10 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         block_id: block::Id,
         write_block_bytes: task::WriteBlockBytes,
         context: task::WriteBlockContext<C::WriteBlock>,
-        interpreter_context: C::Interpreter,
     )
         -> Op<C>
     {
-        self.inner.rollback_bg_task_state(interpreter_context);
+        self.inner.rollback_bg_task_state();
         self.inner.prepared_write_block_done(block_id, write_block_bytes, context)
     }
 
@@ -383,11 +381,10 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         block_id: block::Id,
         delete_block_bytes: BytesMut,
         context: task::DeleteBlockContext<C::DeleteBlock>,
-        interpreter_context: C::Interpreter,
     )
         -> Op<C>
     {
-        self.inner.rollback_bg_task_state(interpreter_context);
+        self.inner.rollback_bg_task_state();
         self.inner.prepared_delete_block_done(block_id, delete_block_bytes, context)
     }
 
@@ -396,22 +393,20 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         block_id: block::Id,
         block_bytes: Bytes,
         pending_contexts: task::queue::PendingReadContextBag,
-        interpreter_context: C::Interpreter,
     )
         -> Op<C>
     {
-        self.inner.rollback_bg_task_state(interpreter_context);
+        self.inner.rollback_bg_task_state();
         self.inner.process_read_block_done(block_id, block_bytes, pending_contexts)
     }
 
     pub fn incoming_iter_blocks(
         mut self,
         iter_blocks_state: IterBlocksState<C::IterBlocksStream>,
-        interpreter_context: C::Interpreter,
     )
         -> Op<C>
     {
-        self.inner.rollback_bg_task_state(interpreter_context);
+        self.inner.rollback_bg_task_state();
         self.inner.iter_blocks_stream_next(
             iter_blocks_state.iter_blocks_cursor.block_id,
             iter_blocks_state.iter_blocks_stream_context,
@@ -466,10 +461,10 @@ impl<C> PollRequestNext<C> where C: Context {
 }
 
 impl<C> InterpretTaskNext<C> where C: Context {
-    pub fn task_accepted(mut self, interpreter_context: C::Interpreter) -> Performer<C> {
+    pub fn task_accepted(mut self) -> Performer<C> {
         self.inner.bg_task.state = match self.inner.bg_task.state {
             BackgroundTaskState::Await { block_id, } =>
-                BackgroundTaskState::InProgress { block_id, interpreter_context, },
+                BackgroundTaskState::InProgress { block_id, },
             BackgroundTaskState::Idle | BackgroundTaskState::InProgress { .. } =>
                 unreachable!(),
         };
@@ -484,16 +479,15 @@ impl<C> MakeIterBlocksStreamNext<C> where C: Context {
 }
 
 
-struct BackgroundTask<C> {
+struct BackgroundTask {
     current_offset: u64,
-    state: BackgroundTaskState<C>,
+    state: BackgroundTaskState,
 }
 
-enum BackgroundTaskState<C> {
+enum BackgroundTaskState {
     Idle,
     InProgress {
         block_id: block::Id,
-        interpreter_context: C,
     },
     Await {
         block_id: block::Id,
@@ -524,10 +518,10 @@ impl<C> Inner<C> where C: Context {
         }
     }
 
-    fn rollback_bg_task_state(&mut self, interpreter_context: C::Interpreter) {
+    fn rollback_bg_task_state(&mut self) {
         self.bg_task.state = match mem::replace(&mut self.bg_task.state, BackgroundTaskState::Idle) {
             BackgroundTaskState::Await { block_id, } =>
-                BackgroundTaskState::InProgress { block_id, interpreter_context, },
+                BackgroundTaskState::InProgress { block_id, },
             BackgroundTaskState::Idle | BackgroundTaskState::InProgress { .. } =>
                 unreachable!(),
         };
@@ -819,10 +813,9 @@ impl<C> Inner<C> where C: Context {
         match mem::replace(&mut self.bg_task.state, BackgroundTaskState::Idle) {
             BackgroundTaskState::Idle =>
                 self.maybe_run_background_task(),
-            BackgroundTaskState::InProgress { block_id, interpreter_context, } => {
+            BackgroundTaskState::InProgress { block_id, } => {
                 self.bg_task.state = BackgroundTaskState::Await { block_id, };
                 Op::Query(QueryOp::PollRequestAndInterpreter(PollRequestAndInterpreter {
-                    interpreter_context,
                     next: PollRequestAndInterpreterNext {
                         inner: self,
                     },

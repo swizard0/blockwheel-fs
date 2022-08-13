@@ -18,7 +18,7 @@ pub enum Job {
     BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs),
     BlockProcessRead(interpret::BlockProcessReadJobArgs),
     BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs),
-    PerformerJobRun(performer_job::RunJobArgs),
+    PerformerJobRun(performer_job::JobArgs),
 }
 
 pub enum JobOutput {
@@ -97,7 +97,7 @@ impl From<JobOutput> for BlockPrepareDeleteDone {
     }
 }
 
-pub struct PerformerJobRunDone(pub performer_job::RunJobOutput);
+pub struct PerformerJobRunDone(pub performer_job::Output);
 
 impl From<JobOutput> for PerformerJobRunDone {
     fn from(output: JobOutput) -> Self {
