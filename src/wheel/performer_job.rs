@@ -51,7 +51,22 @@ pub struct RunJobArgs {
 }
 
 pub enum Kont {
-    Next {
+    Start {
+        performer: performer::Performer<Context>,
+    },
+    PollRequestAndInterpreter {
+        poll: performer::PollRequestAndInterpreter<Context>,
+    },
+    PollRequest {
+        poll: performer::PollRequest<Context>,
+    },
+
+
+
+
+
+
+    PollRequestAndInterpreter {
         performer: performer::Performer<Context>,
     },
     PollRequestAndInterpreterIncomingRequest {
