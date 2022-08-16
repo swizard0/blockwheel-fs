@@ -1012,9 +1012,9 @@ impl Schema {
         let defrag_gaps = self.blocks_index.with_mut(&moving_block_id, |block_entry| {
             match block_entry.environs.right {
                 RightEnvirons::End | RightEnvirons::Block { .. } =>
-                    DefragGaps::OnlyLeft { space_key_left, },
+                    DefragGaps::OnlyLeft { block_offset: block_entry.offset, space_key_left, },
                 RightEnvirons::Space { space_key: space_key_right, } =>
-                    DefragGaps::Both { space_key_left, space_key_right, },
+                    DefragGaps::Both { block_offset: block_entry.offset, space_key_left, space_key_right, },
             }
         }).unwrap();
         DefragOp::Queue { defrag_gaps, moving_block_id, }
@@ -1113,18 +1113,18 @@ impl Builder {
             },
         };
         let defrag_op = match self.tracker {
-            Some(BlocksTracker { prev_block_left_env: LeftEnvirons::Space { space_key: space_key_left, }, ref prev_block_id, .. }) =>
+            Some(BlocksTracker { prev_block_left_env: LeftEnvirons::Space { space_key: space_key_left, }, ref prev_block_id, prev_block_offset, .. }) =>
                 match left {
                     LeftEnvirons::Start =>
                         unreachable!(),
                     LeftEnvirons::Space { space_key: space_key_right, } =>
                         DefragOp::Queue {
-                            defrag_gaps: DefragGaps::Both { space_key_left, space_key_right, },
+                            defrag_gaps: DefragGaps::Both { block_offset: prev_block_offset, space_key_left, space_key_right, },
                             moving_block_id: prev_block_id.clone(),
                         },
                     LeftEnvirons::Block { .. } =>
                         DefragOp::Queue {
-                            defrag_gaps: DefragGaps::OnlyLeft { space_key_left, },
+                            defrag_gaps: DefragGaps::OnlyLeft { block_offset: prev_block_offset, space_key_left, },
                             moving_block_id: prev_block_id.clone(),
                         },
                 },
@@ -1180,7 +1180,7 @@ impl Builder {
                                     DefragOp::None,
                                 LeftEnvirons::Space { space_key: space_key_left, } =>
                                     DefragOp::Queue {
-                                        defrag_gaps: DefragGaps::OnlyLeft { space_key_left, },
+                                        defrag_gaps: DefragGaps::OnlyLeft { block_offset: tracker.prev_block_offset, space_key_left, },
                                         moving_block_id: tracker.prev_block_id,
                                     },
                             },
@@ -1204,7 +1204,11 @@ impl Builder {
                                     DefragOp::None,
                                 LeftEnvirons::Space { space_key: space_key_left, } =>
                                     DefragOp::Queue {
-                                        defrag_gaps: DefragGaps::Both { space_key_left, space_key_right: space_key, },
+                                        defrag_gaps: DefragGaps::Both {
+                                            block_offset: tracker.prev_block_offset,
+                                            space_key_left,
+                                            space_key_right: space_key,
+                                        },
                                         moving_block_id: tracker.prev_block_id,
                                     },
                             },

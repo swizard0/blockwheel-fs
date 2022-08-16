@@ -149,19 +149,23 @@ impl PartialOrd for DefragTask {
 impl Ord for DefragTask {
     fn cmp(&self, other: &DefragTask) -> cmp::Ordering {
         match (&self.defrag_gaps, &other.defrag_gaps) {
-            (DefragGaps::OnlyLeft { space_key_left: space_self, }, DefragGaps::OnlyLeft { space_key_left: space_other, }) =>
-                space_self.cmp(&space_other),
+            (
+                DefragGaps::OnlyLeft { block_offset: offset_self, space_key_left: _, },
+                DefragGaps::OnlyLeft { block_offset: offset_other, space_key_left: _, },
+            ) =>
+                offset_other.cmp(&offset_self),
             (DefragGaps::OnlyLeft { .. }, DefragGaps::Both { .. }) =>
                 cmp::Ordering::Less,
             (DefragGaps::Both { .. }, DefragGaps::OnlyLeft { .. }) =>
                 cmp::Ordering::Greater,
             (
-                DefragGaps::Both { space_key_left: space_left_self, space_key_right: space_right_self },
-                DefragGaps::Both { space_key_left: space_left_other, space_key_right: space_right_other, },
+                DefragGaps::Both { block_offset: offset_self, space_key_left: space_left_self, space_key_right: space_right_self },
+                DefragGaps::Both { block_offset: offset_other, space_key_left: space_left_other, space_key_right: space_right_other, },
             ) => {
                 let space_sum_self = space_left_self.space_available() + space_right_self.space_available();
                 let space_sum_other = space_left_other.space_available() + space_right_other.space_available();
                 space_sum_self.cmp(&space_sum_other)
+                    .then_with(|| offset_other.cmp(&offset_self))
             },
         }
     }

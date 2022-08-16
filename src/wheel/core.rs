@@ -69,8 +69,8 @@ impl SpaceKey {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum DefragGaps {
-    OnlyLeft { space_key_left: SpaceKey, },
-    Both { space_key_left: SpaceKey, space_key_right: SpaceKey, },
+    OnlyLeft { block_offset: u64, space_key_left: SpaceKey, },
+    Both { block_offset: u64, space_key_left: SpaceKey, space_key_right: SpaceKey, },
 }
 
 impl DefragGaps {
