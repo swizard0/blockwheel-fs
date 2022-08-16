@@ -1,9 +1,10 @@
 use std::{
     io,
     thread,
+    sync::{
+        Arc,
+    },
 };
-
-use crossbeam_channel as channel;
 
 use futures::{
     channel::{
@@ -13,12 +14,16 @@ use futures::{
 
 use bincode::Options;
 
-use alloc_pool::bytes::{
-    BytesPool,
+use alloc_pool::{
+    bytes::{
+        BytesPool,
+    },
 };
 
 use crate::{
-    context::Context,
+    context::{
+        Context,
+    },
     wheel::{
         storage,
         core::{
@@ -30,6 +35,7 @@ use crate::{
             Synced,
             Command,
             Request,
+            PidInner,
             DoneTask,
             AppendTerminatorError,
             block_append_terminator,
@@ -71,8 +77,7 @@ pub struct CreateParams {
 
 pub struct SyncGenServer<C> where C: Context {
     memory: Vec<u8>,
-    request_tx: channel::Sender<Command<C>>,
-    request_rx: channel::Receiver<Command<C>>,
+    pid_inner: Arc<PidInner<C>>,
     storage_layout: storage::Layout,
 }
 
@@ -116,15 +121,14 @@ impl<C> SyncGenServer<C> where C: Context {
         log::debug!("ram file create success");
         let storage_layout = performer_builder.storage_layout().clone();
 
-        let (request_tx, request_rx) = channel::unbounded();
-
         let (performer_builder, _work_block) = performer_builder.start_fill();
+
+        let pid_inner = Arc::new(PidInner::new());
 
         Ok(WheelData {
             sync_gen_server: SyncGenServer {
                 memory,
-                request_tx,
-                request_rx,
+                pid_inner,
                 storage_layout,
             },
             performer: performer_builder
@@ -134,7 +138,7 @@ impl<C> SyncGenServer<C> where C: Context {
 
     pub fn pid(&self) -> Pid<C> {
         Pid {
-            request_tx: self.request_tx.clone(),
+            inner: self.pid_inner.clone(),
         }
     }
 
@@ -157,7 +161,7 @@ impl<C> SyncGenServer<C> where C: Context {
             .name("wheel::interpret::ram".to_string())
             .spawn(move || {
                 let result = busyloop(
-                    self.request_rx,
+                    self.pid_inner,
                     self.memory,
                     self.storage_layout,
                     blocks_pool,
@@ -173,7 +177,7 @@ impl<C> SyncGenServer<C> where C: Context {
 }
 
 fn busyloop<C>(
-    request_rx: channel::Receiver<Command<C>>,
+    pid_inner: Arc<PidInner<C>>,
     memory: Vec<u8>,
     storage_layout: storage::Layout,
     blocks_pool: BytesPool,
@@ -192,12 +196,10 @@ where C: Context,
 
     loop {
         enum Event<C> { Command(C), }
-
-        let event = match request_rx.recv() {
-            Ok(command) =>
-                Event::Command(Some(command)),
-            Err(channel::RecvError) =>
-                Event::Command(None),
+        let event = if Arc::strong_count(&pid_inner) > 1 {
+            Event::Command(Some(pid_inner.acquire()))
+        } else {
+            Event::Command(None)
         };
 
         match event {

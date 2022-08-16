@@ -1,4 +1,10 @@
-use crossbeam_channel as channel;
+use std::{
+    sync::{
+        Arc,
+        Mutex,
+        Condvar,
+    },
+};
 
 use futures::{
     channel::{
@@ -78,27 +84,63 @@ pub enum TaskJoinError {
 
 #[derive(Clone)]
 pub struct Pid<C> where C: Context {
-    request_tx: channel::Sender<Command<C>>,
+    inner: Arc<PidInner<C>>,
+}
+
+struct PidInner<C> where C: Context {
+    commands_queue: Mutex<Vec<Command<C>>>,
+    condvar: Condvar,
+}
+
+impl<C> PidInner<C> where C: Context {
+    fn new() -> Self {
+        Self {
+            commands_queue: Mutex::new(Vec::with_capacity(2)),
+            condvar: Condvar::new(),
+        }
+    }
+
+    fn schedule(&self, command: Command<C>) {
+        let mut commands_queue = self.commands_queue.lock().unwrap();
+        commands_queue.push(command);
+        self.condvar.notify_one();
+    }
+
+    fn acquire(&self) -> Command<C> {
+        let mut commands_queue = self.commands_queue.lock().unwrap();
+        loop {
+            if let Some(task) = commands_queue.pop() {
+                return task;
+            }
+            commands_queue = self.condvar.wait(commands_queue).unwrap();
+        }
+    }
 }
 
 impl<C> Pid<C> where C: Context {
-    pub fn push_request(&mut self, offset: u64, task: task::Task<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
+    pub fn push_request(&self, offset: u64, task: task::Task<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.request_tx.send(Command::Request(Request { offset, task, reply_tx, }))
-            .map_err(|_send_error| ero::NoProcError)?;
-        Ok(reply_rx)
+        if Arc::strong_count(&self.inner) > 1 {
+            self.inner.schedule(Command::Request(Request { offset, task, reply_tx, }));
+            Ok(reply_rx)
+        } else {
+            Err(ero::NoProcError)
+        }
     }
 
     pub async fn device_sync(&mut self) -> Result<Synced, ero::NoProcError> {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
-            self.request_tx.send(Command::DeviceSync { reply_tx, })
-                .map_err(|_send_error| ero::NoProcError)?;
-            match reply_rx.await {
-                Ok(Synced) =>
-                    return Ok(Synced),
-                Err(oneshot::Canceled) =>
-                    (),
+            if Arc::strong_count(&self.inner) > 1 {
+                self.inner.schedule(Command::DeviceSync { reply_tx, });
+                match reply_rx.await {
+                    Ok(Synced) =>
+                        return Ok(Synced),
+                    Err(oneshot::Canceled) =>
+                        (),
+                }
+            } else {
+                return Err(ero::NoProcError);
             }
         }
     }

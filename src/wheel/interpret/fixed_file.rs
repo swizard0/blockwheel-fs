@@ -7,6 +7,9 @@ use std::{
         Read,
         Write,
     },
+    sync::{
+        Arc,
+    },
     path::{
         Path,
         PathBuf,
@@ -16,8 +19,6 @@ use std::{
         Duration,
     },
 };
-
-use crossbeam_channel as channel;
 
 use futures::{
     channel::{
@@ -45,6 +46,7 @@ use crate::{
             Synced,
             Command,
             Request,
+            PidInner,
             DoneTask,
             AppendTerminatorError,
             block_append_terminator,
@@ -163,8 +165,7 @@ pub struct OpenParams<P> {
 
 pub struct SyncGenServer<C> where C: Context {
     wheel_file: fs::File,
-    request_tx: channel::Sender<Command<C>>,
-    request_rx: channel::Receiver<Command<C>>,
+    pid_inner: Arc<PidInner<C>>,
     storage_layout: storage::Layout,
 }
 
@@ -236,15 +237,14 @@ impl<C> SyncGenServer<C> where C: Context {
         log::debug!("interpret::fixed_file create success");
         let storage_layout = performer_builder.storage_layout().clone();
 
-        let (request_tx, request_rx) = channel::unbounded();
-
         let (performer_builder, _work_block) = performer_builder.start_fill();
+
+        let pid_inner = Arc::new(PidInner::new());
 
         Ok(WheelData {
             sync_gen_server: SyncGenServer {
                 wheel_file,
-                request_tx,
-                request_rx,
+                pid_inner,
                 storage_layout,
             },
             performer: performer_builder
@@ -396,13 +396,12 @@ impl<C> SyncGenServer<C> where C: Context {
 
         log::debug!("loaded wheel schema");
 
-        let (request_tx, request_rx) = channel::unbounded();
+        let pid_inner = Arc::new(PidInner::new());
 
         Ok(WheelOpenStatus::Success(WheelData {
             sync_gen_server: SyncGenServer {
                 wheel_file,
-                request_tx,
-                request_rx,
+                pid_inner,
                 storage_layout: builder
                     .storage_layout()
                     .clone(),
@@ -414,7 +413,7 @@ impl<C> SyncGenServer<C> where C: Context {
 
     pub fn pid(&self) -> Pid<C> {
         Pid {
-            request_tx: self.request_tx.clone(),
+            inner: self.pid_inner.clone(),
         }
     }
 
@@ -437,7 +436,7 @@ impl<C> SyncGenServer<C> where C: Context {
             .name("wheel::interpret::fixed_file".to_string())
             .spawn(move || {
                 let result = busyloop(
-                    self.request_rx,
+                    self.pid_inner,
                     self.wheel_file,
                     self.storage_layout,
                     blocks_pool,
@@ -538,7 +537,7 @@ struct Timings {
 }
 
 fn busyloop<C>(
-    request_rx: channel::Receiver<Command<C>>,
+    pid_inner: Arc<PidInner<C>>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
     blocks_pool: BytesPool,
@@ -561,11 +560,10 @@ where C: Context,
         let now_loop = Instant::now();
 
         enum Event<C> { Command(C), }
-        let event = match request_rx.recv() {
-            Ok(command) =>
-                Event::Command(Some(command)),
-            Err(channel::RecvError) =>
-                Event::Command(None),
+        let event = if Arc::strong_count(&pid_inner) > 1 {
+            Event::Command(Some(pid_inner.acquire()))
+        } else {
+            Event::Command(None)
         };
         timings.event_wait += now_loop.elapsed();
 
