@@ -776,6 +776,9 @@ impl<C> Inner<C> where C: Context {
                     let mut block_get = self.schema.block_get();
                     let block_entry = block_get.by_id(&moving_block_id).unwrap();
                     let mut lens = self.tasks_queue.focus_block_id(block_entry.header.block_id.clone());
+
+                    log::warn!("DEFRAG initiated: block @ {} -> {defrag_gaps:?}", block_entry.offset);
+
                     lens.push_task(
                         task::Task {
                             block_id: block_entry.header.block_id.clone(),
@@ -1152,6 +1155,9 @@ impl<C> Inner<C> where C: Context {
                         })
                     },
                     task::WriteBlockContext::Defrag => {
+
+                        log::warn!("DEFRAG finished: block @ {}", current_offset);
+
                         let defrag = self.defrag.as_mut().unwrap();
                         assert!(defrag.in_progress_tasks_count > 0);
                         defrag.in_progress_tasks_count -= 1;
@@ -1392,4 +1398,5 @@ impl<C> Inner<C> where C: Context {
 fn cancel_defrag_task<C>(defrag: &mut Defrag<C>) {
     assert!(defrag.in_progress_tasks_count > 0);
     defrag.in_progress_tasks_count -= 1;
+    log::warn!("DEFRAG task canceled (still {} left)", defrag.in_progress_tasks_count);
 }
