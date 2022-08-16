@@ -59,7 +59,7 @@ pub enum Error {
     InterpreterTaskJoin(interpret::TaskJoinError),
     InterpreterRun(interpret::RunError),
     InterpreterCrash,
-    ThreadPoolGone,
+    Edeltraud(edeltraud::SpawnError),
     BlockPrepareWrite(interpret::BlockPrepareWriteJobError),
     BlockProcessRead(interpret::BlockProcessReadJobError),
     BlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
@@ -281,7 +281,7 @@ where J: edeltraud::Job + From<job::Job>,
                 job_args.env.incoming.transfill_from(&mut incoming);
                 let job = job::Job::PerformerJobRun(job_args);
                 let job_handle = state.thread_pool.spawn_handle(job)
-                    .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)
+                    .map_err(Error::Edeltraud)
                     .map_err(ErrorSeverity::Fatal)?;
                 tasks.push(Task::<Context, J>::Job(job_handle).run());
                 tasks_count += 1;
@@ -603,7 +603,7 @@ where C: context::Context + Send,
         match self {
             Task::Job(job_handle) => {
                 let job_output = job_handle.await
-                    .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                    .map_err(Error::Edeltraud)?;
                 let job_output: job::JobOutput = job_output.into();
                 let job::PerformerJobRunDone(performer_job_result) = job_output.into();
                 let job_done = performer_job_result
@@ -620,7 +620,7 @@ where C: context::Context + Send,
             } => {
                 let job = job::Job::BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs { block_id: block_id.clone(), block_bytes, blocks_pool, });
                 let job_output = thread_pool.spawn(job).await
-                    .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                    .map_err(Error::Edeltraud)?;
                 let job_output: job::JobOutput = job_output.into();
                 let job::BlockPrepareWriteDone(block_prepare_write_result) = job_output.into();
                 let done = block_prepare_write_result
@@ -637,7 +637,7 @@ where C: context::Context + Send,
             } => {
                 let job = job::Job::BlockProcessRead(interpret::BlockProcessReadJobArgs { storage_layout, block_header, block_bytes, });
                 let job_output = thread_pool.spawn(job).await
-                    .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                    .map_err(Error::Edeltraud)?;
                 let job_output: job::JobOutput = job_output.into();
                 let job::BlockProcessReadDone(block_process_read_result) = job_output.into();
                 let done = block_process_read_result
@@ -653,7 +653,7 @@ where C: context::Context + Send,
             } => {
                 let job = job::Job::BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs { blocks_pool, });
                 let job_output = thread_pool.spawn(job).await
-                    .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                    .map_err(Error::Edeltraud)?;
                 let job_output: job::JobOutput = job_output.into();
                 let job::BlockPrepareDeleteDone(block_prepare_delete_result) = job_output.into();
                 let done = block_prepare_delete_result

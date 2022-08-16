@@ -40,7 +40,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Error {
     ThreadPool(edeltraud::BuildError),
-    ThreadPoolGone,
+    Edeltraud(edeltraud::SpawnError),
     WheelGoneDuringInfo,
     WheelGoneDuringFlush,
     WriteBlock(WriteBlockError),
@@ -218,7 +218,7 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                     let job = Job::GenRandomBlock(GenRandomBlockJobArgs { blocks_pool, block_size_bytes, });
                     let job_output = thread_pool.spawn(job).await
-                        .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                        .map_err(Error::Edeltraud)?;
                     let job_output: JobOutput = job_output.into();
                     let GenRandomBlockDone(GenRandomBlockJobOutput { block_bytes, }) = job_output.into();
                     match blockwheel_pid.write_block(block_bytes.clone()).await {
@@ -257,7 +257,7 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
                             provided_block_bytes: block_bytes_read,
                         });
                         let job_output = thread_pool.spawn(job).await
-                            .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                            .map_err(Error::Edeltraud)?;
                         let job_output: JobOutput = job_output.into();
                         let CalcCrcDone(CalcCrcJobOutput { expected_crc, provided_crc, }) = job_output.into();
                         if expected_crc != provided_crc {
@@ -318,7 +318,7 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
                             provided_block_bytes: block_bytes,
                         });
                         let job_output = thread_pool.spawn(job).await
-                            .map_err(|edeltraud::SpawnError::ThreadPoolGone| Error::ThreadPoolGone)?;
+                            .map_err(Error::Edeltraud)?;
                         let job_output: JobOutput = job_output.into();
                         let CalcCrcDone(CalcCrcJobOutput { expected_crc, provided_crc, }) = job_output.into();
                         if expected_crc != provided_crc {
