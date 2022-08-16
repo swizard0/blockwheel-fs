@@ -769,16 +769,13 @@ impl<C> Inner<C> where C: Context {
 
         if let Some(defrag) = self.defrag.as_mut() {
             loop {
-                if defrag.in_progress_tasks_count >= defrag.in_progress_tasks_limit {
+                if defrag.hit_limit(!self.tasks_queue.is_empty_flush()) {
                     break;
                 }
                 if let Some((defrag_gaps, moving_block_id)) = defrag.queues.tasks.pop(&self.pending_write_external, self.schema.block_get()) {
                     let mut block_get = self.schema.block_get();
                     let block_entry = block_get.by_id(&moving_block_id).unwrap();
                     let mut lens = self.tasks_queue.focus_block_id(block_entry.header.block_id.clone());
-
-                    log::warn!("DEFRAG initiated: block @ {} -> {defrag_gaps:?}", block_entry.offset);
-
                     lens.push_task(
                         task::Task {
                             block_id: block_entry.header.block_id.clone(),
@@ -1155,9 +1152,6 @@ impl<C> Inner<C> where C: Context {
                         })
                     },
                     task::WriteBlockContext::Defrag => {
-
-                        log::warn!("DEFRAG finished: block @ {}", current_offset);
-
                         let defrag = self.defrag.as_mut().unwrap();
                         assert!(defrag.in_progress_tasks_count > 0);
                         defrag.in_progress_tasks_count -= 1;
@@ -1398,5 +1392,15 @@ impl<C> Inner<C> where C: Context {
 fn cancel_defrag_task<C>(defrag: &mut Defrag<C>) {
     assert!(defrag.in_progress_tasks_count > 0);
     defrag.in_progress_tasks_count -= 1;
-    log::warn!("DEFRAG task canceled (still {} left)", defrag.in_progress_tasks_count);
+}
+
+impl<C> Defrag<C> {
+    fn hit_limit(&self, is_flush_mode: bool) -> bool {
+        let limit = if is_flush_mode {
+            1
+        } else {
+            self.in_progress_tasks_limit
+        };
+        self.in_progress_tasks_count >= limit
+    }
 }

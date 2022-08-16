@@ -102,6 +102,10 @@ impl<C> Queue<C> where C: Context {
         self.triggers.is_empty() && self.tasks.is_empty_tasks()
     }
 
+    pub fn is_empty_flush(&self) -> bool {
+        self.tasks.is_empty_flush()
+    }
+
     pub fn push_flush(&mut self, task: Flush<C::Flush>) {
         self.tasks.push_flush(task);
     }

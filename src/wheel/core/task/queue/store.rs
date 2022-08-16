@@ -118,6 +118,10 @@ impl<C> Tasks<C> where C: Context {
         self.tasks_flush.pop()
     }
 
+    pub fn is_empty_flush(&self) -> bool {
+        self.tasks_flush.is_empty()
+    }
+
     pub fn push_pending_read_context(&mut self, read_block: ReadBlock<C>, pending_read_contexts: &mut PendingReadContextBag) {
         if let Some(prev_ref) = pending_read_contexts.head.take() {
             let node_ref = self.tasks_read.make_node(prev_ref, read_block);
