@@ -194,7 +194,8 @@ fn script_defrag_disturb() {
                     context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
                         defrag_gaps: DefragGaps::Both {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                            space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                            space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                            block_offset: 85,
                         },
                     }),
                 }),
@@ -240,7 +241,8 @@ fn script_defrag_disturb() {
                         context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
                             defrag_gaps: DefragGaps::Both {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                                space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                                space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                                block_offset: 146,
                             },
                         }),
                     }),
@@ -255,7 +257,8 @@ fn script_defrag_disturb() {
                 block_bytes: hello_world_bytes().freeze(),
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                    space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                    block_offset: 146,
                 },
             },
         }),
@@ -288,7 +291,8 @@ fn script_defrag_disturb() {
                 block_bytes: hello_world_bytes().freeze(),
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                    space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                    block_offset: 146,
                 },
             },
         }),
@@ -321,7 +325,8 @@ fn script_defrag_disturb() {
                     context: task::DeleteBlockContext::Defrag {
                         defrag_gaps: DefragGaps::Both {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                            space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                            space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                            block_offset: 146,
                         },
                         block_bytes: hello_world_bytes().freeze(),
                     },
@@ -340,7 +345,8 @@ fn script_defrag_disturb() {
                         context: task::DeleteBlockContext::Defrag {
                             defrag_gaps: DefragGaps::Both {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                                space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                                space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                                block_offset: 146,
                             },
                             block_bytes: hello_world_bytes().freeze(),
                         },

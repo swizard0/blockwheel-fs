@@ -1440,7 +1440,8 @@ mod tests {
             defrag_op: DefragOp::Queue {
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                    space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                    ..
                 },
                 moving_block_id,
             },
@@ -1530,7 +1531,8 @@ mod tests {
             defrag_op: DefragOp::Queue {
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 6, serial: 3 },
+                    space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                    ..
                 },
                 moving_block_id,
             },
