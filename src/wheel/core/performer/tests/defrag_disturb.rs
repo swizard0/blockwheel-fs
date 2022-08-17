@@ -192,6 +192,7 @@ fn script_defrag_disturb() {
                         ..Default::default()
                     },
                     context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
+                        defrag_id: 0,
                         defrag_gaps: DefragGaps::Both {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
                             space_key_right: SpaceKey { space_available: 6, serial: 3, },
@@ -239,6 +240,7 @@ fn script_defrag_disturb() {
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                         block_bytes: hello_world_bytes(),
                         context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
+                            defrag_id: 0,
                             defrag_gaps: DefragGaps::Both {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
                                 space_key_right: SpaceKey { space_available: 6, serial: 3, },
@@ -253,14 +255,15 @@ fn script_defrag_disturb() {
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock {
             expect_block_id: block::Id::init().next(),
-            expect_context: task::DeleteBlockContext::Defrag {
+            expect_context: task::DeleteBlockContext::Defrag(task::DeleteBlockDefragContext {
+                defrag_id: 0,
                 block_bytes: hello_world_bytes().freeze(),
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
                     space_key_right: SpaceKey { space_available: 6, serial: 3, },
                     block_offset: 146,
                 },
-            },
+            }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         // user read data immediately ready, proceed with process
@@ -287,14 +290,15 @@ fn script_defrag_disturb() {
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
             block_id: block::Id::init().next(),
             delete_block_bytes: hello_world_bytes(),
-            context: task::DeleteBlockContext::Defrag {
+            context: task::DeleteBlockContext::Defrag(task::DeleteBlockDefragContext {
+                defrag_id: 0,
                 block_bytes: hello_world_bytes().freeze(),
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
                     space_key_right: SpaceKey { space_available: 6, serial: 3, },
                     block_offset: 146,
                 },
-            },
+            }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
@@ -322,14 +326,15 @@ fn script_defrag_disturb() {
                 kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
                     delete_block_bytes: hello_world_bytes().freeze(),
                     commit: task::Commit::WithTerminator,
-                    context: task::DeleteBlockContext::Defrag {
+                    context: task::DeleteBlockContext::Defrag(task::DeleteBlockDefragContext {
+                        defrag_id: 0,
                         defrag_gaps: DefragGaps::Both {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
                             space_key_right: SpaceKey { space_available: 6, serial: 3, },
                             block_offset: 146,
                         },
                         block_bytes: hello_world_bytes().freeze(),
-                    },
+                    }),
                 }),
             },
         }),
@@ -342,14 +347,15 @@ fn script_defrag_disturb() {
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
-                        context: task::DeleteBlockContext::Defrag {
+                        context: task::DeleteBlockContext::Defrag(task::DeleteBlockDefragContext {
+                            defrag_id: 0,
                             defrag_gaps: DefragGaps::Both {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
                                 space_key_right: SpaceKey { space_available: 6, serial: 3, },
                                 block_offset: 146,
                             },
                             block_bytes: hello_world_bytes().freeze(),
-                        },
+                        }),
                     }),
                 },
             },
@@ -363,7 +369,9 @@ fn script_defrag_disturb() {
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
                     write_block_bytes: hello_world_bytes().freeze(),
                     commit: task::Commit::WithTerminator,
-                    context: task::WriteBlockContext::Defrag,
+                    context: task::WriteBlockContext::Defrag(task::WriteBlockDefragContext {
+                        defrag_id: 0,
+                    }),
                 }),
             },
         }),
@@ -375,7 +383,9 @@ fn script_defrag_disturb() {
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
-                        context: task::WriteBlockContext::Defrag,
+                        context: task::WriteBlockContext::Defrag(task::WriteBlockDefragContext {
+                            defrag_id: 0,
+                        }),
                     }),
                 },
             },

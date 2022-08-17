@@ -92,7 +92,11 @@ impl<C> fmt::Debug for WriteBlock<C> {
 
 pub enum WriteBlockContext<C> {
     External(C),
-    Defrag,
+    Defrag(WriteBlockDefragContext),
+}
+
+pub struct WriteBlockDefragContext {
+    pub defrag_id: usize,
 }
 
 impl<C> fmt::Debug for WriteBlockContext<C> {
@@ -100,8 +104,8 @@ impl<C> fmt::Debug for WriteBlockContext<C> {
         match self {
             WriteBlockContext::External(..) =>
                 write!(fmt, "WriteBlockContext::External(..)"),
-            WriteBlockContext::Defrag =>
-                write!(fmt, "WriteBlockContext::Defrag"),
+            WriteBlockContext::Defrag(WriteBlockDefragContext { defrag_id, }) =>
+                write!(fmt, "WriteBlockContext::Defrag {{ defrag_id: {defrag_id:?}, }}"),
         }
     }
 }
@@ -111,8 +115,11 @@ impl<C> cmp::PartialEq for WriteBlockContext<C> where C: PartialEq {
         match (self, other) {
             (WriteBlockContext::External(a), WriteBlockContext::External(b)) =>
                 a == b,
-            (WriteBlockContext::Defrag, WriteBlockContext::Defrag) =>
-                true,
+            (
+                WriteBlockContext::Defrag(WriteBlockDefragContext { defrag_id: ia, }),
+                WriteBlockContext::Defrag(WriteBlockDefragContext { defrag_id: ib, }),
+            ) =>
+                ia == ib,
             _ =>
                 false,
         }
@@ -139,6 +146,7 @@ pub enum ReadBlockContext<C> where C: Context {
 }
 
 pub struct ReadBlockDefragContext {
+    pub defrag_id: usize,
     pub defrag_gaps: DefragGaps,
 }
 
@@ -172,10 +180,10 @@ impl<C> cmp::PartialEq for ReadBlockContext<C> where C: Context, C::ReadBlock: P
             (ReadBlockContext::Process(a), ReadBlockContext::Process(b)) =>
                 a == b,
             (
-                ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps: a, }),
-                ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps: b, }),
+                ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps: a, defrag_id: ia, }),
+                ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps: b, defrag_id: ib, }),
             ) =>
-                a == b,
+                a == b && ia == ib,
             _ =>
                 false,
         }
@@ -198,8 +206,8 @@ impl<C> fmt::Debug for ReadBlockContext<C> where C: Context {
         match self {
             ReadBlockContext::Process(context) =>
                 write!(fmt, "ReadBlockContext::Process({:?})", context),
-            ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_gaps, }) =>
-                write!(fmt, "ReadBlockContext::Defrag(ReadBlockDefragContext {{ defrag_gaps: {:?} }})", defrag_gaps),
+            ReadBlockContext::Defrag(ReadBlockDefragContext { defrag_id, defrag_gaps, }) =>
+                write!(fmt, "ReadBlockContext::Defrag(ReadBlockDefragContext {{ defrag_id: {defrag_id:?}, defrag_gaps: {defrag_gaps:?} }})"),
         }
     }
 }
@@ -221,10 +229,13 @@ impl<C> fmt::Debug for DeleteBlock<C> {
 
 pub enum DeleteBlockContext<C> {
     External(C),
-    Defrag {
-        defrag_gaps: DefragGaps,
-        block_bytes: Bytes,
-    },
+    Defrag(DeleteBlockDefragContext),
+}
+
+pub struct DeleteBlockDefragContext {
+    pub defrag_id: usize,
+    pub defrag_gaps: DefragGaps,
+    pub block_bytes: Bytes,
 }
 
 impl<C> cmp::PartialEq for DeleteBlockContext<C> where C: PartialEq {
@@ -233,10 +244,10 @@ impl<C> cmp::PartialEq for DeleteBlockContext<C> where C: PartialEq {
             (DeleteBlockContext::External(a), DeleteBlockContext::External(b)) =>
                 a == b,
             (
-                DeleteBlockContext::Defrag { defrag_gaps: dga, block_bytes: bba, },
-                DeleteBlockContext::Defrag { defrag_gaps: dgb, block_bytes: bbb, },
+                DeleteBlockContext::Defrag(DeleteBlockDefragContext { defrag_gaps: dga, block_bytes: bba, defrag_id: ia, }),
+                DeleteBlockContext::Defrag(DeleteBlockDefragContext { defrag_gaps: dgb, block_bytes: bbb, defrag_id: ib, }),
             ) =>
-                dga == dgb && bba == bbb,
+                dga == dgb && bba == bbb && ia == ib,
             _ =>
                 false,
         }
@@ -248,8 +259,8 @@ impl<C> fmt::Debug for DeleteBlockContext<C> {
         match self {
             DeleteBlockContext::External(..) =>
                 write!(fmt, "DeleteBlockContext::External(..)"),
-            DeleteBlockContext::Defrag { defrag_gaps, .. } =>
-                write!(fmt, "DeleteBlockContext::Defrag {{ defrag_gaps: {:?}, .. }}", defrag_gaps),
+            DeleteBlockContext::Defrag(DeleteBlockDefragContext { defrag_gaps, defrag_id, .. }) =>
+                write!(fmt, "DeleteBlockContext::Defrag {{ defrag_gaps: {defrag_gaps:?}, defrag_id: {defrag_id:?}, .. }}"),
         }
     }
 }

@@ -1,6 +1,9 @@
 use std::{
     mem,
-    collections::HashSet,
+    collections::{
+        HashSet,
+        HashMap,
+    },
 };
 
 use alloc_pool::bytes::{
@@ -48,6 +51,8 @@ struct Defrag<C> {
     queues: defrag::Queues<C>,
     in_progress_tasks_count: usize,
     in_progress_tasks_limit: usize,
+    serial: usize,
+    in_action: HashMap<block::Id, usize>,
 }
 
 enum DoneTask<C> where C: Context {
@@ -259,8 +264,10 @@ impl<C> PerformerBuilderInit<C> where C: Context {
             defrag: defrag_queues
                 .map(|config| Defrag {
                     queues: config.queues,
+                    serial: 0,
                     in_progress_tasks_count: 0,
                     in_progress_tasks_limit: config.in_progress_tasks_limit,
+                    in_action: HashMap::new(),
                 }),
             storage_layout,
             work_block,
@@ -568,22 +575,27 @@ impl<C> Inner<C> where C: Context {
                                 None
                             },
 
-                            task::ReadBlockContext::Defrag(task::ReadBlockDefragContext { defrag_gaps, }) =>
-                                if defrag_gaps.is_still_relevant(&block_header.block_id, self.schema.block_get()) {
+                            task::ReadBlockContext::Defrag(task::ReadBlockDefragContext { defrag_id, defrag_gaps, }) => {
+                                let defrag = self.defrag.as_mut().unwrap();
+                                if defrag.is_active(&block_header.block_id, defrag_id) &&
+                                    defrag_gaps.is_still_relevant(&block_header.block_id, self.schema.block_get())
+                                {
                                     Some(EventOp::PrepareInterpretTask(PrepareInterpretTaskOp {
                                         block_id: block_header.block_id.clone(),
                                         task: PrepareInterpretTaskKind::DeleteBlock(PrepareInterpretTaskDeleteBlock {
-                                            context: task::DeleteBlockContext::Defrag {
+                                            context: task::DeleteBlockContext::Defrag(task::DeleteBlockDefragContext {
+                                                defrag_id,
                                                 defrag_gaps,
                                                 block_bytes: block_bytes.clone(),
-                                            },
+                                            }),
                                         }),
                                     }))
                                 } else {
                                     // cancel defrag read task
-                                    cancel_defrag_task(self.defrag.as_mut().unwrap());
+                                    defrag.maybe_cancel_task(&block_header.block_id);
                                     None
-                                },
+                                }
+                            },
 
                         },
                 };
@@ -668,7 +680,7 @@ impl<C> Inner<C> where C: Context {
                             unreachable!(),
                         task::WriteBlockContext::Defrag { .. } => {
                             // cancel defrag write task
-                            cancel_defrag_task(self.defrag.as_mut().unwrap());
+                            self.defrag.as_mut().unwrap().maybe_cancel_task(&block_id);
                         },
                     }
                 }
@@ -697,7 +709,7 @@ impl<C> Inner<C> where C: Context {
                         },
                         task::ReadBlockContext::Defrag { .. } => {
                             // cancel defrag read task
-                            cancel_defrag_task(self.defrag.as_mut().unwrap());
+                            self.defrag.as_mut().unwrap().maybe_cancel_task(&block_id);
                         },
                     }
                 }
@@ -719,7 +731,7 @@ impl<C> Inner<C> where C: Context {
                         },
                         task::DeleteBlockContext::Defrag { .. } => {
                             // cancel defrag delete task
-                            cancel_defrag_task(self.defrag.as_mut().unwrap());
+                            self.defrag.as_mut().unwrap().maybe_cancel_task(&block_id);
                         },
                     }
                 }
@@ -775,6 +787,8 @@ impl<C> Inner<C> where C: Context {
                 if let Some((defrag_gaps, moving_block_id)) = defrag.queues.tasks.pop(&self.pending_write_external, self.schema.block_get()) {
                     let mut block_get = self.schema.block_get();
                     let block_entry = block_get.by_id(&moving_block_id).unwrap();
+                    defrag.maybe_cancel_task(&moving_block_id);
+                    let defrag_id = defrag.schedule_task(moving_block_id);
                     let mut lens = self.tasks_queue.focus_block_id(block_entry.header.block_id.clone());
                     lens.push_task(
                         task::Task {
@@ -782,6 +796,7 @@ impl<C> Inner<C> where C: Context {
                             kind: task::TaskKind::ReadBlock(task::ReadBlock {
                                 block_header: block_entry.header.clone(),
                                 context: task::ReadBlockContext::Defrag(task::ReadBlockDefragContext {
+                                    defrag_id,
                                     defrag_gaps,
                                 }),
                             }),
@@ -789,7 +804,6 @@ impl<C> Inner<C> where C: Context {
                         self.schema.block_get(),
                     );
                     lens.enqueue(self.schema.block_get());
-                    defrag.in_progress_tasks_count += 1;
                 } else {
                     break;
                 }
@@ -1068,7 +1082,7 @@ impl<C> Inner<C> where C: Context {
         match (block_get.by_id(&block_id), context) {
             (None, task::DeleteBlockContext::Defrag { .. }) => {
                 // block has been deleted already during defrag
-                cancel_defrag_task(self.defrag.as_mut().unwrap());
+                self.defrag.as_mut().unwrap().maybe_cancel_task(&block_id);
                 Op::Idle(Performer { inner: self, })
             },
             (None, task::DeleteBlockContext::External(context)) => {
@@ -1082,11 +1096,12 @@ impl<C> Inner<C> where C: Context {
                 })
             },
             (Some(block_entry), context) => {
-                if let task::DeleteBlockContext::Defrag { defrag_gaps, .. } = &context {
+                if let task::DeleteBlockContext::Defrag(task::DeleteBlockDefragContext { defrag_id, defrag_gaps, .. }) = &context {
+                    let defrag = self.defrag.as_mut().unwrap();
                     let mut block_entry_get = BlockEntryGet::new(block_entry);
-                    if !defrag_gaps.is_still_relevant(&block_id, &mut block_entry_get) {
+                    if !defrag.is_active(&block_id, *defrag_id) || !defrag_gaps.is_still_relevant(&block_id, &mut block_entry_get) {
                         // block has been moved somewhere during defrag
-                        cancel_defrag_task(self.defrag.as_mut().unwrap());
+                        defrag.maybe_cancel_task(&block_id);
                         return Op::Idle(Performer { inner: self, })
                     }
                 }
@@ -1151,10 +1166,9 @@ impl<C> Inner<C> where C: Context {
                             performer: Performer { inner: self, },
                         })
                     },
-                    task::WriteBlockContext::Defrag => {
+                    task::WriteBlockContext::Defrag(task::WriteBlockDefragContext { .. }) => {
                         let defrag = self.defrag.as_mut().unwrap();
-                        assert!(defrag.in_progress_tasks_count > 0);
-                        defrag.in_progress_tasks_count -= 1;
+                        defrag.maybe_cancel_task(&block_id);
                         Op::Idle(Performer { inner: self, })
                     },
                 }
@@ -1211,7 +1225,7 @@ impl<C> Inner<C> where C: Context {
                             },
                         }
                     },
-                    task::DeleteBlockContext::Defrag { block_bytes, .. } =>
+                    task::DeleteBlockContext::Defrag(task::DeleteBlockDefragContext { defrag_id, block_bytes, .. }) =>
                         match self.schema.process_delete_block_task_done_defrag(block_id.clone()) {
                             schema::DeleteBlockTaskDoneDefragOp::Perform(task_op) => {
                                 if let Some(Defrag { queues: defrag::Queues { tasks, .. }, .. }) = self.defrag.as_mut() {
@@ -1230,7 +1244,9 @@ impl<C> Inner<C> where C: Context {
                                         kind: task::TaskKind::WriteBlock(task::WriteBlock {
                                             write_block_bytes: task::WriteBlockBytes::Chunk(block_bytes.clone()),
                                             commit: task::Commit::None,
-                                            context: task::WriteBlockContext::Defrag,
+                                            context: task::WriteBlockContext::Defrag(
+                                                task::WriteBlockDefragContext { defrag_id, },
+                                            ),
                                         }),
                                     },
                                     &mut block_get,
@@ -1343,15 +1359,21 @@ impl<C> Inner<C> where C: Context {
                     }) =>
                         (),
                     task::TaskKind::DeleteBlock(task::DeleteBlock {
-                        context: task::DeleteBlockContext::Defrag { defrag_gaps, .. },
+                        context: task::DeleteBlockContext::Defrag(
+                            task::DeleteBlockDefragContext { defrag_id, defrag_gaps, .. },
+                        ),
                         ..
-                    }) =>
-                        if !defrag_gaps.is_still_relevant(lens.block_id(), self.schema.block_get()) {
-                            cancel_defrag_task(self.defrag.as_mut().unwrap());
+                    }) => {
+                        let defrag = self.defrag.as_mut().unwrap();
+                        if !defrag.is_active(lens.block_id(), *defrag_id) ||
+                            !defrag_gaps.is_still_relevant(lens.block_id(), self.schema.block_get())
+                        {
+                            defrag.maybe_cancel_task(lens.block_id());
                             lens.finish(self.schema.block_get());
                             lens.enqueue(self.schema.block_get());
                             continue;
-                        },
+                        }
+                    },
                 }
 
                 match &mut task_kind {
@@ -1389,12 +1411,32 @@ impl<C> Inner<C> where C: Context {
     }
 }
 
-fn cancel_defrag_task<C>(defrag: &mut Defrag<C>) {
-    assert!(defrag.in_progress_tasks_count > 0);
-    defrag.in_progress_tasks_count -= 1;
-}
-
 impl<C> Defrag<C> {
+    fn schedule_task(&mut self, block_id: block::Id) -> usize {
+        let serial = self.serial;
+        self.serial += 1;
+        self.in_progress_tasks_count += 1;
+        let maybe_prev = self.in_action.insert(block_id, serial);
+        assert!(maybe_prev.is_none());
+        serial
+    }
+
+    fn maybe_cancel_task(&mut self, block_id: &block::Id) {
+        if let Some(..) = self.in_action.remove(block_id) {
+            assert!(self.in_progress_tasks_count > 0);
+            self.in_progress_tasks_count -= 1;
+        }
+    }
+
+    fn is_active(&self, block_id: &block::Id, defrag_id: usize) -> bool {
+        match self.in_action.get(&block_id) {
+            Some(&serial) if serial == defrag_id =>
+                true,
+            _ =>
+                false,
+        }
+    }
+
     fn hit_limit(&self, is_flush_mode: bool) -> bool {
         let limit = if is_flush_mode {
             1

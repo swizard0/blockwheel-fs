@@ -321,7 +321,8 @@ where J: edeltraud::Job + From<job::Job>,
                             },
                         },
                 },
-            Mode::Flushing =>
+            Mode::Flushing => {
+                assert!(tasks_count > 0);
                 select! {
                     result = fused_interpret_error_rx =>
                         Event::InterpreterError(result),
@@ -334,7 +335,8 @@ where J: edeltraud::Job + From<job::Job>,
                                 Event::Task(task)
                             },
                         },
-                },
+                }
+            },
         };
 
         match event {
