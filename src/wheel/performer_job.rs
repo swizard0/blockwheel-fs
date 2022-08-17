@@ -91,15 +91,8 @@ impl Incoming {
     }
 
     pub fn transfill_from(&mut self, from: &mut Self) {
-        // assert!(self.is_empty());
-        // std::mem::swap(self, from);
-
-        self.incoming_request.extend(from.incoming_request.drain(..));
-        self.incoming_task_done_stats.extend(from.incoming_task_done_stats.drain(..));
-        self.incoming_iter_blocks.extend(from.incoming_iter_blocks.drain(..));
-        self.prepared_write_block_done.extend(from.prepared_write_block_done.drain(..));
-        self.prepared_delete_block_done.extend(from.prepared_delete_block_done.drain(..));
-        self.process_read_block_done.extend(from.process_read_block_done.drain(..));
+        assert!(self.is_empty());
+        std::mem::swap(self, from);
     }
 }
 
