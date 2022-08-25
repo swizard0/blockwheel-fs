@@ -15,10 +15,6 @@ use futures::{
     SinkExt,
 };
 
-use edeltraud::{
-    Edeltraud,
-};
-
 use alloc_pool::bytes::{
     Bytes,
     BytesPool,
@@ -133,13 +129,11 @@ impl GenServer {
     pub async fn run<J>(
         self,
         parent_supervisor: SupervisorPid,
-        thread_pool: Edeltraud<J>,
+        thread_pool: edeltraud::Edeltraud<J>,
         blocks_pool: BytesPool,
         params: Params,
     )
     where J: edeltraud::Job + From<job::Job>,
-          J::Output: From<job::JobOutput>,
-          job::JobOutput: From<J::Output>,
     {
         let terminate_result = restart::restartable(
             ero::Params {

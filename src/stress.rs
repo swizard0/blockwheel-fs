@@ -216,11 +216,14 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
                 let block_size_bytes = limits.block_size_bytes;
                 let thread_pool = thread_pool.clone();
                 spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-                    let job = Job::GenRandomBlock(GenRandomBlockJobArgs { blocks_pool, block_size_bytes, });
-                    let job_output = thread_pool.spawn(job).await
+                    let block_bytes =
+                        edeltraud::job_async(
+                            &thread_pool,
+                            JobGenRandomBlock { blocks_pool, block_size_bytes, },
+                        )
+                        .map_err(Error::Edeltraud)?
+                        .await
                         .map_err(Error::Edeltraud)?;
-                    let job_output: JobOutput = job_output.into();
-                    let GenRandomBlockDone(GenRandomBlockJobOutput { block_bytes, }) = job_output.into();
                     match blockwheel_pid.write_block(block_bytes.clone()).await {
                         Ok(block_id) =>
                             Ok(TaskDone::WriteBlock(BlockTank { block_id, block_bytes, })),
@@ -252,14 +255,17 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
             spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
                 match blockwheel_pid.read_block(block_id.clone()).await {
                     Ok(block_bytes_read) => {
-                        let job = Job::CalcCrc(CalcCrcJobArgs {
-                            expected_block_bytes: block_bytes,
-                            provided_block_bytes: block_bytes_read,
-                        });
-                        let job_output = thread_pool.spawn(job).await
+                        let JobCalcCrcOutput { expected_crc, provided_crc, } =
+                            edeltraud::job_async(
+                                &thread_pool,
+                                JobCalcCrc {
+                                    expected_block_bytes: block_bytes,
+                                    provided_block_bytes: block_bytes_read,
+                                },
+                            )
+                            .map_err(Error::Edeltraud)?
+                            .await
                             .map_err(Error::Edeltraud)?;
-                        let job_output: JobOutput = job_output.into();
-                        let CalcCrcDone(CalcCrcJobOutput { expected_crc, provided_crc, }) = job_output.into();
                         if expected_crc != provided_crc {
                             Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, })
                         } else {
@@ -313,14 +319,17 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
                     None =>
                         return Err(Error::IterBlocksUnexpectedBlockReceived { block_id, }),
                     Some(tank) => {
-                        let job = Job::CalcCrc(CalcCrcJobArgs {
-                            expected_block_bytes: tank.block_bytes.clone(),
-                            provided_block_bytes: block_bytes,
-                        });
-                        let job_output = thread_pool.spawn(job).await
+                        let JobCalcCrcOutput { expected_crc, provided_crc, } =
+                            edeltraud::job_async(
+                                &thread_pool,
+                                JobCalcCrc {
+                                    expected_block_bytes: tank.block_bytes.clone(),
+                                    provided_block_bytes: block_bytes,
+                                },
+                            )
+                            .map_err(Error::Edeltraud)?
+                            .await
                             .map_err(Error::Edeltraud)?;
-                        let job_output: JobOutput = job_output.into();
-                        let CalcCrcDone(CalcCrcJobOutput { expected_crc, provided_crc, }) = job_output.into();
                         if expected_crc != provided_crc {
                             return Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, });
                         }
@@ -336,89 +345,65 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
     Ok::<_, Error>(())
 }
 
-struct GenRandomBlockJobArgs {
+struct JobGenRandomBlock {
     blocks_pool: BytesPool,
     block_size_bytes: usize,
 }
 
-struct GenRandomBlockJobOutput {
-    block_bytes: Bytes,
+impl edeltraud::Job for JobGenRandomBlock {
+    type Output = Bytes;
+
+    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+        let JobGenRandomBlock { blocks_pool, block_size_bytes, } = self;
+        let amount = rand::thread_rng().gen_range(1 .. block_size_bytes);
+        let mut block = blocks_pool.lend();
+        block.extend((0 .. amount).map(|_| 0));
+        rand::thread_rng().fill(&mut block[..]);
+        block.freeze()
+    }
 }
 
-fn run_gen_random_block(GenRandomBlockJobArgs { blocks_pool, block_size_bytes, }: GenRandomBlockJobArgs) -> GenRandomBlockJobOutput {
-    let amount = rand::thread_rng().gen_range(1 .. block_size_bytes);
-    let mut block = blocks_pool.lend();
-    block.extend((0 .. amount).map(|_| 0));
-    rand::thread_rng().fill(&mut block[..]);
-    let block_bytes = block.freeze();
-    GenRandomBlockJobOutput { block_bytes, }
-}
-
-struct CalcCrcJobArgs {
+struct JobCalcCrc {
     expected_block_bytes: Bytes,
     provided_block_bytes: Bytes,
 }
 
-struct CalcCrcJobOutput {
+struct JobCalcCrcOutput {
     expected_crc: u64,
     provided_crc: u64,
 }
 
-fn run_calc_crc(CalcCrcJobArgs { expected_block_bytes, provided_block_bytes, }: CalcCrcJobArgs) -> CalcCrcJobOutput {
-    let expected_crc = block::crc(&expected_block_bytes);
-    let provided_crc = block::crc(&provided_block_bytes);
-    CalcCrcJobOutput { expected_crc, provided_crc, }
+impl edeltraud::Job for JobCalcCrc {
+    type Output = JobCalcCrcOutput;
+
+    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+        let JobCalcCrc { expected_block_bytes, provided_block_bytes, } = self;
+        let expected_crc = block::crc(&expected_block_bytes);
+        let provided_crc = block::crc(&provided_block_bytes);
+        JobCalcCrcOutput { expected_crc, provided_crc, }
+    }
 }
 
 enum Job {
     BlockwheelFs(job::Job),
-    GenRandomBlock(GenRandomBlockJobArgs),
-    CalcCrc(CalcCrcJobArgs),
-}
-
-enum JobOutput {
-    BlockwheelFs(job::JobOutput),
-    GenRandomBlock(GenRandomBlockDone),
-    CalcCrc(CalcCrcDone),
+    GenRandomBlock(edeltraud::AsyncJob<JobGenRandomBlock>),
+    CalcCrc(edeltraud::AsyncJob<JobCalcCrc>),
 }
 
 impl edeltraud::Job for Job {
-    type Output = JobOutput;
+    type Output = ();
 
-    fn run(self) -> Self::Output {
+    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
         match self {
-            Job::BlockwheelFs(job) =>
-                JobOutput::BlockwheelFs(job.run()),
-            Job::GenRandomBlock(args) =>
-                JobOutput::GenRandomBlock(GenRandomBlockDone(run_gen_random_block(args))),
-            Job::CalcCrc(args) =>
-                JobOutput::CalcCrc(CalcCrcDone(run_calc_crc(args))),
-        }
-    }
-}
-
-struct GenRandomBlockDone(GenRandomBlockJobOutput);
-
-impl From<JobOutput> for GenRandomBlockDone {
-    fn from(output: JobOutput) -> Self {
-        match output {
-            JobOutput::GenRandomBlock(done) =>
-                done,
-            _other =>
-                panic!("expected JobOutput::GenRandomBlockDone but got other"),
-        }
-    }
-}
-
-struct CalcCrcDone(CalcCrcJobOutput);
-
-impl From<JobOutput> for CalcCrcDone {
-    fn from(output: JobOutput) -> Self {
-        match output {
-            JobOutput::CalcCrc(done) =>
-                done,
-            _other =>
-                panic!("expected JobOutput::CalcCrcDone but got other"),
+            Job::BlockwheelFs(job) => {
+                job.run(&edeltraud::EdeltraudJobMap::new(thread_pool));
+            },
+            Job::GenRandomBlock(job) => {
+                job.run(&edeltraud::EdeltraudJobMap::new(thread_pool));
+            },
+            Job::CalcCrc(job) => {
+                job.run(&edeltraud::EdeltraudJobMap::new(thread_pool));
+            },
         }
     }
 }
@@ -429,19 +414,14 @@ impl From<job::Job> for Job {
     }
 }
 
-impl From<job::JobOutput> for JobOutput {
-    fn from(output: job::JobOutput) -> JobOutput {
-        JobOutput::BlockwheelFs(output)
+impl From<edeltraud::AsyncJob<JobGenRandomBlock>> for Job {
+    fn from(async_job: edeltraud::AsyncJob<JobGenRandomBlock>) -> Job {
+        Job::GenRandomBlock(async_job)
     }
 }
 
-impl From<JobOutput> for job::JobOutput {
-    fn from(output: JobOutput) -> job::JobOutput {
-        match output {
-            JobOutput::BlockwheelFs(done) =>
-                done,
-            _other =>
-                panic!("expected JobOutput::BlockwheelFs but got other"),
-        }
+impl From<edeltraud::AsyncJob<JobCalcCrc>> for Job {
+    fn from(async_job: edeltraud::AsyncJob<JobCalcCrc>) -> Job {
+        Job::CalcCrc(async_job)
     }
 }
