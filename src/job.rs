@@ -18,13 +18,19 @@ pub enum Job {
     BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs),
     BlockProcessRead(interpret::BlockProcessReadJobArgs),
     BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs),
-    PerformerActorRun(performer_actor::Actor),
+    PerformerActor(performer_actor::PerformerActorJob),
+}
+
+impl From<performer_actor::PerformerActorJob> for Job {
+    fn from(actor_job: performer_actor::PerformerActorJob) -> Job {
+        Job::PerformerActor(actor_job)
+    }
 }
 
 pub static JOB_BLOCK_PREPARE_WRITE: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_BLOCK_PROCESS_READ: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_BLOCK_PREPARE_DELETE: AtomicUsize = AtomicUsize::new(0);
-pub static JOB_PERFORMER_ACTOR_RUN: AtomicUsize = AtomicUsize::new(0);
+pub static JOB_PERFORMER_ACTOR: AtomicUsize = AtomicUsize::new(0);
 
 impl edeltraud::Job for Job {
     type Output = ();
@@ -43,9 +49,9 @@ impl edeltraud::Job for Job {
                 JOB_BLOCK_PREPARE_DELETE.fetch_add(1, Ordering::Relaxed);
                 interpret::block_prepare_delete_job(args);
             },
-            Job::PerformerActorRun(actor) => {
-                JOB_PERFORMER_ACTOR_RUN.fetch_add(1, Ordering::Relaxed);
-                performer_actor::run_job(actor, thread_pool);
+            Job::PerformerActor(actor_job) => {
+                JOB_PERFORMER_ACTOR.fetch_add(1, Ordering::Relaxed);
+                performer_actor::run_job(actor_job, thread_pool);
             },
         }
     }
