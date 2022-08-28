@@ -21,11 +21,13 @@ use alloc_pool::{
 };
 
 use crate::{
+    job,
     context::{
         Context,
     },
     wheel::{
         storage,
+        performer_sklave,
         core::{
             task,
             performer,
@@ -157,8 +159,10 @@ impl<C> SyncGenServer<C> where C: Context {
         }
     }
 
-    pub fn run<F, E>(
+    pub fn run<F, E, B, P, J>(
         self,
+        meister: arbeitssklave::Meister<performer_sklave::Welt, B>,
+        thread_pool: P,
         blocks_pool: BytesPool,
         error_tx: oneshot::Sender<E>,
         error_map: F,
@@ -171,6 +175,10 @@ impl<C> SyncGenServer<C> where C: Context {
           C::ReadBlock: Send,
           C::DeleteBlock: Send,
           C::IterBlocksStream: Send,
+          performer_sklave::Order: From<B>,
+          B: Send + 'static,
+          P: edeltraud::ThreadPool<J> + Send + 'static,
+          J: edeltraud::Job + From<job::Job>,
     {
         thread::Builder::new()
             .name("wheel::interpret::ram".to_string())
@@ -179,6 +187,8 @@ impl<C> SyncGenServer<C> where C: Context {
                     self.pid_inner,
                     self.memory,
                     self.storage_layout,
+                    meister,
+                    thread_pool,
                     blocks_pool,
                 );
                 if let Err(error) = result {
@@ -191,14 +201,19 @@ impl<C> SyncGenServer<C> where C: Context {
     }
 }
 
-fn busyloop<C>(
+fn busyloop<C, B, P, J>(
     pid_inner: Arc<PidInner<C>>,
     memory: Vec<u8>,
     storage_layout: storage::Layout,
+    meister: arbeitssklave::Meister<performer_sklave::Welt, B>,
+    thread_pool: P,
     blocks_pool: BytesPool,
 )
     -> Result<(), Error>
 where C: Context,
+      performer_sklave::Order: From<B>,
+      P: edeltraud::ThreadPool<J>,
+      J: edeltraud::Job + From<job::Job>,
 {
     let mut stats = InterpretStats::default();
 

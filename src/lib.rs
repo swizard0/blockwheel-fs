@@ -133,7 +133,7 @@ impl GenServer {
         blocks_pool: BytesPool,
         params: Params,
     )
-    where J: edeltraud::Job + From<job::Job>,
+    where J: edeltraud::Job<Output = ()> + From<job::Job>,
     {
         let terminate_result = restart::restartable(
             ero::Params {

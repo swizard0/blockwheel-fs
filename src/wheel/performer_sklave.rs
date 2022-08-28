@@ -95,6 +95,7 @@ pub enum Kont {
     },
 }
 
+pub type Meister = arbeitssklave::Meister<Welt, Order>;
 pub type Sklave = arbeitssklave::Sklave<Welt, Order>;
 pub type SklaveJob = arbeitssklave::SklaveJob<Welt, Order>;
 

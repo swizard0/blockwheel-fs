@@ -56,6 +56,7 @@ pub enum Error {
     InterpreterRun(interpret::RunError),
     InterpreterCrash,
     Edeltraud(edeltraud::SpawnError),
+    Arbeitssklave(arbeitssklave::Error),
     BlockPrepareWrite(interpret::BlockPrepareWriteJobError),
     BlockProcessRead(interpret::BlockProcessReadJobError),
     BlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
@@ -71,8 +72,12 @@ pub struct State<J> where J: edeltraud::Job {
     pub params: Params,
 }
 
-pub async fn busyloop_init<J>(supervisor_pid: SupervisorPid, state: State<J>) -> Result<(), ErrorSeverity<State<J>, Error>>
-where J: edeltraud::Job + From<job::Job>,
+pub async fn busyloop_init<J>(
+    supervisor_pid: SupervisorPid,
+    state: State<J>,
+)
+    -> Result<(), ErrorSeverity<State<J>, Error>>
+where J: edeltraud::Job<Output = ()> + From<job::Job>,
 {
     let performer_builder = performer::PerformerBuilderInit::new(
         lru::Cache::new(state.params.lru_cache_size_bytes),
@@ -86,7 +91,7 @@ where J: edeltraud::Job + From<job::Job>,
         .map_err(Error::InterpreterInit)
         .map_err(ErrorSeverity::Fatal)?;
 
-    let (interpreter_pid, performer, interpret_error_rx) = match state.params.interpreter {
+    let (meister, interpret_error_rx) = match state.params.interpreter {
 
         InterpreterParams::FixedFile(ref interpreter_params) => {
             let cloned_interpreter_params = interpreter_params.clone();
@@ -144,11 +149,26 @@ where J: edeltraud::Job + From<job::Job>,
             };
 
             let interpreter_gen_server = interpreter_gen_server_init.finish();
-
             let interpreter_pid = interpreter_gen_server.pid();
+
+            let meister =
+                arbeitssklave::Meister::start(
+                    performer_sklave::Welt {
+                        env: performer_sklave::Env {
+                            interpreter_pid,
+                        },
+                        kont: performer_sklave::Kont::Start { performer, },
+                    },
+                    &edeltraud::EdeltraudJobMap::new(&state.thread_pool),
+                )
+                .map_err(Error::Arbeitssklave)
+                .map_err(ErrorSeverity::Fatal)?;
+
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
             interpreter_gen_server
                 .run(
+                    meister.clone(),
+                    state.thread_pool.clone(),
                     state.blocks_pool.clone(),
                     interpret_error_tx,
                     |error| ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::FixedFile(error))),
@@ -157,7 +177,7 @@ where J: edeltraud::Job + From<job::Job>,
                 .map_err(Error::InterpreterRun)
                 .map_err(ErrorSeverity::Fatal)?;
 
-            (interpreter_pid, performer, interpret_error_rx)
+            (meister, interpret_error_rx)
         },
 
         InterpreterParams::Ram(ref interpreter_params) => {
@@ -186,11 +206,26 @@ where J: edeltraud::Job + From<job::Job>,
             };
 
             let interpreter_gen_server = interpreter_gen_server_init.finish();
-
             let interpreter_pid = interpreter_gen_server.pid();
+
+            let meister =
+                arbeitssklave::Meister::start(
+                    performer_sklave::Welt {
+                        env: performer_sklave::Env {
+                            interpreter_pid,
+                        },
+                        kont: performer_sklave::Kont::Start { performer, },
+                    },
+                    &edeltraud::EdeltraudJobMap::new(&state.thread_pool),
+                )
+                .map_err(Error::Arbeitssklave)
+                .map_err(ErrorSeverity::Fatal)?;
+
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
             interpreter_gen_server
                 .run(
+                    meister.clone(),
+                    state.thread_pool.clone(),
                     state.blocks_pool.clone(),
                     interpret_error_tx,
                     |error| ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::Ram(error))),
@@ -199,20 +234,19 @@ where J: edeltraud::Job + From<job::Job>,
                 .map_err(Error::InterpreterRun)
                 .map_err(ErrorSeverity::Fatal)?;
 
-            (interpreter_pid, performer, interpret_error_rx)
+            (meister, interpret_error_rx)
         },
 
     };
 
-    busyloop(supervisor_pid, interpreter_pid, interpret_error_rx.fuse(), state, performer).await
+    busyloop(supervisor_pid, meister, interpret_error_rx.fuse(), state).await
 }
 
 async fn busyloop<J>(
     _supervisor_pid: SupervisorPid,
-    interpreter_pid: interpret::Pid<Context>,
+    meister: performer_sklave::Meister,
     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
     mut state: State<J>,
-    performer: performer::Performer<Context>,
 )
     -> Result<(), ErrorSeverity<State<J>, Error>>
 where J: edeltraud::Job + From<job::Job>,
