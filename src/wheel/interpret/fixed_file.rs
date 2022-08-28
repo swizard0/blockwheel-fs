@@ -141,7 +141,7 @@ pub enum TaskJoinError {
 }
 
 pub struct WheelData<C> where C: Context {
-    pub sync_gen_server: SyncGenServer<C>,
+    pub sync_gen_server_init: SyncGenServerInit,
     pub performer: performer::Performer<C>,
 }
 
@@ -163,18 +163,25 @@ pub struct OpenParams<P> {
     pub wheel_filename: P,
 }
 
+pub struct SyncGenServerInit {
+    wheel_file: fs::File,
+    storage_layout: storage::Layout,
+}
+
 pub struct SyncGenServer<C> where C: Context {
     wheel_file: fs::File,
     pid_inner: Arc<PidInner<C>>,
     storage_layout: storage::Layout,
 }
 
-impl<C> SyncGenServer<C> where C: Context {
-    pub fn create<P>(
+impl SyncGenServerInit {
+    pub fn create<C, P>(
         params: CreateParams<P>,
         mut performer_builder: performer::PerformerBuilderInit<C>,
     )
-        -> Result<WheelData<C>, WheelCreateError> where P: AsRef<Path>
+        -> Result<WheelData<C>, WheelCreateError>
+    where P: AsRef<Path>,
+          C: Context,
     {
         log::debug!("creating new wheel file [ {:?} ]", params.wheel_filename.as_ref());
 
@@ -239,12 +246,9 @@ impl<C> SyncGenServer<C> where C: Context {
 
         let (performer_builder, _work_block) = performer_builder.start_fill();
 
-        let pid_inner = Arc::new(PidInner::new());
-
         Ok(WheelData {
-            sync_gen_server: SyncGenServer {
+            sync_gen_server_init: SyncGenServerInit {
                 wheel_file,
-                pid_inner,
                 storage_layout,
             },
             performer: performer_builder
@@ -252,11 +256,13 @@ impl<C> SyncGenServer<C> where C: Context {
         })
     }
 
-    pub fn open<P>(
+    pub fn open<C, P>(
         params: OpenParams<P>,
         mut performer_builder: performer::PerformerBuilderInit<C>,
     )
-        -> Result<WheelOpenStatus<C>, WheelOpenError> where P: AsRef<Path>
+        -> Result<WheelOpenStatus<C>, WheelOpenError>
+    where P: AsRef<Path>,
+          C: Context,
     {
         log::debug!("opening existing wheel file [ {:?} ]", params.wheel_filename.as_ref());
 
@@ -396,12 +402,9 @@ impl<C> SyncGenServer<C> where C: Context {
 
         log::debug!("loaded wheel schema");
 
-        let pid_inner = Arc::new(PidInner::new());
-
         Ok(WheelOpenStatus::Success(WheelData {
-            sync_gen_server: SyncGenServer {
+            sync_gen_server_init: SyncGenServerInit {
                 wheel_file,
-                pid_inner,
                 storage_layout: builder
                     .storage_layout()
                     .clone(),
@@ -411,6 +414,18 @@ impl<C> SyncGenServer<C> where C: Context {
         }))
     }
 
+    pub fn finish<C>(self) -> SyncGenServer<C> where C: Context {
+        let pid_inner = Arc::new(PidInner::new());
+
+        SyncGenServer {
+            wheel_file: self.wheel_file,
+            storage_layout: self.storage_layout,
+            pid_inner,
+        }
+    }
+}
+
+impl<C> SyncGenServer<C> where C: Context {
     pub fn pid(&self) -> Pid<C> {
         Pid {
             inner: self.pid_inner.clone(),

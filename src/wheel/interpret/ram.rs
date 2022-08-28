@@ -66,7 +66,7 @@ pub enum TaskJoinError {
 }
 
 pub struct WheelData<C> where C: Context {
-    pub sync_gen_server: SyncGenServer<C>,
+    pub sync_gen_server_init: SyncGenServerInit,
     pub performer: performer::Performer<C>,
 }
 
@@ -75,18 +75,24 @@ pub struct CreateParams {
     pub init_wheel_size_bytes: usize,
 }
 
+pub struct SyncGenServerInit {
+    memory: Vec<u8>,
+    storage_layout: storage::Layout,
+}
+
 pub struct SyncGenServer<C> where C: Context {
     memory: Vec<u8>,
     pid_inner: Arc<PidInner<C>>,
     storage_layout: storage::Layout,
 }
 
-impl<C> SyncGenServer<C> where C: Context {
-    pub fn create(
+impl SyncGenServerInit {
+    pub fn create<C>(
         params: CreateParams,
         performer_builder: performer::PerformerBuilderInit<C>,
     )
         -> Result<WheelData<C>, WheelCreateError>
+    where C: Context,
     {
         log::debug!("creating new ram file of {:?} bytes", params.init_wheel_size_bytes);
 
@@ -123,12 +129,9 @@ impl<C> SyncGenServer<C> where C: Context {
 
         let (performer_builder, _work_block) = performer_builder.start_fill();
 
-        let pid_inner = Arc::new(PidInner::new());
-
         Ok(WheelData {
-            sync_gen_server: SyncGenServer {
+            sync_gen_server_init: SyncGenServerInit {
                 memory,
-                pid_inner,
                 storage_layout,
             },
             performer: performer_builder
@@ -136,6 +139,18 @@ impl<C> SyncGenServer<C> where C: Context {
         })
     }
 
+    pub fn finish<C>(self) -> SyncGenServer<C> where C: Context {
+        let pid_inner = Arc::new(PidInner::new());
+
+        SyncGenServer {
+            memory: self.memory,
+            storage_layout: self.storage_layout,
+            pid_inner,
+        }
+    }
+}
+
+impl<C> SyncGenServer<C> where C: Context {
     pub fn pid(&self) -> Pid<C> {
         Pid {
             inner: self.pid_inner.clone(),

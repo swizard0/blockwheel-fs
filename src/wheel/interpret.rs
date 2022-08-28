@@ -30,6 +30,7 @@ use crate::{
     wheel::{
         block,
         storage,
+        performer_sklave,
         core::{
             task,
         },
@@ -119,6 +120,8 @@ impl<C> PidInner<C> where C: Context {
 
 impl<C> Pid<C> where C: Context {
     pub fn push_request(&self, offset: u64, task: task::Task<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
+
+
         let (reply_tx, reply_rx) = oneshot::channel();
         if Arc::strong_count(&self.inner) > 1 {
             self.inner.schedule(Command::Request(Request { offset, task, reply_tx, }));

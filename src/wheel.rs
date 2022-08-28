@@ -43,7 +43,7 @@ use self::core::{
 };
 
 pub mod interpret;
-pub mod performer_actor;
+pub mod performer_sklave;
 
 mod lru;
 
@@ -91,20 +91,20 @@ where J: edeltraud::Job + From<job::Job>,
         InterpreterParams::FixedFile(ref interpreter_params) => {
             let cloned_interpreter_params = interpreter_params.clone();
             let open_async = tokio::task::spawn_blocking(move || {
-                interpret::fixed_file::SyncGenServer::open(
+                interpret::fixed_file::SyncGenServerInit::open(
                     interpret::fixed_file::OpenParams {
                         wheel_filename: &cloned_interpreter_params.wheel_filename,
                     },
                     performer_builder,
                 )
             });
-            let interpret::fixed_file::WheelData { sync_gen_server: interpreter_gen_server, performer, } = match open_async.await {
+            let interpret::fixed_file::WheelData { sync_gen_server_init: interpreter_gen_server_init, performer, } = match open_async.await {
                 Ok(Ok(interpret::fixed_file::WheelOpenStatus::Success(wheel_data))) =>
                     wheel_data,
                 Ok(Ok(interpret::fixed_file::WheelOpenStatus::FileNotFound { performer_builder, })) => {
                     let cloned_interpreter_params = interpreter_params.clone();
                     let create_async = tokio::task::spawn_blocking(move || {
-                        interpret::fixed_file::SyncGenServer::create(
+                        interpret::fixed_file::SyncGenServerInit::create(
                             interpret::fixed_file::CreateParams {
                                 wheel_filename: &cloned_interpreter_params.wheel_filename,
                                 init_wheel_size_bytes: cloned_interpreter_params.init_wheel_size_bytes,
@@ -143,6 +143,8 @@ where J: edeltraud::Job + From<job::Job>,
                     )),
             };
 
+            let interpreter_gen_server = interpreter_gen_server_init.finish();
+
             let interpreter_pid = interpreter_gen_server.pid();
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
             interpreter_gen_server
@@ -161,14 +163,14 @@ where J: edeltraud::Job + From<job::Job>,
         InterpreterParams::Ram(ref interpreter_params) => {
             let cloned_interpreter_params = interpreter_params.clone();
             let create_async = tokio::task::spawn_blocking(move || {
-                interpret::ram::SyncGenServer::create(
+                interpret::ram::SyncGenServerInit::create(
                     interpret::ram::CreateParams {
                         init_wheel_size_bytes: cloned_interpreter_params.init_wheel_size_bytes,
                     },
                     performer_builder,
                 )
             });
-            let interpret::ram::WheelData { sync_gen_server: interpreter_gen_server, performer, } = match create_async.await {
+            let interpret::ram::WheelData { sync_gen_server_init: interpreter_gen_server_init, performer, } = match create_async.await {
                 Ok(Ok(data)) =>
                     data,
                 Ok(Err(error)) =>
@@ -182,6 +184,8 @@ where J: edeltraud::Job + From<job::Job>,
                         ),
                     )),
             };
+
+            let interpreter_gen_server = interpreter_gen_server_init.finish();
 
             let interpreter_pid = interpreter_gen_server.pid();
             let (interpret_error_tx, interpret_error_rx) = oneshot::channel();
