@@ -16,7 +16,6 @@ use ero::{
 };
 
 use alloc_pool::bytes::{
-    Bytes,
     BytesPool,
 };
 
@@ -30,12 +29,15 @@ use crate::{
     Flushed,
     IterBlocksItem,
     InterpreterParams,
-    blockwheel_context::Context,
+    blockwheel_context::{
+        Context,
+        IterBlocksContext,
+        IterBlocksStreamContext,
+    },
 };
 
 pub mod core;
 use self::core::{
-    task,
     performer,
 };
 
@@ -237,7 +239,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
 }
 
 async fn busyloop<J>(
-    _supervisor_pid: SupervisorPid,
+    mut supervisor_pid: SupervisorPid,
     meister: performer_sklave::Meister,
     mut fused_interpret_error_rx: future::Fuse<oneshot::Receiver<ErrorSeverity<(), Error>>>,
     mut state: State<J>,
@@ -303,15 +305,67 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                 return Ok(());
             },
 
-            Event::Request(Some(request)) => {
-                let request = if let proto::Request::Flush(proto::RequestFlush { context: reply_tx, }) = request {
-                    let (done_tx, done_rx) = oneshot::channel();
-                    mode = Mode::AwaitFlush { done_rx, reply_tx, };
-                    proto::Request::Flush(proto::RequestFlush { context: done_tx, })
-                } else {
-                    request
-                };
+            Event::Request(Some(proto::Request::Flush(proto::RequestFlush { context: reply_tx, }))) => {
+                let (done_tx, done_rx) = oneshot::channel();
+                mode = Mode::AwaitFlush { done_rx, reply_tx, };
+                let order = performer_sklave::Order::Request(
+                    proto::Request::Flush(proto::RequestFlush { context: done_tx, }),
+                );
+                match meister.order(order, &edeltraud::EdeltraudJobMap::new(&state.thread_pool)) {
+                    Ok(()) =>
+                        (),
+                    Err(arbeitssklave::Error::Terminated) => {
+                        log::debug!("performer sklave is gone, terminating");
+                        return Ok(());
+                    },
+                    Err(error) =>
+                        return Err(ErrorSeverity::Fatal(Error::Arbeitssklave(error))),
+                }
+            },
 
+            Event::Request(Some(proto::Request::IterBlocks(proto::RequestIterBlocks {
+                context: IterBlocksContext {
+                    reply_tx,
+                    maybe_iter_task_tx: None,
+                },
+            }))) => {
+                let (iter_task_tx, iter_task_rx) = oneshot::channel();
+                supervisor_pid.spawn_link_temporary(
+                    forward_blocks_iter(
+                        iter_task_rx,
+                        meister.clone(),
+                        state.thread_pool.clone(),
+                    ),
+                );
+                let order = performer_sklave::Order::Request(
+                    proto::Request::IterBlocks(proto::RequestIterBlocks {
+                        context: IterBlocksContext {
+                            reply_tx,
+                            maybe_iter_task_tx: Some(iter_task_tx),
+                        },
+                    }),
+                );
+                match meister.order(order, &edeltraud::EdeltraudJobMap::new(&state.thread_pool)) {
+                    Ok(()) =>
+                        (),
+                    Err(arbeitssklave::Error::Terminated) => {
+                        log::debug!("performer sklave is gone, terminating");
+                        return Ok(());
+                    },
+                    Err(error) =>
+                        return Err(ErrorSeverity::Fatal(Error::Arbeitssklave(error))),
+                }
+            },
+
+            Event::Request(Some(proto::Request::IterBlocks(proto::RequestIterBlocks {
+                context: IterBlocksContext {
+                    maybe_iter_task_tx: Some(..),
+                    ..
+                },
+            }))) =>
+                unreachable!(),
+
+            Event::Request(Some(request)) => {
                 let order = performer_sklave::Order::Request(request);
                 match meister.order(order, &edeltraud::EdeltraudJobMap::new(&state.thread_pool)) {
                     Ok(()) =>
@@ -323,110 +377,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                     Err(error) =>
                         return Err(ErrorSeverity::Fatal(Error::Arbeitssklave(error))),
                 }
-
-                todo!()
-                // incoming.incoming_request.push(request);
             },
-
-            // Event::Task(Ok(TaskOutput::Job(performer_actor::Done::Poll { mut env, kont, }))) => {
-            //     if let Some(interpret_task) = env.outgoing.interpret_task.take() {
-            //         let performer_actor::QueryInterpretTask { fused_interpret_result_rx, } =
-            //             interpret_task;
-            //         tasks.push(Task::InterpreterAwait { fused_interpret_result_rx, }.run());
-            //         tasks_count += 1;
-            //     }
-            //     if let Some(performer_actor::TaskDoneFlush { reply_tx, }) = env.outgoing.task_done_flush.take() {
-            //         let interpret::Synced = env.interpreter_pid.device_sync().await
-            //             .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
-            //         if let Err(_send_error) = reply_tx.send(Flushed) {
-            //             log::warn!("Pid is gone during Flush query result send");
-            //         }
-            //         assert!(matches!(mode, Mode::Flushing));
-            //         mode = Mode::Regular;
-            //     }
-            //     for prepare_write_block in env.outgoing.prepare_write_blocks.drain(..) {
-            //         let performer_actor::PrepareWriteBlock { block_id, block_bytes, context, } =
-            //             prepare_write_block;
-            //         let thread_pool = state.thread_pool.clone();
-            //         let blocks_pool = state.blocks_pool.clone();
-            //         tasks.push(Task::BlockPrepareWrite { thread_pool, block_id, block_bytes, blocks_pool, context, }.run());
-            //         tasks_count += 1;
-            //     }
-            //     for prepare_delete_block in env.outgoing.prepare_delete_blocks.drain(..) {
-            //         let performer_actor::PrepareDeleteBlock { block_id, context, } =
-            //             prepare_delete_block;
-            //         let thread_pool = state.thread_pool.clone();
-            //         let blocks_pool = state.blocks_pool.clone();
-            //         tasks.push(Task::BlockPrepareDelete { thread_pool, block_id, blocks_pool, context, }.run());
-            //         tasks_count += 1;
-            //     }
-            //     for process_read_block in env.outgoing.process_read_blocks.drain(..) {
-            //         let performer_actor::ProcessReadBlock { storage_layout, block_header, block_bytes, pending_contexts, } =
-            //             process_read_block;
-            //         let thread_pool = state.thread_pool.clone();
-            //         tasks.push(Task::BlockProcessRead { thread_pool, storage_layout, block_header, block_bytes, pending_contexts, }.run());
-            //         tasks_count += 1;
-            //     }
-            //     for iter_task in env.outgoing.iter_tasks.drain(..) {
-            //         tasks.push(Task::Iter(iter_task).run());
-            //         tasks_count += 1;
-            //     }
-
-            //     performer_state = match performer_state {
-            //         PerformerState::InProgress =>
-            //             PerformerState::Ready {
-            //                 job_args: performer_actor::JobArgs { env, kont, },
-            //             },
-            //         PerformerState::Ready { .. } =>
-            //             unreachable!(),
-            //     };
-            // },
-
-            // Event::Task(Ok(TaskOutput::BlockPrepareWrite { block_id, context, done, })) =>
-            //     incoming.prepared_write_block_done.push(performer_actor::PreparedWriteBlockDone {
-            //         block_id,
-            //         write_block_bytes: done.write_block_bytes,
-            //         context,
-            //     }),
-
-            // Event::Task(Ok(TaskOutput::BlockProcessRead { pending_contexts, done, })) =>
-            //     incoming.process_read_block_done.push(performer_actor::ProcessReadBlockDone {
-            //         block_id: done.block_id,
-            //         block_bytes: done.block_bytes,
-            //         pending_contexts,
-            //     }),
-
-            // Event::Task(Ok(TaskOutput::BlockPrepareDelete { block_id, context, done, })) =>
-            //     incoming.prepared_delete_block_done.push(performer_actor::PreparedDeleteBlockDone {
-            //         block_id,
-            //         delete_block_bytes: done.delete_block_bytes,
-            //         context,
-            //     }),
-
-            // Event::Task(Ok(TaskOutput::Iter(IterTaskDone::PeerLost))) =>
-            //     log::debug!("client closed iteration channel"),
-
-            // Event::Task(Ok(TaskOutput::Iter(IterTaskDone::ItemSent(iter_block_state)))) =>
-            //     incoming.incoming_iter_blocks.push(performer_actor::IncomingIterBlocks {
-            //         iter_block_state,
-            //     }),
-
-            // Event::Task(Ok(TaskOutput::Iter(IterTaskDone::Finished))) =>
-            //     log::debug!("iteration finished"),
-
-            // Event::Task(Ok(TaskOutput::InterpreterAwait { maybe_done: Ok(interpret::DoneTask { task_done, stats, }), })) =>
-            //     incoming.incoming_task_done_stats.push(performer_actor::IncomingTaskDoneStats {
-            //         task_done,
-            //         stats,
-            //     }),
-
-            // Event::Task(Ok(TaskOutput::InterpreterAwait { maybe_done: Err(oneshot::Canceled), })) => {
-            //     log::debug!("interpreter reply channel closed: shutting down");
-            //     return Ok(());
-            // },
-
-            // Event::Task(Err(error)) =>
-            //     return Err(ErrorSeverity::Fatal(error)),
 
             Event::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
                 return Err(ErrorSeverity::Recoverable { state, }),
@@ -465,7 +416,10 @@ pub enum IterTask {
 
 pub enum IterTaskDone {
     PeerLost,
-    ItemSent(performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>),
+    ItemSent {
+        iter_blocks_state: performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>,
+        iter_task_rx: oneshot::Receiver<IterTask>,
+    },
     Finished,
 }
 
@@ -496,11 +450,19 @@ impl future::Future for IterTask {
                     },
                 }
                 match sink.as_mut().start_send(item) {
-                    Ok(()) =>
-                        Poll::Ready(IterTaskDone::ItemSent(performer::IterBlocksState {
-                            iter_blocks_stream_context: blocks_tx,
-                            iter_blocks_cursor,
-                        })),
+                    Ok(()) => {
+                        let (iter_task_tx, iter_task_rx) = oneshot::channel();
+                        Poll::Ready(IterTaskDone::ItemSent {
+                            iter_blocks_state: performer::IterBlocksState {
+                                iter_blocks_stream_context: IterBlocksStreamContext {
+                                    blocks_tx,
+                                    iter_task_tx,
+                                },
+                                iter_blocks_cursor,
+                            },
+                            iter_task_rx,
+                        })
+                    },
                     Err(_send_error) =>
                         Poll::Ready(IterTaskDone::PeerLost),
                 }
@@ -528,128 +490,52 @@ impl future::Future for IterTask {
     }
 }
 
-// enum Task<C, J> where C: context::Context, J: edeltraud::Job {
-//     Job(edeltraud::Handle<J::Output>),
-//     BlockPrepareWrite {
-//         thread_pool: Edeltraud<J>,
-//         block_id: block::Id,
-//         block_bytes: Bytes,
-//         blocks_pool: BytesPool,
-//         context: task::WriteBlockContext<C::WriteBlock>,
-//     },
-//     BlockProcessRead {
-//         thread_pool: Edeltraud<J>,
-//         storage_layout: storage::Layout,
-//         block_header: storage::BlockHeader,
-//         block_bytes: Bytes,
-//         pending_contexts: task::queue::PendingReadContextBag,
-//     },
-//     BlockPrepareDelete {
-//         thread_pool: Edeltraud<J>,
-//         block_id: block::Id,
-//         blocks_pool: BytesPool,
-//         context: task::DeleteBlockContext<C::DeleteBlock>,
-//     },
-//     Iter(IterTask),
-//     InterpreterAwait {
-//         fused_interpret_result_rx: <Context as context::Context>::Interpreter,
-//     },
-// }
+async fn forward_blocks_iter<J>(
+    iter_task_rx: oneshot::Receiver<IterTask>,
+    meister: performer_sklave::Meister,
+    thread_pool: edeltraud::Edeltraud<J>,
+)
+where J: edeltraud::Job<Output = ()> + From<job::Job>,
+{
+    if let Err(error) = run_forward_blocks_iter(iter_task_rx, meister, thread_pool).await {
+        log::debug!("canceling blocks iterator forwarding because of: {error:?}");
+    }
+}
 
-// enum TaskOutput<C> where C: context::Context {
-//     Job,
-//     BlockPrepareWrite {
-//         block_id: block::Id,
-//         context: task::WriteBlockContext<C::WriteBlock>,
-//         done: interpret::BlockPrepareWriteJobDone,
-//     },
-//     BlockProcessRead {
-//         pending_contexts: task::queue::PendingReadContextBag,
-//         done: interpret::BlockProcessReadJobDone,
-//     },
-//     BlockPrepareDelete {
-//         block_id: block::Id,
-//         context: task::DeleteBlockContext<C::DeleteBlock>,
-//         done: interpret::BlockPrepareDeleteJobDone,
-//     },
-//     Iter(IterTaskDone),
-//     InterpreterAwait {
-//         maybe_done: Result<interpret::DoneTask<Context>, oneshot::Canceled>,
-//     },
-// }
+#[derive(Debug)]
+enum ForwardBlocksIterError {
+    PerformerSklaveIsLost,
+    StreamPeerLost,
+    Arbeitssklave(arbeitssklave::Error),
+}
 
-// impl<C, J> Task<C, J>
-// where C: context::Context + Send,
-//       J: edeltraud::Job + From<job::Job>,
-//       J::Output: From<job::JobOutput>,
-//       job::JobOutput: From<J::Output>,
-// {
-//     async fn run(self) -> Result<TaskOutput<C>, Error> {
-//         match self {
-//             Task::Job(job_handle) => {
-//                 let job_output = job_handle.await
-//                     .map_err(Error::Edeltraud)?;
-//                 let job_output: job::JobOutput = job_output.into();
-//                 let job::PerformerActorRunDone = job_output.into();
-//                 Ok(TaskOutput::Job)
-//             },
+async fn run_forward_blocks_iter<J>(
+    mut iter_task_rx: oneshot::Receiver<IterTask>,
+    meister: performer_sklave::Meister,
+    thread_pool: edeltraud::Edeltraud<J>,
+)
+    -> Result<(), ForwardBlocksIterError>
+where J: edeltraud::Job<Output = ()> + From<job::Job>,
+{
+    loop {
+        let iter_task = iter_task_rx.await
+            .map_err(|oneshot::Canceled| ForwardBlocksIterError::PerformerSklaveIsLost)?;
 
-//             Task::BlockPrepareWrite {
-//                 thread_pool,
-//                 block_id,
-//                 block_bytes,
-//                 blocks_pool,
-//                 context,
-//             } => {
-//                 let job = job::Job::BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs { block_id: block_id.clone(), block_bytes, blocks_pool, });
-//                 let job_output = thread_pool.spawn(job).await
-//                     .map_err(Error::Edeltraud)?;
-//                 let job_output: job::JobOutput = job_output.into();
-//                 let job::BlockPrepareWriteDone(block_prepare_write_result) = job_output.into();
-//                 let done = block_prepare_write_result
-//                     .map_err(Error::BlockPrepareWrite)?;
-//                 Ok(TaskOutput::BlockPrepareWrite { block_id, context, done, })
-//             },
-
-//             Task::BlockProcessRead {
-//                 thread_pool,
-//                 storage_layout,
-//                 block_header,
-//                 block_bytes,
-//                 pending_contexts,
-//             } => {
-//                 let job = job::Job::BlockProcessRead(interpret::BlockProcessReadJobArgs { storage_layout, block_header, block_bytes, });
-//                 let job_output = thread_pool.spawn(job).await
-//                     .map_err(Error::Edeltraud)?;
-//                 let job_output: job::JobOutput = job_output.into();
-//                 let job::BlockProcessReadDone(block_process_read_result) = job_output.into();
-//                 let done = block_process_read_result
-//                     .map_err(Error::BlockProcessRead)?;
-//                 Ok(TaskOutput::BlockProcessRead { pending_contexts, done, })
-//             },
-
-//             Task::BlockPrepareDelete {
-//                 thread_pool,
-//                 block_id,
-//                 blocks_pool,
-//                 context,
-//             } => {
-//                 let job = job::Job::BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs { blocks_pool, });
-//                 let job_output = thread_pool.spawn(job).await
-//                     .map_err(Error::Edeltraud)?;
-//                 let job_output: job::JobOutput = job_output.into();
-//                 let job::BlockPrepareDeleteDone(block_prepare_delete_result) = job_output.into();
-//                 let done = block_prepare_delete_result
-//                     .map_err(Error::BlockPrepareDelete)?;
-//                 Ok(TaskOutput::BlockPrepareDelete { block_id, context, done, })
-//             },
-
-//             Task::Iter(iter_task) =>
-//                 Ok(TaskOutput::Iter(iter_task.await)),
-
-//             Task::InterpreterAwait { fused_interpret_result_rx, } =>
-//                 Ok(TaskOutput::InterpreterAwait { maybe_done: fused_interpret_result_rx.await, }),
-
-//         }
-//     }
-// }
+        match iter_task.await {
+            IterTaskDone::PeerLost =>
+                return Err(ForwardBlocksIterError::StreamPeerLost),
+            IterTaskDone::ItemSent { iter_blocks_state, iter_task_rx: next_iter_task_rx, } => {
+                let order = performer_sklave::Order::IterBlocks(
+                    performer_sklave::OrderIterBlocks {
+                        iter_blocks_state,
+                    },
+                );
+                meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool))
+                    .map_err(ForwardBlocksIterError::Arbeitssklave)?;
+                iter_task_rx = next_iter_task_rx;
+            },
+            IterTaskDone::Finished =>
+                return Ok(()),
+        }
+    }
+}

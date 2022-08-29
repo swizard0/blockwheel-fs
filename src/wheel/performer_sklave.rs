@@ -1,7 +1,5 @@
 use alloc_pool::{
     bytes::{
-        Bytes,
-        BytesMut,
         BytesPool,
     },
 };
@@ -10,9 +8,7 @@ use crate::{
     job,
     proto,
     context,
-    storage,
     wheel::{
-        block,
         interpret,
         core::{
             task,
@@ -51,7 +47,7 @@ pub struct OrderDeviceSyncDone<C> where C: context::Context {
 }
 
 pub struct OrderIterBlocks {
-    pub iter_block_state: performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>,
+    pub iter_blocks_state: performer::IterBlocksState<<Context as context::Context>::IterBlocksStream>,
 }
 
 pub struct OrderPreparedWriteBlockDone {
@@ -146,8 +142,8 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                     break poll.next.incoming_request(request),
                 (Some(Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, })), Kont::PollRequestAndInterpreter { poll, }) =>
                     break poll.next.incoming_task_done_stats(task_done, stats),
-                (Some(Order::IterBlocks(OrderIterBlocks { iter_block_state, })), Kont::PollRequestAndInterpreter { poll, }) =>
-                    break poll.next.incoming_iter_blocks(iter_block_state),
+                (Some(Order::IterBlocks(OrderIterBlocks { iter_blocks_state, })), Kont::PollRequestAndInterpreter { poll, }) =>
+                    break poll.next.incoming_iter_blocks(iter_blocks_state),
                 (
                     Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
                         output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
@@ -174,8 +170,8 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                     break poll.next.incoming_request(request),
                 (Some(Order::TaskDoneStats(..)), Kont::PollRequest { .. }) =>
                     unreachable!(),
-                (Some(Order::IterBlocks(OrderIterBlocks { iter_block_state, })), Kont::PollRequest { poll, }) =>
-                    break poll.next.incoming_iter_blocks(iter_block_state),
+                (Some(Order::IterBlocks(OrderIterBlocks { iter_blocks_state, })), Kont::PollRequest { poll, }) =>
+                    break poll.next.incoming_iter_blocks(iter_blocks_state),
                 (
                     Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
                         output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
@@ -241,22 +237,37 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                 performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
                     blocks_total_count,
                     blocks_total_size,
-                    iter_blocks_context: reply_tx,
+                    iter_blocks_context: blockwheel_context::IterBlocksContext {
+                        reply_tx,
+                        maybe_iter_task_tx: Some(iter_task_tx),
+                    },
                     next,
                 })) => {
+                    let (blocks_tx, blocks_rx) = futures::channel::mpsc::channel(0);
+                    let iter_blocks = IterBlocks {
+                        blocks_total_count,
+                        blocks_total_size,
+                        blocks_rx,
+                    };
+                    if let Err(_send_error) = reply_tx.send(iter_blocks) {
+                        log::warn!("Pid is gone during IterBlocks query result send");
+                    }
 
-                    todo!()
-                    // let (iter_blocks_tx, iter_blocks_rx) = mpsc::channel(0);
-                    // let iter_blocks = IterBlocks {
-                    //     blocks_total_count,
-                    //     blocks_total_size,
-                    //     blocks_rx: iter_blocks_rx,
-                    // };
-                    // if let Err(_send_error) = reply_tx.send(iter_blocks) {
-                    //     log::warn!("Pid is gone during IterBlocks query result send");
-                    // }
-                    // next.stream_ready(iter_blocks_tx)
+                    let iter_blocks_stream = blockwheel_context::IterBlocksStreamContext {
+                        blocks_tx,
+                        iter_task_tx,
+                    };
+                    next.stream_ready(iter_blocks_stream)
                 },
+
+                performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
+                    iter_blocks_context: blockwheel_context::IterBlocksContext {
+                        maybe_iter_task_tx: None,
+                        ..
+                    },
+                    ..
+                })) =>
+                    unreachable!(),
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::Info(
@@ -360,38 +371,45 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                             block_id,
                             block_bytes,
                             iter_blocks_state: performer::IterBlocksState {
-                                iter_blocks_stream_context: blocks_tx,
+                                iter_blocks_stream_context: blockwheel_context::IterBlocksStreamContext {
+                                    blocks_tx,
+                                    iter_task_tx,
+                                },
                                 iter_blocks_cursor,
                             },
                         },
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // env.outgoing.iter_tasks.push(IterTask::Item {
-                    //     blocks_tx,
-                    //     item: IterBlocksItem::Block {
-                    //         block_id,
-                    //         block_bytes,
-                    //     },
-                    //     iter_blocks_cursor,
-                    // });
-                    // performer.next()
+                    let iter_task = IterTask::Item {
+                        blocks_tx,
+                        item: IterBlocksItem::Block {
+                            block_id,
+                            block_bytes,
+                        },
+                        iter_blocks_cursor,
+                    };
+                    if let Err(_send_error) = iter_task_tx.send(iter_task) {
+                        return Err(Error::WheelProcessLost);
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::IterBlocksFinish(
                         performer::IterBlocksFinishOp {
-                            iter_blocks_stream_context: blocks_tx,
+                            iter_blocks_stream_context: blockwheel_context::IterBlocksStreamContext {
+                                blocks_tx,
+                                iter_task_tx,
+                            },
                         },
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // env.outgoing.iter_tasks.push(IterTask::Finish { blocks_tx, });
-                    // performer.next()
+                    if let Err(_send_error) = iter_task_tx.send(IterTask::Finish { blocks_tx, }) {
+                        return Err(Error::WheelProcessLost);
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -470,39 +488,3 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
         }
     }
 }
-
-// #[derive(Default)]
-// pub struct Outgoing {
-//     pub interpret_task: Option<QueryInterpretTask>,
-//     pub iter_tasks: Vec<IterTask>,
-//     pub prepare_write_blocks: Vec<PrepareWriteBlock>,
-//     pub prepare_delete_blocks: Vec<PrepareDeleteBlock>,
-//     pub process_read_blocks: Vec<ProcessReadBlock>,
-//     pub task_done_flush: Option<TaskDoneFlush>,
-// }
-
-// pub struct QueryInterpretTask {
-//     pub fused_interpret_result_rx: <Context as context::Context>::Interpreter,
-// }
-
-// pub struct PrepareWriteBlock {
-//     pub block_id: block::Id,
-//     pub block_bytes: Bytes,
-//     pub context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
-// }
-
-// pub struct PrepareDeleteBlock {
-//     pub block_id: block::Id,
-//     pub context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
-// }
-
-// pub struct ProcessReadBlock {
-//     pub storage_layout: storage::Layout,
-//     pub block_header: storage::BlockHeader,
-//     pub block_bytes: Bytes,
-//     pub pending_contexts: task::queue::PendingReadContextBag,
-// }
-
-// pub struct TaskDoneFlush {
-//     pub reply_tx: oneshot::Sender<Flushed>,
-// }

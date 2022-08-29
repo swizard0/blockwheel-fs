@@ -334,7 +334,13 @@ impl Pid {
         loop {
             let (reply_tx, reply_rx) = oneshot::channel();
             self.request_tx
-                .send(proto::Request::IterBlocks(proto::RequestIterBlocks { context: reply_tx, })).await
+                .send(proto::Request::IterBlocks(proto::RequestIterBlocks {
+                    context: blockwheel_context::IterBlocksContext {
+                        reply_tx,
+                        maybe_iter_task_tx: None,
+                    },
+                }))
+                .await
                 .map_err(|_send_error| IterBlocksError::GenServer(ero::NoProcError))?;
 
             match reply_rx.await {
@@ -359,6 +365,7 @@ mod blockwheel_context {
 
     use super::{
         block,
+        wheel,
         context,
         Info,
         Deleted,
@@ -376,8 +383,18 @@ mod blockwheel_context {
         type WriteBlock = oneshot::Sender<Result<block::Id, RequestWriteBlockError>>;
         type ReadBlock = oneshot::Sender<Result<Bytes, RequestReadBlockError>>;
         type DeleteBlock = oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>;
-        type IterBlocks = oneshot::Sender<IterBlocks>;
-        type IterBlocksStream = mpsc::Sender<IterBlocksItem>;
+        type IterBlocks = IterBlocksContext;
+        type IterBlocksStream = IterBlocksStreamContext;
+    }
+
+    pub struct IterBlocksContext {
+        pub reply_tx: oneshot::Sender<IterBlocks>,
+        pub maybe_iter_task_tx: Option<oneshot::Sender<wheel::IterTask>>,
+    }
+
+    pub struct IterBlocksStreamContext {
+        pub blocks_tx: mpsc::Sender<IterBlocksItem>,
+        pub iter_task_tx: oneshot::Sender<wheel::IterTask>,
     }
 
     #[derive(Clone, PartialEq, Eq, Debug)]
