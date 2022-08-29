@@ -227,7 +227,7 @@ where C: Context,
 
         match event {
 
-            Event::Command(None) =>
+            Event::Command(None) | Event::Command(Some(Command::Terminate)) =>
                 break,
 
             Event::Command(Some(Command::Request(Request { offset, task, }))) => {

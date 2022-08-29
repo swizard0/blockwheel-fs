@@ -42,6 +42,7 @@ struct Request<C> where C: Context {
 enum Command<C> where C: Context {
     Request(Request<C>),
     DeviceSync { flush_context: C::Flush, },
+    Terminate,
 }
 
 #[derive(Debug)]
@@ -67,7 +68,6 @@ pub enum TaskJoinError {
     Ram(ram::TaskJoinError),
 }
 
-#[derive(Clone)]
 pub struct Pid<C> where C: Context {
     inner: Arc<PidInner<C>>,
 }
@@ -118,6 +118,14 @@ impl<C> Pid<C> where C: Context {
             Ok(())
         } else {
             return Err(ero::NoProcError);
+        }
+    }
+}
+
+impl<C> Drop for Pid<C> where C: Context {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) > 1 {
+            self.inner.schedule(Command::Terminate);
         }
     }
 }
