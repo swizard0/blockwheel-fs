@@ -6,12 +6,6 @@ use std::{
     },
 };
 
-use futures::{
-    channel::{
-        oneshot,
-    },
-};
-
 use bincode::Options;
 
 use alloc_pool::{
@@ -36,6 +30,7 @@ use crate::{
             Command,
             Request,
             PidInner,
+            RunError,
             AppendTerminatorError,
             block_append_terminator,
         },
@@ -157,18 +152,14 @@ impl<C> SyncGenServer<C> where C: Context {
         }
     }
 
-    pub fn run<F, E, P, J, W>(
+    pub fn run<P, J, W>(
         self,
         meister: arbeitssklave::Meister<W, performer_sklave::Order<C>>,
         thread_pool: P,
         blocks_pool: BytesPool,
-        error_tx: oneshot::Sender<E>,
-        error_map: F,
     )
         -> Result<(), Error>
-    where F: FnOnce(Error) -> E + Send + 'static,
-          E: Send + 'static,
-          C: 'static,
+    where C: 'static,
           C::Info: Send,
           C::WriteBlock: Send,
           C::ReadBlock: Send,
@@ -176,7 +167,7 @@ impl<C> SyncGenServer<C> where C: Context {
           C::IterBlocks: Send,
           C::IterBlocksStream: Send,
           C::Flush: Send,
-          P: edeltraud::ThreadPool<J> + Send + 'static,
+          P: edeltraud::ThreadPool<J> + Clone + Send + 'static,
           J: edeltraud::Job<Output = ()> + From<arbeitssklave::SklaveJob<W, performer_sklave::Order<C>>>,
           W: Send + 'static,
     {
@@ -187,13 +178,16 @@ impl<C> SyncGenServer<C> where C: Context {
                     self.pid_inner,
                     self.memory,
                     self.storage_layout,
-                    meister,
-                    thread_pool,
+                    meister.clone(),
+                    thread_pool.clone(),
                     blocks_pool,
                 );
                 if let Err(error) = result {
                     log::error!("wheel::interpret::ram terminated with {:?}", error);
-                    error_tx.send(error_map(error)).ok();
+                    meister.order(
+                        performer_sklave::Order::InterpreterError(RunError::Ram(error)),
+                        &thread_pool,
+                    ).ok();
                 }
             })
             .map_err(Error::ThreadSpawn)?;

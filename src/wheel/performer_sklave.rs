@@ -4,6 +4,12 @@ use alloc_pool::{
     },
 };
 
+use futures::{
+    channel::{
+        mpsc,
+    },
+};
+
 use crate::{
     job,
     proto,
@@ -35,6 +41,7 @@ pub enum Order<C> where C: context::Context {
     PreparedWriteBlockDone(OrderPreparedWriteBlockDone),
     ProcessReadBlockDone(OrderProcessReadBlockDone),
     PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone),
+    InterpreterError(interpret::RunError),
 }
 
 pub struct OrderTaskDoneStats<C> where C: context::Context {
@@ -65,6 +72,7 @@ pub struct OrderPreparedDeleteBlockDone {
 pub struct Env {
     pub interpreter_pid: interpret::Pid<Context>,
     pub blocks_pool: BytesPool,
+    pub error_tx: mpsc::UnboundedSender<Error>,
 }
 
 pub struct Welt {
@@ -90,7 +98,7 @@ pub type WriteBlockContext = task::WriteBlockContext<<Context as context::Contex
 pub type DeleteBlockContext = task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>;
 
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     Edeltraud(edeltraud::SpawnError),
     Arbeitssklave(arbeitssklave::Error),
     WheelProcessLost,
@@ -98,11 +106,14 @@ enum Error {
     InterpretBlockPrepareWrite(interpret::BlockPrepareWriteJobError),
     InterpretBlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
     InterpretBlockProcessRead(interpret::BlockProcessReadJobError),
+    InterpretRun(interpret::RunError),
 }
 
 pub fn run_job<P>(sklave_job: SklaveJob, thread_pool: &P) where P: edeltraud::ThreadPool<job::Job> {
+    let error_tx = sklave_job.sklavenwelt.env.error_tx.clone();
     if let Err(error) = job(sklave_job, thread_pool) {
-        log::error!("terminated with an error: {error:?}");
+        log::debug!("terminated with an error: {error:?}");
+        error_tx.unbounded_send(error).ok();
     }
 }
 
@@ -207,6 +218,8 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                     return Err(Error::InterpretBlockPrepareDelete(error)),
                 (Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone { output: Err(error), })), _kont) =>
                     return Err(Error::InterpretBlockProcessRead(error)),
+                (Some(Order::InterpreterError(error)), _kont) =>
+                    return Err(Error::InterpretRun(error)),
             }
         };
 
@@ -508,6 +521,8 @@ impl<C> fmt::Debug for Order<C> where C: context::Context {
                 fmt.debug_tuple("Order::ProcessReadBlockDone").finish(),
             Order::PreparedDeleteBlockDone(..) =>
                 fmt.debug_tuple("Order::PreparedDeleteBlockDone").finish(),
+            Order::InterpreterError(error) =>
+                fmt.debug_tuple("Order::InterpreterError").field(error).finish(),
         }
     }
 }

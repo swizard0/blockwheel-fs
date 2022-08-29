@@ -5,12 +5,6 @@ use std::{
     },
 };
 
-use futures::{
-    channel::{
-        oneshot,
-    },
-};
-
 use alloc_pool::bytes::{
     Bytes,
     BytesMut,
@@ -107,8 +101,7 @@ fn create_read_one() {
     let gen_server = gen_server_init.finish::<LocalContext>();
     let gen_server_pid = gen_server.pid();
 
-    let (error_tx, _error_rx) = oneshot::channel();
-    gen_server.run(meister.clone(), thread_pool.clone(), blocks_pool.clone(), error_tx, std::convert::identity)
+    gen_server.run(meister.clone(), thread_pool.clone(), blocks_pool.clone())
         .unwrap();
 
     let schema = performer.decompose();
@@ -180,8 +173,7 @@ fn create_read_one() {
     let gen_server = gen_server_init.finish::<LocalContext>();
     let gen_server_pid = gen_server.pid();
 
-    let (error_tx, _error_rx) = oneshot::channel();
-    gen_server.run(meister.clone(), thread_pool.clone(), blocks_pool.clone(), error_tx, std::convert::identity)
+    gen_server.run(meister.clone(), thread_pool.clone(), blocks_pool.clone())
         .unwrap();
 
     let mut schema = performer.decompose();
