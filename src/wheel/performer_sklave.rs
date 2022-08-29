@@ -238,12 +238,10 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // if let Err(_send_error) = reply_tx.send(info) {
-                    //     log::warn!("Pid is gone during Info query result send");
-                    // }
-                    // performer.next()
+                    if let Err(_send_error) = reply_tx.send(info) {
+                        log::warn!("Pid is gone during Info query result send");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -265,12 +263,10 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) {
-                    //     log::warn!("reply channel has been closed during WriteBlock result send");
-                    // }
-                    // performer.next()
+                    if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) {
+                        log::warn!("reply channel has been closed during WriteBlock result send");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -279,12 +275,10 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
-                    //     log::warn!("client channel was closed before a block is actually written");
-                    // }
-                    // performer.next()
+                    if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
+                        log::warn!("client channel was closed before a block is actually written");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -293,12 +287,10 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestReadBlockError::NotFound)) {
-                    //     log::warn!("reply channel has been closed during ReadBlock result send");
-                    // }
-                    // performer.next()
+                    if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestReadBlockError::NotFound)) {
+                        log::warn!("reply channel has been closed during ReadBlock result send");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -307,12 +299,10 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-                    //     log::warn!("client channel was closed before a block is actually read");
-                    // }
-                    // performer.next()
+                    if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
+                        log::warn!("client channel was closed before a block is actually read");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -321,12 +311,10 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestDeleteBlockError::NotFound)) {
-                    //     log::warn!("reply channel has been closed during DeleteBlock result send");
-                    // }
-                    // performer.next()
+                    if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestDeleteBlockError::NotFound)) {
+                        log::warn!("reply channel has been closed during DeleteBlock result send");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -335,12 +323,10 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
-                    //     log::warn!("client channel was closed before a block is actually deleted");
-                    // }
-                    // performer.next()
+                    if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
+                        log::warn!("client channel was closed before a block is actually deleted");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
