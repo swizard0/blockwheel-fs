@@ -382,7 +382,6 @@ mod blockwheel_context {
         type DeleteBlock = oneshot::Sender<Result<Deleted, RequestDeleteBlockError>>;
         type IterBlocks = oneshot::Sender<IterBlocks>;
         type IterBlocksStream = mpsc::Sender<IterBlocksItem>;
-        type Interpreter = future::Fuse<interpret::RequestReplyRx<Self>>;
     }
 
     #[derive(Clone, PartialEq, Eq, Debug)]

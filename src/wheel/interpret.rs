@@ -23,14 +23,12 @@ use alloc_pool::{
 };
 
 use crate::{
-    InterpretStats,
     context::{
         Context,
     },
     wheel::{
         block,
         storage,
-        performer_sklave,
         core::{
             task,
         },
@@ -43,21 +41,13 @@ pub mod fixed_file;
 struct Request<C> where C: Context {
     offset: u64,
     task: task::Task<C>,
-    reply_tx: oneshot::Sender<DoneTask<C>>,
 }
-
-pub struct DoneTask<C> where C: Context {
-    pub task_done: task::Done<C>,
-    pub stats: InterpretStats,
-}
-
-pub type RequestReplyRx<C> = oneshot::Receiver<DoneTask<C>>;
 
 pub struct Synced;
 
 enum Command<C> where C: Context {
     Request(Request<C>),
-    DeviceSync { reply_tx: oneshot::Sender<Synced>, },
+    DeviceSync { flush_context: C::Flush, },
 }
 
 #[derive(Debug)]
@@ -119,32 +109,21 @@ impl<C> PidInner<C> where C: Context {
 }
 
 impl<C> Pid<C> where C: Context {
-    pub fn push_request(&self, offset: u64, task: task::Task<C>) -> Result<RequestReplyRx<C>, ero::NoProcError> {
-
-
-        let (reply_tx, reply_rx) = oneshot::channel();
+    pub fn push_request(&self, offset: u64, task: task::Task<C>) -> Result<(), ero::NoProcError> {
         if Arc::strong_count(&self.inner) > 1 {
-            self.inner.schedule(Command::Request(Request { offset, task, reply_tx, }));
-            Ok(reply_rx)
+            self.inner.schedule(Command::Request(Request { offset, task, }));
+            Ok(())
         } else {
             Err(ero::NoProcError)
         }
     }
 
-    pub async fn device_sync(&mut self) -> Result<Synced, ero::NoProcError> {
-        loop {
-            let (reply_tx, reply_rx) = oneshot::channel();
-            if Arc::strong_count(&self.inner) > 1 {
-                self.inner.schedule(Command::DeviceSync { reply_tx, });
-                match reply_rx.await {
-                    Ok(Synced) =>
-                        return Ok(Synced),
-                    Err(oneshot::Canceled) =>
-                        (),
-                }
-            } else {
-                return Err(ero::NoProcError);
-            }
+    pub fn device_sync(&mut self, flush_context: C::Flush) -> Result<(), ero::NoProcError> {
+        if Arc::strong_count(&self.inner) > 1 {
+            self.inner.schedule(Command::DeviceSync { flush_context, });
+            Ok(())
+        } else {
+            return Err(ero::NoProcError);
         }
     }
 }

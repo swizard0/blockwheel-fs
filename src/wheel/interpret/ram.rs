@@ -38,7 +38,6 @@ use crate::{
             Command,
             Request,
             PidInner,
-            DoneTask,
             AppendTerminatorError,
             block_append_terminator,
         },
@@ -50,6 +49,7 @@ use crate::{
 pub enum Error {
     AppendTerminator(AppendTerminatorError),
     ThreadSpawn(io::Error),
+    Arbeitssklave(arbeitssklave::Error),
 }
 
 #[derive(Debug)]
@@ -159,9 +159,9 @@ impl<C> SyncGenServer<C> where C: Context {
         }
     }
 
-    pub fn run<F, E, B, P, J>(
+    pub fn run<F, E, P, J>(
         self,
-        meister: arbeitssklave::Meister<performer_sklave::Welt, B>,
+        meister: arbeitssklave::Meister<performer_sklave::Welt, performer_sklave::Order<C>>,
         thread_pool: P,
         blocks_pool: BytesPool,
         error_tx: oneshot::Sender<E>,
@@ -171,14 +171,16 @@ impl<C> SyncGenServer<C> where C: Context {
     where F: FnOnce(Error) -> E + Send + 'static,
           E: Send + 'static,
           C: 'static,
+          C::Info: Send,
           C::WriteBlock: Send,
           C::ReadBlock: Send,
           C::DeleteBlock: Send,
+          C::IterBlocks: Send,
           C::IterBlocksStream: Send,
-          performer_sklave::Order: From<B>,
-          B: Send + 'static,
+          C::Flush: Send,
           P: edeltraud::ThreadPool<J> + Send + 'static,
-          J: edeltraud::Job + From<job::Job>,
+          J: edeltraud::Job<Output = ()> + From<job::Job>,
+          job::Job: From<arbeitssklave::SklaveJob<performer_sklave::Welt, performer_sklave::Order<C>>>,
     {
         thread::Builder::new()
             .name("wheel::interpret::ram".to_string())
@@ -201,19 +203,19 @@ impl<C> SyncGenServer<C> where C: Context {
     }
 }
 
-fn busyloop<C, B, P, J>(
+fn busyloop<C, P, J>(
     pid_inner: Arc<PidInner<C>>,
     memory: Vec<u8>,
     storage_layout: storage::Layout,
-    meister: arbeitssklave::Meister<performer_sklave::Welt, B>,
+    meister: arbeitssklave::Meister<performer_sklave::Welt, performer_sklave::Order<C>>,
     thread_pool: P,
     blocks_pool: BytesPool,
 )
     -> Result<(), Error>
 where C: Context,
-      performer_sklave::Order: From<B>,
       P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job + From<job::Job>,
+      J: edeltraud::Job<Output = ()> + From<job::Job>,
+      job::Job: From<arbeitssklave::SklaveJob<performer_sklave::Welt, performer_sklave::Order<C>>>,
 {
     let mut stats = InterpretStats::default();
 
@@ -237,7 +239,7 @@ where C: Context,
             Event::Command(None) =>
                 break,
 
-            Event::Command(Some(Command::Request(Request { offset, task, reply_tx, }))) => {
+            Event::Command(Some(Command::Request(Request { offset, task, }))) => {
                 stats.count_total += 1;
 
                 if cursor.position() != offset {
@@ -288,17 +290,27 @@ where C: Context,
 
                         cursor.set_position(start as u64 + written as u64);
 
-                        let task_done = task::Done {
-                            current_offset: cursor.position(),
-                            task: task::TaskDone {
-                                block_id: task.block_id,
-                                kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
-                                    context: write_block.context,
-                                }),
+                        let order = performer_sklave::Order::TaskDoneStats(
+                            performer_sklave::OrderTaskDoneStats {
+                                task_done: task::Done {
+                                    current_offset: cursor.position(),
+                                    task: task::TaskDone {
+                                        block_id: task.block_id,
+                                        kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                            context: write_block.context,
+                                        }),
+                                    },
+                                },
+                                stats,
                             },
-                        };
-                        if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
-                            break;
+                        );
+                        match meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool)) {
+                            Ok(()) =>
+                               (),
+                            Err(arbeitssklave::Error::Terminated) =>
+                                break,
+                            Err(error) =>
+                                return Err(Error::Arbeitssklave(error)),
                         }
                     },
 
@@ -312,18 +324,28 @@ where C: Context,
                         block_bytes.copy_from_slice(&slice[start .. start + total_chunk_size]);
                         cursor.set_position(start as u64 + block_bytes.len() as u64);
 
-                        let task_done = task::Done {
-                            current_offset: cursor.position(),
-                            task: task::TaskDone {
-                                block_id: block_header.block_id,
-                                kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-                                    block_bytes,
-                                    context,
-                                }),
+                        let order = performer_sklave::Order::TaskDoneStats(
+                            performer_sklave::OrderTaskDoneStats {
+                                task_done: task::Done {
+                                    current_offset: cursor.position(),
+                                    task: task::TaskDone {
+                                        block_id: block_header.block_id,
+                                        kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                            block_bytes,
+                                            context,
+                                        }),
+                                    },
+                                },
+                                stats,
                             },
-                        };
-                        if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
-                            break;
+                        );
+                        match meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool)) {
+                            Ok(()) =>
+                               (),
+                            Err(arbeitssklave::Error::Terminated) =>
+                                break,
+                            Err(error) =>
+                                return Err(Error::Arbeitssklave(error)),
                         }
                     },
 
@@ -346,26 +368,47 @@ where C: Context,
 
                         cursor.set_position(start as u64 + written as u64);
 
-                        let task_done = task::Done {
-                            current_offset: cursor.position(),
-                            task: task::TaskDone {
-                                block_id: task.block_id,
-                                kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
-                                    context: delete_block.context,
-                                }),
+                        let order = performer_sklave::Order::TaskDoneStats(
+                            performer_sklave::OrderTaskDoneStats {
+                                task_done: task::Done {
+                                    current_offset: cursor.position(),
+                                    task: task::TaskDone {
+                                        block_id: task.block_id,
+                                        kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
+                                            context: delete_block.context,
+                                        }),
+                                    },
+                                },
+                                stats,
                             },
-                        };
-                        if let Err(_send_error) = reply_tx.send(DoneTask { task_done, stats, }) {
-                            break;
+                        );
+                        match meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool)) {
+                            Ok(()) =>
+                               (),
+                            Err(arbeitssklave::Error::Terminated) =>
+                                break,
+                            Err(error) =>
+                                return Err(Error::Arbeitssklave(error)),
                         }
                     },
                 }
             },
 
-            Event::Command(Some(Command::DeviceSync { reply_tx, })) =>
-                if let Err(_send_error) = reply_tx.send(Synced) {
-                    break;
-                },
+            Event::Command(Some(Command::DeviceSync { flush_context, })) => {
+                let order = performer_sklave::Order::DeviceSyncDone(
+                    performer_sklave::OrderDeviceSyncDone {
+                        flush_context,
+                    },
+                );
+                match meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool)) {
+                    Ok(()) =>
+                        (),
+                    Err(arbeitssklave::Error::Terminated) =>
+                        break,
+                    Err(error) =>
+                        return Err(Error::Arbeitssklave(error)),
+                }
+            },
 
         }
     }

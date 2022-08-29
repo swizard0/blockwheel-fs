@@ -249,254 +249,212 @@ async fn busyloop<J>(
     mut state: State<J>,
 )
     -> Result<(), ErrorSeverity<State<J>, Error>>
-where J: edeltraud::Job + From<job::Job>,
+where J: edeltraud::Job<Output = ()> + From<job::Job>,
 {
-    todo!()
+    enum Mode {
+        Regular,
+        AwaitFlush {
+            done_rx: oneshot::Receiver<Flushed>,
+            reply_tx: oneshot::Sender<Flushed>,
+        },
+        Flushed {
+            reply_tx: oneshot::Sender<Flushed>,
+        },
+    }
 
-    // enum PerformerState {
-    //     Ready {
-    //         job_args: performer_actor::JobArgs,
-    //     },
-    //     InProgress,
-    // }
+    let mut mode = Mode::Regular;
 
-    // let mut performer_state = PerformerState::Ready {
-    //     job_args: performer_actor::JobArgs {
-    //         env: performer_actor::Env {
-    //             interpreter_pid,
-    //             incoming: Default::default(),
-    //             outgoing: Default::default(),
-    //         },
-    //         kont: performer_actor::Kont::Start { performer, },
-    //     },
-    // };
+    log::debug!("starting wheel busyloop");
+    loop {
+        enum Event<R, E, F> {
+            Request(Option<R>),
+            InterpreterError(E),
+            FlushDone(F),
+        }
 
-    // let mut incoming = performer_actor::Incoming::default();
+        let event = match mode {
+            Mode::Regular => {
+                mode = Mode::Regular;
+                select! {
+                    result = state.fused_request_rx.next() =>
+                        Event::Request(result),
+                    result = fused_interpret_error_rx =>
+                        Event::InterpreterError(result),
+                }
+            },
+            Mode::AwaitFlush { mut done_rx, reply_tx, } =>
+                select! {
+                    result = fused_interpret_error_rx => {
+                        mode = Mode::Regular;
+                        Event::InterpreterError(result)
+                    },
+                    result = &mut done_rx => {
+                        mode = Mode::Flushed { reply_tx, };
+                        Event::FlushDone(result)
+                    },
+                },
+            Mode::Flushed { reply_tx, } => {
+                if let Err(_send_error) = reply_tx.send(Flushed) {
+                    log::warn!("Pid is gone during Flush query result send");
+                }
+                mode = Mode::Regular;
+                continue;
+            },
+        };
 
-    // enum Mode {
-    //     Regular,
-    //     Flushing,
-    // }
+        match event {
 
-    // let mut mode = Mode::Regular;
+            Event::Request(None) => {
+                log::info!("requests sink channel depleted: terminating");
+                return Ok(());
+            },
 
-    // let mut tasks = FuturesUnordered::new();
-    // let mut tasks_count = 0;
+            Event::Request(Some(request)) => {
+                let request = if let proto::Request::Flush(proto::RequestFlush { context: reply_tx, }) = request {
+                    let (done_tx, done_rx) = oneshot::channel();
+                    mode = Mode::AwaitFlush { done_rx, reply_tx, };
+                    proto::Request::Flush(proto::RequestFlush { context: done_tx, })
+                } else {
+                    request
+                };
 
-    // log::debug!("starting wheel busyloop");
-    // loop {
-    //     enum PerformerAction<A, S> {
-    //         Run(A),
-    //         KeepState(S),
-    //     }
+                let order = performer_sklave::Order::Request(request);
+                match meister.order(order, &edeltraud::EdeltraudJobMap::new(&state.thread_pool)) {
+                    Ok(()) =>
+                        (),
+                    Err(arbeitssklave::Error::Terminated) => {
+                        log::debug!("performer sklave is gone, terminating");
+                        return Ok(());
+                    },
+                    Err(error) =>
+                        return Err(ErrorSeverity::Fatal(Error::Arbeitssklave(error))),
+                }
 
-    //     let performer_action = match performer_state {
-    //         PerformerState::Ready {
-    //             job_args: job_args @ performer_actor::JobArgs { kont: performer_actor::Kont::Start { .. }, .. },
-    //         } =>
-    //             PerformerAction::Run(job_args),
-    //         PerformerState::Ready {
-    //             job_args: job_args @ performer_actor::JobArgs { kont: performer_actor::Kont::PollRequestAndInterpreter { .. }, .. },
-    //         } if !incoming.is_empty() =>
-    //             PerformerAction::Run(job_args),
-    //         PerformerState::Ready {
-    //             job_args: job_args @ performer_actor::JobArgs { kont: performer_actor::Kont::PollRequest { .. }, .. },
-    //         } if !incoming.is_empty() =>
-    //             PerformerAction::Run(job_args),
-    //         other =>
-    //             PerformerAction::KeepState(other),
-    //     };
+                todo!()
+                // incoming.incoming_request.push(request);
+            },
 
-    //     match performer_action {
-    //         PerformerAction::Run(mut job_args) => {
-    //             job_args.env.incoming.transfill_from(&mut incoming);
-    //             let job = job::Job::PerformerActorRun(job_args);
-    //             let job_handle = state.thread_pool.spawn_handle(job)
-    //                 .map_err(Error::Edeltraud)
-    //                 .map_err(ErrorSeverity::Fatal)?;
-    //             tasks.push(Task::<Context, J>::Job(job_handle).run());
-    //             tasks_count += 1;
-    //             performer_state = PerformerState::InProgress;
-    //         },
-    //         PerformerAction::KeepState(state) =>
-    //             performer_state = state,
-    //     }
+            // Event::Task(Ok(TaskOutput::Job(performer_actor::Done::Poll { mut env, kont, }))) => {
+            //     if let Some(interpret_task) = env.outgoing.interpret_task.take() {
+            //         let performer_actor::QueryInterpretTask { fused_interpret_result_rx, } =
+            //             interpret_task;
+            //         tasks.push(Task::InterpreterAwait { fused_interpret_result_rx, }.run());
+            //         tasks_count += 1;
+            //     }
+            //     if let Some(performer_actor::TaskDoneFlush { reply_tx, }) = env.outgoing.task_done_flush.take() {
+            //         let interpret::Synced = env.interpreter_pid.device_sync().await
+            //             .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
+            //         if let Err(_send_error) = reply_tx.send(Flushed) {
+            //             log::warn!("Pid is gone during Flush query result send");
+            //         }
+            //         assert!(matches!(mode, Mode::Flushing));
+            //         mode = Mode::Regular;
+            //     }
+            //     for prepare_write_block in env.outgoing.prepare_write_blocks.drain(..) {
+            //         let performer_actor::PrepareWriteBlock { block_id, block_bytes, context, } =
+            //             prepare_write_block;
+            //         let thread_pool = state.thread_pool.clone();
+            //         let blocks_pool = state.blocks_pool.clone();
+            //         tasks.push(Task::BlockPrepareWrite { thread_pool, block_id, block_bytes, blocks_pool, context, }.run());
+            //         tasks_count += 1;
+            //     }
+            //     for prepare_delete_block in env.outgoing.prepare_delete_blocks.drain(..) {
+            //         let performer_actor::PrepareDeleteBlock { block_id, context, } =
+            //             prepare_delete_block;
+            //         let thread_pool = state.thread_pool.clone();
+            //         let blocks_pool = state.blocks_pool.clone();
+            //         tasks.push(Task::BlockPrepareDelete { thread_pool, block_id, blocks_pool, context, }.run());
+            //         tasks_count += 1;
+            //     }
+            //     for process_read_block in env.outgoing.process_read_blocks.drain(..) {
+            //         let performer_actor::ProcessReadBlock { storage_layout, block_header, block_bytes, pending_contexts, } =
+            //             process_read_block;
+            //         let thread_pool = state.thread_pool.clone();
+            //         tasks.push(Task::BlockProcessRead { thread_pool, storage_layout, block_header, block_bytes, pending_contexts, }.run());
+            //         tasks_count += 1;
+            //     }
+            //     for iter_task in env.outgoing.iter_tasks.drain(..) {
+            //         tasks.push(Task::Iter(iter_task).run());
+            //         tasks_count += 1;
+            //     }
 
-    //     enum Event<R, T, E> {
-    //         Request(Option<R>),
-    //         Task(T),
-    //         InterpreterError(E),
-    //     }
+            //     performer_state = match performer_state {
+            //         PerformerState::InProgress =>
+            //             PerformerState::Ready {
+            //                 job_args: performer_actor::JobArgs { env, kont, },
+            //             },
+            //         PerformerState::Ready { .. } =>
+            //             unreachable!(),
+            //     };
+            // },
 
-    //     let event = match mode {
-    //         Mode::Regular if tasks_count == 0 =>
-    //             select! {
-    //                 result = state.fused_request_rx.next() =>
-    //                     Event::Request(result),
-    //                 result = fused_interpret_error_rx =>
-    //                     Event::InterpreterError(result),
-    //             },
-    //         Mode::Regular =>
-    //             select! {
-    //                 result = state.fused_request_rx.next() =>
-    //                     Event::Request(result),
-    //                 result = fused_interpret_error_rx =>
-    //                     Event::InterpreterError(result),
-    //                 result = tasks.next() =>
-    //                     match result {
-    //                         None =>
-    //                             unreachable!(),
-    //                         Some(task) => {
-    //                             tasks_count -= 1;
-    //                             Event::Task(task)
-    //                         },
-    //                     },
-    //             },
-    //         Mode::Flushing => {
-    //             assert!(tasks_count > 0);
-    //             select! {
-    //                 result = fused_interpret_error_rx =>
-    //                     Event::InterpreterError(result),
-    //                 result = tasks.next() =>
-    //                     match result {
-    //                         None =>
-    //                             unreachable!(),
-    //                         Some(task) => {
-    //                             tasks_count -= 1;
-    //                             Event::Task(task)
-    //                         },
-    //                     },
-    //             }
-    //         },
-    //     };
+            // Event::Task(Ok(TaskOutput::BlockPrepareWrite { block_id, context, done, })) =>
+            //     incoming.prepared_write_block_done.push(performer_actor::PreparedWriteBlockDone {
+            //         block_id,
+            //         write_block_bytes: done.write_block_bytes,
+            //         context,
+            //     }),
 
-    //     match event {
+            // Event::Task(Ok(TaskOutput::BlockProcessRead { pending_contexts, done, })) =>
+            //     incoming.process_read_block_done.push(performer_actor::ProcessReadBlockDone {
+            //         block_id: done.block_id,
+            //         block_bytes: done.block_bytes,
+            //         pending_contexts,
+            //     }),
 
-    //         Event::Request(None) => {
-    //             log::info!("requests sink channel depleted: terminating");
-    //             return Ok(());
-    //         },
+            // Event::Task(Ok(TaskOutput::BlockPrepareDelete { block_id, context, done, })) =>
+            //     incoming.prepared_delete_block_done.push(performer_actor::PreparedDeleteBlockDone {
+            //         block_id,
+            //         delete_block_bytes: done.delete_block_bytes,
+            //         context,
+            //     }),
 
-    //         Event::Request(Some(request)) => {
-    //             if let proto::Request::Flush(..) = request {
-    //                 mode = Mode::Flushing;
-    //             }
-    //             incoming.incoming_request.push(request);
-    //         },
+            // Event::Task(Ok(TaskOutput::Iter(IterTaskDone::PeerLost))) =>
+            //     log::debug!("client closed iteration channel"),
 
-    //         Event::Task(Ok(TaskOutput::Job(performer_actor::Done::Poll { mut env, kont, }))) => {
-    //             if let Some(interpret_task) = env.outgoing.interpret_task.take() {
-    //                 let performer_actor::QueryInterpretTask { fused_interpret_result_rx, } =
-    //                     interpret_task;
-    //                 tasks.push(Task::InterpreterAwait { fused_interpret_result_rx, }.run());
-    //                 tasks_count += 1;
-    //             }
-    //             if let Some(performer_actor::TaskDoneFlush { reply_tx, }) = env.outgoing.task_done_flush.take() {
-    //                 let interpret::Synced = env.interpreter_pid.device_sync().await
-    //                     .map_err(|ero::NoProcError| ErrorSeverity::Fatal(Error::InterpreterCrash))?;
-    //                 if let Err(_send_error) = reply_tx.send(Flushed) {
-    //                     log::warn!("Pid is gone during Flush query result send");
-    //                 }
-    //                 assert!(matches!(mode, Mode::Flushing));
-    //                 mode = Mode::Regular;
-    //             }
-    //             for prepare_write_block in env.outgoing.prepare_write_blocks.drain(..) {
-    //                 let performer_actor::PrepareWriteBlock { block_id, block_bytes, context, } =
-    //                     prepare_write_block;
-    //                 let thread_pool = state.thread_pool.clone();
-    //                 let blocks_pool = state.blocks_pool.clone();
-    //                 tasks.push(Task::BlockPrepareWrite { thread_pool, block_id, block_bytes, blocks_pool, context, }.run());
-    //                 tasks_count += 1;
-    //             }
-    //             for prepare_delete_block in env.outgoing.prepare_delete_blocks.drain(..) {
-    //                 let performer_actor::PrepareDeleteBlock { block_id, context, } =
-    //                     prepare_delete_block;
-    //                 let thread_pool = state.thread_pool.clone();
-    //                 let blocks_pool = state.blocks_pool.clone();
-    //                 tasks.push(Task::BlockPrepareDelete { thread_pool, block_id, blocks_pool, context, }.run());
-    //                 tasks_count += 1;
-    //             }
-    //             for process_read_block in env.outgoing.process_read_blocks.drain(..) {
-    //                 let performer_actor::ProcessReadBlock { storage_layout, block_header, block_bytes, pending_contexts, } =
-    //                     process_read_block;
-    //                 let thread_pool = state.thread_pool.clone();
-    //                 tasks.push(Task::BlockProcessRead { thread_pool, storage_layout, block_header, block_bytes, pending_contexts, }.run());
-    //                 tasks_count += 1;
-    //             }
-    //             for iter_task in env.outgoing.iter_tasks.drain(..) {
-    //                 tasks.push(Task::Iter(iter_task).run());
-    //                 tasks_count += 1;
-    //             }
+            // Event::Task(Ok(TaskOutput::Iter(IterTaskDone::ItemSent(iter_block_state)))) =>
+            //     incoming.incoming_iter_blocks.push(performer_actor::IncomingIterBlocks {
+            //         iter_block_state,
+            //     }),
 
-    //             performer_state = match performer_state {
-    //                 PerformerState::InProgress =>
-    //                     PerformerState::Ready {
-    //                         job_args: performer_actor::JobArgs { env, kont, },
-    //                     },
-    //                 PerformerState::Ready { .. } =>
-    //                     unreachable!(),
-    //             };
-    //         },
+            // Event::Task(Ok(TaskOutput::Iter(IterTaskDone::Finished))) =>
+            //     log::debug!("iteration finished"),
 
-    //         Event::Task(Ok(TaskOutput::BlockPrepareWrite { block_id, context, done, })) =>
-    //             incoming.prepared_write_block_done.push(performer_actor::PreparedWriteBlockDone {
-    //                 block_id,
-    //                 write_block_bytes: done.write_block_bytes,
-    //                 context,
-    //             }),
+            // Event::Task(Ok(TaskOutput::InterpreterAwait { maybe_done: Ok(interpret::DoneTask { task_done, stats, }), })) =>
+            //     incoming.incoming_task_done_stats.push(performer_actor::IncomingTaskDoneStats {
+            //         task_done,
+            //         stats,
+            //     }),
 
-    //         Event::Task(Ok(TaskOutput::BlockProcessRead { pending_contexts, done, })) =>
-    //             incoming.process_read_block_done.push(performer_actor::ProcessReadBlockDone {
-    //                 block_id: done.block_id,
-    //                 block_bytes: done.block_bytes,
-    //                 pending_contexts,
-    //             }),
+            // Event::Task(Ok(TaskOutput::InterpreterAwait { maybe_done: Err(oneshot::Canceled), })) => {
+            //     log::debug!("interpreter reply channel closed: shutting down");
+            //     return Ok(());
+            // },
 
-    //         Event::Task(Ok(TaskOutput::BlockPrepareDelete { block_id, context, done, })) =>
-    //             incoming.prepared_delete_block_done.push(performer_actor::PreparedDeleteBlockDone {
-    //                 block_id,
-    //                 delete_block_bytes: done.delete_block_bytes,
-    //                 context,
-    //             }),
+            // Event::Task(Err(error)) =>
+            //     return Err(ErrorSeverity::Fatal(error)),
 
-    //         Event::Task(Ok(TaskOutput::Iter(IterTaskDone::PeerLost))) =>
-    //             log::debug!("client closed iteration channel"),
+            Event::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
+                return Err(ErrorSeverity::Recoverable { state, }),
 
-    //         Event::Task(Ok(TaskOutput::Iter(IterTaskDone::ItemSent(iter_block_state)))) =>
-    //             incoming.incoming_iter_blocks.push(performer_actor::IncomingIterBlocks {
-    //                 iter_block_state,
-    //             }),
+            Event::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
+                return Err(ErrorSeverity::Fatal(error)),
 
-    //         Event::Task(Ok(TaskOutput::Iter(IterTaskDone::Finished))) =>
-    //             log::debug!("iteration finished"),
+            Event::InterpreterError(Err(oneshot::Canceled)) => {
+                log::debug!("interpreter error channel closed: shutting down");
+                return Ok(());
+            },
 
-    //         Event::Task(Ok(TaskOutput::InterpreterAwait { maybe_done: Ok(interpret::DoneTask { task_done, stats, }), })) =>
-    //             incoming.incoming_task_done_stats.push(performer_actor::IncomingTaskDoneStats {
-    //                 task_done,
-    //                 stats,
-    //             }),
+            Event::FlushDone(Ok(Flushed)) =>
+                todo!(),
 
-    //         Event::Task(Ok(TaskOutput::InterpreterAwait { maybe_done: Err(oneshot::Canceled), })) => {
-    //             log::debug!("interpreter reply channel closed: shutting down");
-    //             return Ok(());
-    //         },
+            Event::FlushDone(Err(oneshot::Canceled)) => {
+                log::debug!("flushed notify channel closed: shutting down");
+                return Ok(());
+            },
 
-    //         Event::Task(Err(error)) =>
-    //             return Err(ErrorSeverity::Fatal(error)),
-
-    //         Event::InterpreterError(Ok(ErrorSeverity::Recoverable { state: (), })) =>
-    //             return Err(ErrorSeverity::Recoverable { state, }),
-
-    //         Event::InterpreterError(Ok(ErrorSeverity::Fatal(error))) =>
-    //             return Err(ErrorSeverity::Fatal(error)),
-
-    //         Event::InterpreterError(Err(oneshot::Canceled)) => {
-    //             log::debug!("interpreter error channel closed: shutting down");
-    //             return Ok(());
-    //         },
-
-    //     }
-    // }
+        }
+    }
 }
 
 pub enum IterTask {

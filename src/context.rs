@@ -6,5 +6,4 @@ pub trait Context {
     type DeleteBlock;
     type IterBlocks;
     type IterBlocksStream;
-    type Interpreter;
 }

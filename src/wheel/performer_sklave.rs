@@ -1,11 +1,3 @@
-use std::{
-    sync::{
-        Arc,
-        Mutex,
-        Condvar,
-    },
-};
-
 use alloc_pool::{
     bytes::{
         Bytes,
@@ -38,18 +30,23 @@ use crate::{
     InterpretStats,
 };
 
-pub enum Order {
-    Request(proto::Request<Context>),
-    TaskDoneStats(OrderTaskDoneStats),
+pub enum Order<C> where C: context::Context {
+    Request(proto::Request<C>),
+    TaskDoneStats(OrderTaskDoneStats<C>),
+    DeviceSyncDone(OrderDeviceSyncDone<C>),
     IterBlocks(OrderIterBlocks),
     PreparedWriteBlockDone(OrderPreparedWriteBlockDone),
     ProcessReadBlockDone(OrderProcessReadBlockDone),
     PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone),
 }
 
-pub struct OrderTaskDoneStats {
-    pub task_done: task::Done<Context>,
+pub struct OrderTaskDoneStats<C> where C: context::Context {
+    pub task_done: task::Done<C>,
     pub stats: InterpretStats,
+}
+
+pub struct OrderDeviceSyncDone<C> where C: context::Context {
+    pub flush_context: C::Flush,
 }
 
 pub struct OrderIterBlocks {
@@ -95,9 +92,9 @@ pub enum Kont {
     },
 }
 
-pub type Meister = arbeitssklave::Meister<Welt, Order>;
-pub type Sklave = arbeitssklave::Sklave<Welt, Order>;
-pub type SklaveJob = arbeitssklave::SklaveJob<Welt, Order>;
+pub type Meister = arbeitssklave::Meister<Welt, Order<Context>>;
+pub type Sklave = arbeitssklave::Sklave<Welt, Order<Context>>;
+pub type SklaveJob = arbeitssklave::SklaveJob<Welt, Order<Context>>;
 
 pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P) where P: edeltraud::ThreadPool<job::Job> {
     loop {
@@ -108,8 +105,8 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     break performer.next(),
                 (Some(..), Kont::Start { .. }) =>
                     unreachable!(),
-                (None, Kont::PollRequestAndInterpreter { poll, }) =>
-                    match sklave.obey(Welt { env: sklavenwelt.env, kont: Kont::PollRequestAndInterpreter { poll, }, }) {
+                (None, kont @ Kont::PollRequestAndInterpreter { .. }) =>
+                    match sklave.obey(Welt { env: sklavenwelt.env, kont, }) {
                         Ok(arbeitssklave::Obey::Order { order, sklavenwelt: next_sklavenwelt, }) => {
                             incoming_order = Some(order);
                             sklavenwelt = next_sklavenwelt;
@@ -121,8 +118,8 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                             return;
                         },
                     },
-                (None, Kont::PollRequest { poll, }) =>
-                    match sklave.obey(Welt { env: sklavenwelt.env, kont: Kont::PollRequest { poll, }, }) {
+                (None, kont @ Kont::PollRequest { .. }) =>
+                    match sklave.obey(Welt { env: sklavenwelt.env, kont, }) {
                         Ok(arbeitssklave::Obey::Order { order, sklavenwelt: next_sklavenwelt, }) => {
                             incoming_order = Some(order);
                             sklavenwelt = next_sklavenwelt;
@@ -178,6 +175,15 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     Kont::PollRequest { poll, },
                 ) =>
                     break poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
+
+                (Some(Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: done_tx, })), kont) => {
+                    if let Err(_send_error) = done_tx.send(Flushed) {
+                        log::error!("wheel flush done channel dropped, terminating");
+                        return;
+                    }
+                    sklavenwelt.kont = kont;
+                    incoming_order = None;
+                },
             }
         };
 
@@ -198,16 +204,12 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                 },
 
                 performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
-
-                    todo!()
-                    // let reply_rx = env.interpreter_pid.push_request(offset, task)
-                    //     .map_err(|ero::NoProcError| Error::InterpreterCrash)?;
-                    // let performer = next.task_accepted();
-                    // assert!(env.outgoing.interpret_task.is_none());
-                    // env.outgoing.interpret_task = Some(QueryInterpretTask {
-                    //     fused_interpret_result_rx: reply_rx.fuse(),
-                    // });
-                    // performer.next()
+                    if let Err(error) = sklavenwelt.env.interpreter_pid.push_request(offset, task) {
+                        log::error!("interpreter request error: {error:?}");
+                        return;
+                    }
+                    let performer = next.task_accepted();
+                    performer.next()
                 },
 
                 performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
@@ -250,11 +252,11 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // assert!(env.outgoing.task_done_flush.is_none());
-                    // env.outgoing.task_done_flush = Some(TaskDoneFlush { reply_tx, });
-                    // performer.next()
+                    if let Err(error) = sklavenwelt.env.interpreter_pid.device_sync(reply_tx) {
+                        log::error!("interpreter device sync error: {error:?}");
+                        return;
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
