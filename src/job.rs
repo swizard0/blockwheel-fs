@@ -27,6 +27,18 @@ impl From<interpret::BlockPrepareWriteJobArgs> for Job {
     }
 }
 
+impl From<interpret::BlockProcessReadJobArgs> for Job {
+    fn from(job_args: interpret::BlockProcessReadJobArgs) -> Job {
+        Job::BlockProcessRead(job_args)
+    }
+}
+
+impl From<interpret::BlockPrepareDeleteJobArgs> for Job {
+    fn from(job_args: interpret::BlockPrepareDeleteJobArgs) -> Job {
+        Job::BlockPrepareDelete(job_args)
+    }
+}
+
 impl From<performer_sklave::SklaveJob> for Job {
     fn from(sklave_job: performer_sklave::SklaveJob) -> Job {
         Job::PerformerSklave(sklave_job)
@@ -49,11 +61,11 @@ impl edeltraud::Job for Job {
             },
             Job::BlockProcessRead(args) => {
                 JOB_BLOCK_PROCESS_READ.fetch_add(1, Ordering::Relaxed);
-                interpret::block_process_read_job(args);
+                interpret::block_process_read_job(args, thread_pool);
             },
             Job::BlockPrepareDelete(args) => {
                 JOB_BLOCK_PREPARE_DELETE.fetch_add(1, Ordering::Relaxed);
-                interpret::block_prepare_delete_job(args);
+                interpret::block_prepare_delete_job(args, thread_pool);
             },
             Job::PerformerSklave(sklave_job) => {
                 JOB_PERFORMER_SKLAVE.fetch_add(1, Ordering::Relaxed);

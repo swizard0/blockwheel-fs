@@ -59,15 +59,11 @@ pub struct OrderPreparedWriteBlockDone {
 }
 
 pub struct OrderProcessReadBlockDone {
-    pub block_id: block::Id,
-    pub block_bytes: Bytes,
-    pub pending_contexts: task::queue::PendingReadContextBag,
+    pub output: interpret::BlockProcessReadJobOutput,
 }
 
 pub struct OrderPreparedDeleteBlockDone {
-    pub block_id: block::Id,
-    pub delete_block_bytes: BytesMut,
-    pub context: task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>,
+    pub output: interpret::BlockPrepareDeleteJobOutput,
 }
 
 pub struct Env {
@@ -93,9 +89,9 @@ pub enum Kont {
 }
 
 pub type Meister = arbeitssklave::Meister<Welt, Order<Context>>;
-pub type Sklave = arbeitssklave::Sklave<Welt, Order<Context>>;
 pub type SklaveJob = arbeitssklave::SklaveJob<Welt, Order<Context>>;
 pub type WriteBlockContext = task::WriteBlockContext<<Context as context::Context>::WriteBlock>;
+pub type DeleteBlockContext = task::DeleteBlockContext<<Context as context::Context>::DeleteBlock>;
 
 #[derive(Debug)]
 enum Error {
@@ -104,6 +100,8 @@ enum Error {
     WheelProcessLost,
     InterpreterProcessIsLost,
     InterpretBlockPrepareWrite(interpret::BlockPrepareWriteJobError),
+    InterpretBlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
+    InterpretBlockProcessRead(interpret::BlockProcessReadJobError),
 }
 
 pub fn run_job<P>(sklave_job: SklaveJob, thread_pool: &P) where P: edeltraud::ThreadPool<job::Job> {
@@ -158,12 +156,16 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                 ) =>
                     break poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
                 (
-                    Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone { block_id, block_bytes, pending_contexts, })),
+                    Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
+                        output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
+                    })),
                     Kont::PollRequestAndInterpreter { poll, },
                 ) =>
                     break poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
                 (
-                    Some(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone { block_id, delete_block_bytes, context, })),
+                    Some(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
+                        output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
+                    })),
                     Kont::PollRequestAndInterpreter { poll, },
                 ) =>
                     break poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
@@ -182,12 +184,16 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                 ) =>
                     break poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
                 (
-                    Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone { block_id, block_bytes, pending_contexts, })),
+                    Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
+                        output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
+                    })),
                     Kont::PollRequest { poll, },
                 ) =>
                     break poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
                 (
-                    Some(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone { block_id, delete_block_bytes, context, })),
+                    Some(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
+                        output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
+                    })),
                     Kont::PollRequest { poll, },
                 ) =>
                     break poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
@@ -199,12 +205,12 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                     sklavenwelt.kont = kont;
                     incoming_order = None;
                 },
-                (
-                    Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { output: Err(error), })),
-                    _kont,
-                ) =>
+                (Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { output: Err(error), })), _kont) =>
                     return Err(Error::InterpretBlockPrepareWrite(error)),
-
+                (Some(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone { output: Err(error), })), _kont) =>
+                    return Err(Error::InterpretBlockPrepareDelete(error)),
+                (Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone { output: Err(error), })), _kont) =>
+                    return Err(Error::InterpretBlockProcessRead(error)),
             }
         };
 
@@ -270,7 +276,7 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                     ),
                     performer,
                 }) => {
-                    if let Err(error) = sklavenwelt.env.interpreter_pid.device_sync(reply_tx) {
+                    if let Err(ero::NoProcError) = sklavenwelt.env.interpreter_pid.device_sync(reply_tx) {
                         return Err(Error::InterpreterProcessIsLost);
                     }
                     performer.next()
@@ -403,8 +409,8 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                     let job_args = interpret::BlockPrepareWriteJobArgs {
                         block_id,
                         block_bytes,
-                        context,
                         blocks_pool: sklavenwelt.env.blocks_pool.clone(),
+                        context,
                         meister: sklave.meister()
                             .map_err(Error::Arbeitssklave)?,
                     };
@@ -424,13 +430,16 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // env.outgoing.prepare_delete_blocks.push(PrepareDeleteBlock {
-                    //     block_id,
-                    //     context,
-                    // });
-                    // performer.next()
+                    let job_args = interpret::BlockPrepareDeleteJobArgs {
+                        block_id,
+                        blocks_pool: sklavenwelt.env.blocks_pool.clone(),
+                        context,
+                        meister: sklave.meister()
+                            .map_err(Error::Arbeitssklave)?,
+                    };
+                    edeltraud::job(thread_pool, job_args)
+                        .map_err(Error::Edeltraud)?;
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -444,15 +453,17 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // env.outgoing.process_read_blocks.push(ProcessReadBlock {
-                    //     storage_layout,
-                    //     block_header,
-                    //     block_bytes,
-                    //     pending_contexts,
-                    // });
-                    // performer.next()
+                    let job_args = interpret::BlockProcessReadJobArgs {
+                        storage_layout,
+                        block_header,
+                        block_bytes,
+                        pending_contexts,
+                        meister: sklave.meister()
+                            .map_err(Error::Arbeitssklave)?,
+                    };
+                    edeltraud::job(thread_pool, job_args)
+                        .map_err(Error::Edeltraud)?;
+                    performer.next()
                 },
 
             };

@@ -6,12 +6,6 @@ use std::{
     },
 };
 
-use futures::{
-    channel::{
-        oneshot,
-    },
-};
-
 use bincode::Options;
 
 use alloc_pool::{
@@ -44,8 +38,6 @@ struct Request<C> where C: Context {
     offset: u64,
     task: task::Task<C>,
 }
-
-pub struct Synced;
 
 enum Command<C> where C: Context {
     Request(Request<C>),
@@ -141,10 +133,12 @@ pub fn block_append_terminator(block_bytes: &mut BytesMut) -> Result<(), AppendT
         .map_err(AppendTerminatorError::TerminatorTagSerialize)
 }
 
-#[derive(Debug)]
-pub enum BlockPrepareWriteJobError {
-    BlockHeaderSerialize(bincode::Error),
-    CommitTagSerialize(bincode::Error),
+pub struct BlockPrepareWriteJobArgs {
+    pub block_id: block::Id,
+    pub block_bytes: Bytes,
+    pub blocks_pool: BytesPool,
+    pub context: performer_sklave::WriteBlockContext,
+    pub meister: performer_sklave::Meister,
 }
 
 pub struct BlockPrepareWriteJobDone {
@@ -153,12 +147,10 @@ pub struct BlockPrepareWriteJobDone {
     pub context: performer_sklave::WriteBlockContext,
 }
 
-pub struct BlockPrepareWriteJobArgs {
-    pub block_id: block::Id,
-    pub block_bytes: Bytes,
-    pub context: performer_sklave::WriteBlockContext,
-    pub blocks_pool: BytesPool,
-    pub meister: performer_sklave::Meister,
+#[derive(Debug)]
+pub enum BlockPrepareWriteJobError {
+    BlockHeaderSerialize(bincode::Error),
+    CommitTagSerialize(bincode::Error),
 }
 
 pub type BlockPrepareWriteJobOutput = Result<BlockPrepareWriteJobDone, BlockPrepareWriteJobError>;
@@ -167,15 +159,15 @@ pub fn block_prepare_write_job<P>(
     BlockPrepareWriteJobArgs {
         block_id,
         block_bytes,
-        context,
         blocks_pool,
+        context,
         meister,
     }: BlockPrepareWriteJobArgs,
     thread_pool: &P,
 )
 where P: edeltraud::ThreadPool<job::Job>
 {
-    let output = run_block_prepare_write_job(block_id, block_bytes, context, blocks_pool);
+    let output = run_block_prepare_write_job(block_id, block_bytes, blocks_pool, context);
     let order = performer_sklave::Order::PreparedWriteBlockDone(
         performer_sklave::OrderPreparedWriteBlockDone { output, },
     );
@@ -187,8 +179,8 @@ where P: edeltraud::ThreadPool<job::Job>
 fn run_block_prepare_write_job(
     block_id: block::Id,
     block_bytes: Bytes,
-    context: performer_sklave::WriteBlockContext,
     blocks_pool: BytesPool,
+    context: performer_sklave::WriteBlockContext,
 )
     -> BlockPrepareWriteJobOutput
 {
@@ -225,25 +217,50 @@ fn run_block_prepare_write_job(
     })
 }
 
+pub struct BlockPrepareDeleteJobArgs {
+    pub block_id: block::Id,
+    pub blocks_pool: BytesPool,
+    pub context: performer_sklave::DeleteBlockContext,
+    pub meister: performer_sklave::Meister,
+}
+
+pub struct BlockPrepareDeleteJobDone {
+    pub block_id: block::Id,
+    pub delete_block_bytes: BytesMut,
+    pub context: performer_sklave::DeleteBlockContext,
+}
+
 #[derive(Debug)]
 pub enum BlockPrepareDeleteJobError {
     TombstoneTagSerialize(bincode::Error),
 }
 
-pub struct BlockPrepareDeleteJobDone {
-    pub delete_block_bytes: BytesMut,
-}
-
-pub struct BlockPrepareDeleteJobArgs {
-    pub blocks_pool: BytesPool,
-}
-
 pub type BlockPrepareDeleteJobOutput = Result<BlockPrepareDeleteJobDone, BlockPrepareDeleteJobError>;
 
-pub fn block_prepare_delete_job(
+pub fn block_prepare_delete_job<P>(
     BlockPrepareDeleteJobArgs {
+        block_id,
         blocks_pool,
+        context,
+        meister,
     }: BlockPrepareDeleteJobArgs,
+    thread_pool: &P,
+)
+where P: edeltraud::ThreadPool<job::Job>
+{
+    let output = run_block_prepare_delete_job(block_id, blocks_pool, context);
+    let order = performer_sklave::Order::PreparedDeleteBlockDone(
+        performer_sklave::OrderPreparedDeleteBlockDone { output, },
+    );
+    if let Err(error) = meister.order(order, thread_pool) {
+        log::warn!("arbeitssklave error during block_prepare_delete_job respond: {error:?}");
+    }
+}
+
+fn run_block_prepare_delete_job(
+    block_id: block::Id,
+    blocks_pool: BytesPool,
+    context: performer_sklave::DeleteBlockContext,
 )
     -> BlockPrepareDeleteJobOutput
 {
@@ -254,7 +271,21 @@ pub fn block_prepare_delete_job(
         .serialize_into(&mut **delete_block_bytes, &tombstone_tag)
         .map_err(BlockPrepareDeleteJobError::TombstoneTagSerialize)?;
 
-    Ok(BlockPrepareDeleteJobDone { delete_block_bytes, })
+    Ok(BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, })
+}
+
+pub struct BlockProcessReadJobArgs {
+    pub storage_layout: storage::Layout,
+    pub block_header: storage::BlockHeader,
+    pub block_bytes: Bytes,
+    pub pending_contexts: task::queue::PendingReadContextBag,
+    pub meister: performer_sklave::Meister,
+}
+
+pub struct BlockProcessReadJobDone {
+    pub block_id: block::Id,
+    pub block_bytes: Bytes,
+    pub pending_contexts: task::queue::PendingReadContextBag,
 }
 
 #[derive(Debug)]
@@ -287,23 +318,32 @@ pub enum CorruptedDataError {
 
 pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
-pub struct BlockProcessReadJobDone {
-    pub block_id: block::Id,
-    pub block_bytes: Bytes,
-}
-
-pub struct BlockProcessReadJobArgs {
-    pub storage_layout: storage::Layout,
-    pub block_header: storage::BlockHeader,
-    pub block_bytes: Bytes,
-}
-
-pub fn block_process_read_job(
+pub fn block_process_read_job<P>(
     BlockProcessReadJobArgs {
         storage_layout,
         block_header,
         block_bytes,
+        pending_contexts,
+        meister,
     }: BlockProcessReadJobArgs,
+    thread_pool: &P,
+)
+where P: edeltraud::ThreadPool<job::Job>
+{
+    let output = run_block_process_read_job(storage_layout, block_header, block_bytes, pending_contexts);
+    let order = performer_sklave::Order::ProcessReadBlockDone(
+        performer_sklave::OrderProcessReadBlockDone { output, },
+    );
+    if let Err(error) = meister.order(order, thread_pool) {
+        log::warn!("arbeitssklave error during block_process_read_job respond: {error:?}");
+    }
+}
+
+fn run_block_process_read_job(
+    storage_layout: storage::Layout,
+    block_header: storage::BlockHeader,
+    block_bytes: Bytes,
+    pending_contexts: task::queue::PendingReadContextBag,
 )
     -> BlockProcessReadJobOutput
 {
@@ -347,5 +387,5 @@ pub fn block_process_read_job(
         }));
     }
 
-    Ok(BlockProcessReadJobDone { block_id, block_bytes, })
+    Ok(BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, })
 }

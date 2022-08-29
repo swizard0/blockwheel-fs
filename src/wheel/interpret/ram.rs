@@ -34,7 +34,6 @@ use crate::{
         },
         interpret::{
             Pid,
-            Synced,
             Command,
             Request,
             PidInner,

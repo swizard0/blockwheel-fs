@@ -353,7 +353,7 @@ struct JobGenRandomBlock {
 impl edeltraud::Job for JobGenRandomBlock {
     type Output = Bytes;
 
-    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+    fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
         let JobGenRandomBlock { blocks_pool, block_size_bytes, } = self;
         let amount = rand::thread_rng().gen_range(1 .. block_size_bytes);
         let mut block = blocks_pool.lend();
@@ -376,7 +376,7 @@ struct JobCalcCrcOutput {
 impl edeltraud::Job for JobCalcCrc {
     type Output = JobCalcCrcOutput;
 
-    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+    fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
         let JobCalcCrc { expected_block_bytes, provided_block_bytes, } = self;
         let expected_crc = block::crc(&expected_block_bytes);
         let provided_crc = block::crc(&provided_block_bytes);

@@ -353,7 +353,6 @@ mod blockwheel_context {
             mpsc,
             oneshot,
         },
-        future,
     };
 
     use alloc_pool::bytes::Bytes;
@@ -361,9 +360,6 @@ mod blockwheel_context {
     use super::{
         block,
         context,
-        wheel::{
-            interpret,
-        },
         Info,
         Deleted,
         Flushed,

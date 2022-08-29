@@ -51,12 +51,7 @@ pub enum Error {
     InterpreterCreate(interpret::CreateError),
     InterpreterTaskJoin(interpret::TaskJoinError),
     InterpreterRun(interpret::RunError),
-    InterpreterCrash,
-    Edeltraud(edeltraud::SpawnError),
     Arbeitssklave(arbeitssklave::Error),
-    BlockPrepareWrite(interpret::BlockPrepareWriteJobError),
-    BlockProcessRead(interpret::BlockProcessReadJobError),
-    BlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
 }
 
 type Request = proto::Request<Context>;
