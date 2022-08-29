@@ -35,8 +35,8 @@ mod proto;
 mod storage;
 mod context;
 
-// TODO #[cfg(test)]
-// TODO mod tests;
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Debug)]
 pub struct Params {

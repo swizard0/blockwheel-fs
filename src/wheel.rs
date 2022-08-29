@@ -251,9 +251,6 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
             done_rx: oneshot::Receiver<Flushed>,
             reply_tx: oneshot::Sender<Flushed>,
         },
-        Flushed {
-            reply_tx: oneshot::Sender<Flushed>,
-        },
     }
 
     let mut mode = Mode::Regular;
@@ -263,12 +260,11 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
         enum Event<R, E, F> {
             Request(Option<R>),
             PerformerError(E),
-            FlushDone(F),
+            FlushDone { result: F, reply_tx: oneshot::Sender<Flushed>, },
         }
 
         let event = match mode {
             Mode::Regular => {
-                mode = Mode::Regular;
                 select! {
                     result = state.fused_request_rx.next() =>
                         Event::Request(result),
@@ -279,22 +275,14 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
             Mode::AwaitFlush { mut done_rx, reply_tx, } =>
                 select! {
                     result = fused_performer_sklave_error_rx.next() => {
-                        mode = Mode::Regular;
                         Event::PerformerError(result)
                     },
                     result = &mut done_rx => {
-                        mode = Mode::Flushed { reply_tx, };
-                        Event::FlushDone(result)
+                        Event::FlushDone { result, reply_tx, }
                     },
                 },
-            Mode::Flushed { reply_tx, } => {
-                if let Err(_send_error) = reply_tx.send(Flushed) {
-                    log::warn!("Pid is gone during Flush query result send");
-                }
-                mode = Mode::Regular;
-                continue;
-            },
         };
+        mode = Mode::Regular;
 
         match event {
 
@@ -385,10 +373,12 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                 return Ok(());
             },
 
-            Event::FlushDone(Ok(Flushed)) =>
-                todo!(),
+            Event::FlushDone { result: Ok(Flushed), reply_tx, } =>
+                if let Err(_send_error) = reply_tx.send(Flushed) {
+                    log::warn!("Pid is gone during Flush query result send");
+                },
 
-            Event::FlushDone(Err(oneshot::Canceled)) => {
+            Event::FlushDone { result: Err(oneshot::Canceled), .. } => {
                 log::debug!("flushed notify channel closed: shutting down");
                 return Ok(());
             },

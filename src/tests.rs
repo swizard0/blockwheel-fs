@@ -55,7 +55,7 @@ fn stress_fixed_file() {
     log::info!("fixed_file scratch JOB_BLOCK_PREPARE_WRITE: {}", crate::job::JOB_BLOCK_PREPARE_WRITE.load(Ordering::SeqCst));
     log::info!("fixed_file scratch JOB_BLOCK_PROCESS_READ: {}", crate::job::JOB_BLOCK_PROCESS_READ.load(Ordering::SeqCst));
     log::info!("fixed_file scratch JOB_BLOCK_PREPARE_DELETE: {}", crate::job::JOB_BLOCK_PREPARE_DELETE.load(Ordering::SeqCst));
-    log::info!("fixed_file scratch JOB_PERFORMER_JOB_RUN: {}", crate::job::JOB_PERFORMER_JOB_RUN.load(Ordering::SeqCst));
+    log::info!("fixed_file scratch JOB_PERFORMER_SKLAVE: {}", crate::job::JOB_PERFORMER_SKLAVE.load(Ordering::SeqCst));
 
     // next load existing wheel and repeat stress with blocks
     counter.clear();
@@ -66,7 +66,7 @@ fn stress_fixed_file() {
     log::info!("fixed_file existing JOB_BLOCK_PREPARE_WRITE: {}", crate::job::JOB_BLOCK_PREPARE_WRITE.load(Ordering::SeqCst));
     log::info!("fixed_file existing JOB_BLOCK_PROCESS_READ: {}", crate::job::JOB_BLOCK_PROCESS_READ.load(Ordering::SeqCst));
     log::info!("fixed_file existing JOB_BLOCK_PREPARE_DELETE: {}", crate::job::JOB_BLOCK_PREPARE_DELETE.load(Ordering::SeqCst));
-    log::info!("fixed_file existing JOB_PERFORMER_JOB_RUN: {}", crate::job::JOB_PERFORMER_JOB_RUN.load(Ordering::SeqCst));
+    log::info!("fixed_file existing JOB_PERFORMER_SKLAVE: {}", crate::job::JOB_PERFORMER_SKLAVE.load(Ordering::SeqCst));
 
     fs::remove_file(wheel_filename).ok();
 }
@@ -106,5 +106,5 @@ fn stress_ram() {
     log::info!("ram JOB_BLOCK_PREPARE_WRITE: {}", crate::job::JOB_BLOCK_PREPARE_WRITE.load(Ordering::SeqCst));
     log::info!("ram JOB_BLOCK_PROCESS_READ: {}", crate::job::JOB_BLOCK_PROCESS_READ.load(Ordering::SeqCst));
     log::info!("ram JOB_BLOCK_PREPARE_DELETE: {}", crate::job::JOB_BLOCK_PREPARE_DELETE.load(Ordering::SeqCst));
-    log::info!("ram JOB_PERFORMER_JOB_RUN: {}", crate::job::JOB_PERFORMER_JOB_RUN.load(Ordering::SeqCst));
+    log::info!("ram JOB_PERFORMER_SKLAVE: {}", crate::job::JOB_PERFORMER_SKLAVE.load(Ordering::SeqCst));
 }
