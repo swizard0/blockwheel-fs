@@ -2,6 +2,7 @@ use alloc_pool::{
     bytes::{
         Bytes,
         BytesMut,
+        BytesPool,
     },
 };
 
@@ -54,9 +55,7 @@ pub struct OrderIterBlocks {
 }
 
 pub struct OrderPreparedWriteBlockDone {
-    pub block_id: block::Id,
-    pub write_block_bytes: task::WriteBlockBytes,
-    pub context: task::WriteBlockContext<<Context as context::Context>::WriteBlock>,
+    pub output: interpret::BlockPrepareWriteJobOutput,
 }
 
 pub struct OrderProcessReadBlockDone {
@@ -73,6 +72,7 @@ pub struct OrderPreparedDeleteBlockDone {
 
 pub struct Env {
     pub interpreter_pid: interpret::Pid<Context>,
+    pub blocks_pool: BytesPool,
 }
 
 pub struct Welt {
@@ -95,8 +95,24 @@ pub enum Kont {
 pub type Meister = arbeitssklave::Meister<Welt, Order<Context>>;
 pub type Sklave = arbeitssklave::Sklave<Welt, Order<Context>>;
 pub type SklaveJob = arbeitssklave::SklaveJob<Welt, Order<Context>>;
+pub type WriteBlockContext = task::WriteBlockContext<<Context as context::Context>::WriteBlock>;
 
-pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P) where P: edeltraud::ThreadPool<job::Job> {
+#[derive(Debug)]
+enum Error {
+    Edeltraud(edeltraud::SpawnError),
+    Arbeitssklave(arbeitssklave::Error),
+    WheelProcessLost,
+    InterpreterProcessIsLost,
+    InterpretBlockPrepareWrite(interpret::BlockPrepareWriteJobError),
+}
+
+pub fn run_job<P>(sklave_job: SklaveJob, thread_pool: &P) where P: edeltraud::ThreadPool<job::Job> {
+    if let Err(error) = job(sklave_job, thread_pool) {
+        log::error!("terminated with an error: {error:?}");
+    }
+}
+
+fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P) -> Result<(), Error> where P: edeltraud::ThreadPool<job::Job> {
     loop {
         let mut incoming_order = None;
         let mut performer_op = loop {
@@ -112,11 +128,9 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                             sklavenwelt = next_sklavenwelt;
                         },
                         Ok(arbeitssklave::Obey::Rest) =>
-                            return,
-                        Err(error) => {
-                            log::error!("recv error: {error:?}, terminating");
-                            return;
-                        },
+                            return Ok(()),
+                        Err(error) =>
+                            return Err(Error::Arbeitssklave(error)),
                     },
                 (None, kont @ Kont::PollRequest { .. }) =>
                     match sklave.obey(Welt { env: sklavenwelt.env, kont, }) {
@@ -125,11 +139,9 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                             sklavenwelt = next_sklavenwelt;
                         },
                         Ok(arbeitssklave::Obey::Rest) =>
-                            return,
-                        Err(error) => {
-                            log::error!("recv error: {error:?}, terminating");
-                            return;
-                        },
+                            return Ok(()),
+                        Err(error) =>
+                            return Err(Error::Arbeitssklave(error)),
                     },
 
                 (Some(Order::Request(request)), Kont::PollRequestAndInterpreter { poll, }) =>
@@ -139,7 +151,9 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                 (Some(Order::IterBlocks(OrderIterBlocks { iter_block_state, })), Kont::PollRequestAndInterpreter { poll, }) =>
                     break poll.next.incoming_iter_blocks(iter_block_state),
                 (
-                    Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { block_id, write_block_bytes, context, })),
+                    Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
+                        output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
+                    })),
                     Kont::PollRequestAndInterpreter { poll, },
                 ) =>
                     break poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
@@ -161,7 +175,9 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                 (Some(Order::IterBlocks(OrderIterBlocks { iter_block_state, })), Kont::PollRequest { poll, }) =>
                     break poll.next.incoming_iter_blocks(iter_block_state),
                 (
-                    Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { block_id, write_block_bytes, context, })),
+                    Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
+                        output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
+                    })),
                     Kont::PollRequest { poll, },
                 ) =>
                     break poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
@@ -178,12 +194,17 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
 
                 (Some(Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: done_tx, })), kont) => {
                     if let Err(_send_error) = done_tx.send(Flushed) {
-                        log::error!("wheel flush done channel dropped, terminating");
-                        return;
+                        return Err(Error::WheelProcessLost);
                     }
                     sklavenwelt.kont = kont;
                     incoming_order = None;
                 },
+                (
+                    Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { output: Err(error), })),
+                    _kont,
+                ) =>
+                    return Err(Error::InterpretBlockPrepareWrite(error)),
+
             }
         };
 
@@ -204,9 +225,8 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                 },
 
                 performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
-                    if let Err(error) = sklavenwelt.env.interpreter_pid.push_request(offset, task) {
-                        log::error!("interpreter request error: {error:?}");
-                        return;
+                    if let Err(ero::NoProcError) = sklavenwelt.env.interpreter_pid.push_request(offset, task) {
+                        return Err(Error::InterpreterProcessIsLost);
                     }
                     let performer = next.task_accepted();
                     performer.next()
@@ -251,8 +271,7 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     performer,
                 }) => {
                     if let Err(error) = sklavenwelt.env.interpreter_pid.device_sync(reply_tx) {
-                        log::error!("interpreter device sync error: {error:?}");
-                        return;
+                        return Err(Error::InterpreterProcessIsLost);
                     }
                     performer.next()
                 },
@@ -381,14 +400,17 @@ pub fn run_job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // env.outgoing.prepare_write_blocks.push(PrepareWriteBlock {
-                    //     block_id,
-                    //     block_bytes,
-                    //     context,
-                    // });
-                    // performer.next()
+                    let job_args = interpret::BlockPrepareWriteJobArgs {
+                        block_id,
+                        block_bytes,
+                        context,
+                        blocks_pool: sklavenwelt.env.blocks_pool.clone(),
+                        meister: sklave.meister()
+                            .map_err(Error::Arbeitssklave)?,
+                    };
+                    edeltraud::job(thread_pool, job_args)
+                        .map_err(Error::Edeltraud)?;
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {

@@ -23,12 +23,14 @@ use alloc_pool::{
 };
 
 use crate::{
+    job,
     context::{
         Context,
     },
     wheel::{
         block,
         storage,
+        performer_sklave,
         core::{
             task,
         },
@@ -146,23 +148,47 @@ pub enum BlockPrepareWriteJobError {
 }
 
 pub struct BlockPrepareWriteJobDone {
+    pub block_id: block::Id,
     pub write_block_bytes: task::WriteBlockBytes,
+    pub context: performer_sklave::WriteBlockContext,
 }
 
 pub struct BlockPrepareWriteJobArgs {
     pub block_id: block::Id,
     pub block_bytes: Bytes,
+    pub context: performer_sklave::WriteBlockContext,
     pub blocks_pool: BytesPool,
+    pub meister: performer_sklave::Meister,
 }
 
 pub type BlockPrepareWriteJobOutput = Result<BlockPrepareWriteJobDone, BlockPrepareWriteJobError>;
 
-pub fn block_prepare_write_job(
+pub fn block_prepare_write_job<P>(
     BlockPrepareWriteJobArgs {
         block_id,
         block_bytes,
+        context,
         blocks_pool,
+        meister,
     }: BlockPrepareWriteJobArgs,
+    thread_pool: &P,
+)
+where P: edeltraud::ThreadPool<job::Job>
+{
+    let output = run_block_prepare_write_job(block_id, block_bytes, context, blocks_pool);
+    let order = performer_sklave::Order::PreparedWriteBlockDone(
+        performer_sklave::OrderPreparedWriteBlockDone { output, },
+    );
+    if let Err(error) = meister.order(order, thread_pool) {
+        log::warn!("arbeitssklave error during block_prepare_write_job respond: {error:?}");
+    }
+}
+
+fn run_block_prepare_write_job(
+    block_id: block::Id,
+    block_bytes: Bytes,
+    context: performer_sklave::WriteBlockContext,
+    blocks_pool: BytesPool,
 )
     -> BlockPrepareWriteJobOutput
 {
@@ -187,6 +213,7 @@ pub fn block_prepare_write_job(
         .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
 
     Ok(BlockPrepareWriteJobDone {
+        block_id,
         write_block_bytes: task::WriteBlockBytes::Composite(
             task::WriteBlockBytesComposite {
                 block_header: block_header_bytes.freeze(),
@@ -194,6 +221,7 @@ pub fn block_prepare_write_job(
                 commit_tag: commit_tag_bytes.freeze(),
             },
         ),
+        context,
     })
 }
 

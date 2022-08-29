@@ -1,10 +1,7 @@
 use futures::{
     future,
     select,
-    stream::{
-        self,
-        FuturesUnordered,
-    },
+    stream,
     channel::{
         mpsc,
         oneshot,
@@ -156,6 +153,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                     performer_sklave::Welt {
                         env: performer_sklave::Env {
                             interpreter_pid,
+                            blocks_pool: state.blocks_pool.clone(),
                         },
                         kont: performer_sklave::Kont::Start { performer, },
                     },
@@ -213,6 +211,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                     performer_sklave::Welt {
                         env: performer_sklave::Env {
                             interpreter_pid,
+                            blocks_pool: state.blocks_pool.clone(),
                         },
                         kont: performer_sklave::Kont::Start { performer, },
                     },

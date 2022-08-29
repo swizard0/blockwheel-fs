@@ -21,6 +21,12 @@ pub enum Job {
     PerformerSklave(performer_sklave::SklaveJob),
 }
 
+impl From<interpret::BlockPrepareWriteJobArgs> for Job {
+    fn from(job_args: interpret::BlockPrepareWriteJobArgs) -> Job {
+        Job::BlockPrepareWrite(job_args)
+    }
+}
+
 impl From<performer_sklave::SklaveJob> for Job {
     fn from(sklave_job: performer_sklave::SklaveJob) -> Job {
         Job::PerformerSklave(sklave_job)
@@ -39,7 +45,7 @@ impl edeltraud::Job for Job {
         match self {
             Job::BlockPrepareWrite(args) => {
                 JOB_BLOCK_PREPARE_WRITE.fetch_add(1, Ordering::Relaxed);
-                interpret::block_prepare_write_job(args);
+                interpret::block_prepare_write_job(args, thread_pool);
             },
             Job::BlockProcessRead(args) => {
                 JOB_BLOCK_PROCESS_READ.fetch_add(1, Ordering::Relaxed);
