@@ -167,7 +167,14 @@ pub fn block_prepare_write_job<P>(
 )
 where P: edeltraud::ThreadPool<job::Job>
 {
-    let output = run_block_prepare_write_job(block_id, block_bytes, blocks_pool, context);
+    let output = run_block_prepare_write_job(block_id.clone(), block_bytes, blocks_pool)
+        .map(|RunBlockPrepareWriteJobDone { write_block_bytes, }| {
+            BlockPrepareWriteJobDone {
+                block_id,
+                write_block_bytes,
+                context,
+            }
+        });
     let order = performer_sklave::Order::PreparedWriteBlockDone(
         performer_sklave::OrderPreparedWriteBlockDone { output, },
     );
@@ -176,13 +183,16 @@ where P: edeltraud::ThreadPool<job::Job>
     }
 }
 
+struct RunBlockPrepareWriteJobDone {
+    write_block_bytes: task::WriteBlockBytes,
+}
+
 fn run_block_prepare_write_job(
     block_id: block::Id,
     block_bytes: Bytes,
     blocks_pool: BytesPool,
-    context: performer_sklave::WriteBlockContext,
 )
-    -> BlockPrepareWriteJobOutput
+    -> Result<RunBlockPrepareWriteJobDone, BlockPrepareWriteJobError>
 {
     let block_header = storage::BlockHeader {
         block_id: block_id.clone(),
@@ -195,7 +205,7 @@ fn run_block_prepare_write_job(
         .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
 
     let commit_tag = storage::CommitTag {
-        block_id: block_id.clone(),
+        block_id: block_id,
         crc: block::crc(&block_bytes),
         ..Default::default()
     };
@@ -204,8 +214,7 @@ fn run_block_prepare_write_job(
         .serialize_into(&mut **commit_tag_bytes, &commit_tag)
         .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
 
-    Ok(BlockPrepareWriteJobDone {
-        block_id,
+    Ok(RunBlockPrepareWriteJobDone {
         write_block_bytes: task::WriteBlockBytes::Composite(
             task::WriteBlockBytesComposite {
                 block_header: block_header_bytes.freeze(),
@@ -213,7 +222,6 @@ fn run_block_prepare_write_job(
                 commit_tag: commit_tag_bytes.freeze(),
             },
         ),
-        context,
     })
 }
 
@@ -248,7 +256,14 @@ pub fn block_prepare_delete_job<P>(
 )
 where P: edeltraud::ThreadPool<job::Job>
 {
-    let output = run_block_prepare_delete_job(block_id, blocks_pool, context);
+    let output = run_block_prepare_delete_job(blocks_pool)
+        .map(|RunBlockPrepareDeleteJobDone { delete_block_bytes, }| {
+            BlockPrepareDeleteJobDone {
+                block_id,
+                delete_block_bytes,
+                context,
+            }
+        });
     let order = performer_sklave::Order::PreparedDeleteBlockDone(
         performer_sklave::OrderPreparedDeleteBlockDone { output, },
     );
@@ -257,12 +272,14 @@ where P: edeltraud::ThreadPool<job::Job>
     }
 }
 
+struct RunBlockPrepareDeleteJobDone {
+    delete_block_bytes: BytesMut,
+}
+
 fn run_block_prepare_delete_job(
-    block_id: block::Id,
     blocks_pool: BytesPool,
-    context: performer_sklave::DeleteBlockContext,
 )
-    -> BlockPrepareDeleteJobOutput
+    -> Result<RunBlockPrepareDeleteJobDone, BlockPrepareDeleteJobError>
 {
     let mut delete_block_bytes = blocks_pool.lend();
 
@@ -271,7 +288,7 @@ fn run_block_prepare_delete_job(
         .serialize_into(&mut **delete_block_bytes, &tombstone_tag)
         .map_err(BlockPrepareDeleteJobError::TombstoneTagSerialize)?;
 
-    Ok(BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, })
+    Ok(RunBlockPrepareDeleteJobDone { delete_block_bytes, })
 }
 
 pub struct BlockProcessReadJobArgs {
@@ -330,7 +347,14 @@ pub fn block_process_read_job<P>(
 )
 where P: edeltraud::ThreadPool<job::Job>
 {
-    let output = run_block_process_read_job(storage_layout, block_header, block_bytes, pending_contexts);
+    let output = run_block_process_read_job(storage_layout, block_header, block_bytes)
+        .map(|RunBlockProcessReadJobDone { block_id, block_bytes, }| {
+            BlockProcessReadJobDone {
+                block_id,
+                block_bytes,
+                pending_contexts,
+            }
+        });
     let order = performer_sklave::Order::ProcessReadBlockDone(
         performer_sklave::OrderProcessReadBlockDone { output, },
     );
@@ -339,13 +363,17 @@ where P: edeltraud::ThreadPool<job::Job>
     }
 }
 
+struct RunBlockProcessReadJobDone {
+    block_id: block::Id,
+    block_bytes: Bytes,
+}
+
 fn run_block_process_read_job(
     storage_layout: storage::Layout,
     block_header: storage::BlockHeader,
     block_bytes: Bytes,
-    pending_contexts: task::queue::PendingReadContextBag,
 )
-    -> BlockProcessReadJobOutput
+    -> Result<RunBlockProcessReadJobDone, BlockProcessReadJobError>
 {
     let block_buffer_start = storage_layout.block_header_size;
     let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
@@ -387,5 +415,5 @@ fn run_block_process_read_job(
         }));
     }
 
-    Ok(BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, })
+    Ok(RunBlockProcessReadJobDone { block_id, block_bytes, })
 }

@@ -57,7 +57,6 @@ impl BaseContext for Context {
     type DeleteBlock = C;
     type IterBlocks = C;
     type IterBlocksStream = C;
-    type Interpreter = C;
 }
 
 fn init() -> Performer<Context> {
