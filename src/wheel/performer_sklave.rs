@@ -488,3 +488,26 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
         }
     }
 }
+
+use std::fmt;
+
+impl<C> fmt::Debug for Order<C> where C: context::Context {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Order::Request(..) =>
+                fmt.debug_tuple("Order::Request").finish(),
+            Order::TaskDoneStats(..) =>
+                fmt.debug_tuple("Order::TaskDoneStats").finish(),
+            Order::DeviceSyncDone(..) =>
+                fmt.debug_tuple("Order::DeviceSyncDone").finish(),
+            Order::IterBlocks(..) =>
+                fmt.debug_tuple("Order::IterBlocks").finish(),
+            Order::PreparedWriteBlockDone(..) =>
+                fmt.debug_tuple("Order::PreparedWriteBlockDone").finish(),
+            Order::ProcessReadBlockDone(..) =>
+                fmt.debug_tuple("Order::ProcessReadBlockDone").finish(),
+            Order::PreparedDeleteBlockDone(..) =>
+                fmt.debug_tuple("Order::PreparedDeleteBlockDone").finish(),
+        }
+    }
+}

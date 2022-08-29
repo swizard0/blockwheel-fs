@@ -112,7 +112,7 @@ impl<C> Pid<C> where C: Context {
         }
     }
 
-    pub fn device_sync(&mut self, flush_context: C::Flush) -> Result<(), ero::NoProcError> {
+    pub fn device_sync(&self, flush_context: C::Flush) -> Result<(), ero::NoProcError> {
         if Arc::strong_count(&self.inner) > 1 {
             self.inner.schedule(Command::DeviceSync { flush_context, });
             Ok(())

@@ -163,7 +163,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
             interpreter_gen_server
                 .run(
                     meister.clone(),
-                    state.thread_pool.clone(),
+                    edeltraud::EdeltraudJobMap::new(state.thread_pool.clone()),
                     state.blocks_pool.clone(),
                     interpret_error_tx,
                     |error| ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::FixedFile(error))),
@@ -221,7 +221,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
             interpreter_gen_server
                 .run(
                     meister.clone(),
-                    state.thread_pool.clone(),
+                    edeltraud::EdeltraudJobMap::new(state.thread_pool.clone()),
                     state.blocks_pool.clone(),
                     interpret_error_tx,
                     |error| ErrorSeverity::Fatal(Error::InterpreterRun(interpret::RunError::Ram(error))),

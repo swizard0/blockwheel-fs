@@ -1,15 +1,14 @@
 use std::{
     fs,
+    sync::{
+        mpsc,
+    },
 };
 
 use futures::{
     channel::{
         oneshot,
     },
-    select,
-    pin_mut,
-    Future,
-    FutureExt,
 };
 
 use alloc_pool::bytes::{
@@ -79,22 +78,19 @@ fn create_read_one() {
         .build()
         .unwrap();
 
-    // let meister =
-    //     arbeitssklave::Meister::start(
-    //         performer_sklave::Welt {
-    //             env: performer_sklave::Env {
-    //                 interpreter_pid,
-    //                 blocks_pool: state.blocks_pool.clone(),
-    //             },
-    //             kont: performer_sklave::Kont::Start { performer, },
-    //         },
-    //         &edeltraud::EdeltraudJobMap::new(&state.thread_pool),
-    //     )
+    let (orders_tx, orders_rx) = mpsc::channel();
+    let meister =
+        arbeitssklave::Meister::start(
+            Welt { orders_tx, },
+            &thread_pool,
+        )
+        .unwrap();
 
     let blocks_pool = BytesPool::new();
 
     let wheel_filename = "/tmp/blockwheel_create_read_one";
     let context = "ectx00";
+
     let WheelData { sync_gen_server_init: gen_server_init, performer, } =
         GenServerInit::create::<LocalContext, _>(
             CreateParams {
@@ -109,6 +105,11 @@ fn create_read_one() {
         )
         .unwrap();
     let gen_server = gen_server_init.finish::<LocalContext>();
+    let gen_server_pid = gen_server.pid();
+
+    let (error_tx, _error_rx) = oneshot::channel();
+    gen_server.run(meister.clone(), thread_pool.clone(), blocks_pool.clone(), error_tx, std::convert::identity)
+        .unwrap();
 
     let schema = performer.decompose();
 
@@ -120,104 +121,124 @@ fn create_read_one() {
             blocks_pool.clone(),
         )
         .unwrap();
-//             let task_done = request_reply(
-//                 &mut pid,
-//                 schema.storage_layout().wheel_header_size as u64,
-//                 block_id,
-//                 task::TaskKind::WriteBlock(task::WriteBlock {
-//                     write_block_bytes,
-//                     commit: task::Commit::WithTerminator,
-//                     context: task::WriteBlockContext::External(context),
-//                 }),
-//             ).await?;
-//             match task_done {
-//                 task::Done {
-//                     task: task::TaskDone {
-//                         block_id,
-//                         kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(ctx), }),
-//                     },
-//                     ..
-//                 } if block_id == block::Id::init() && ctx == context => {
-//                     let interpret::Synced = pid.device_sync().await
-//                         .map_err(Error::DeviceSync)?;
-//                     Ok(())
-//                 },
-//                 other_done_task =>
-//                     Err(Error::Unexpected(UnexpectedError::WriteDoneTask {
-//                         expected: format!("task done write block {:?} with {:?} context", block::Id::init(), context),
-//                         received: other_done_task,
-//                     })),
-//             }
-//         }).await?;
+    let task = task::Task {
+        block_id,
+        kind: task::TaskKind::WriteBlock(task::WriteBlock {
+            write_block_bytes,
+            commit: task::Commit::WithTerminator,
+            context: task::WriteBlockContext::External(context),
+        }),
+    };
+    gen_server_pid.push_request(schema.storage_layout().wheel_header_size as u64, task)
+        .unwrap();
+    let order = orders_rx.recv().unwrap();
+    match order {
+        performer_sklave::Order::TaskDoneStats(
+            performer_sklave::OrderTaskDoneStats {
+                task_done: task::Done {
+                    task: task::TaskDone {
+                        block_id,
+                        kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(ctx), }),
+                    },
+                    ..
+                },
+                ..
+            },
+        ) if block_id == block::Id::init() && ctx == context => {
+            let fctx = "fctx00";
+            gen_server_pid.device_sync(fctx).unwrap();
+            let order = orders_rx.recv().unwrap();
+            match order {
+                performer_sklave::Order::DeviceSyncDone(performer_sklave::OrderDeviceSyncDone { flush_context, }) if flush_context == fctx =>
+                    (),
+                other_order =>
+                    panic!("unexpected order received: {other_order:?}, expected device sync done with {fctx:?} context"),
+            }
+        },
+        other_order =>
+            panic!("unexpected order received: {other_order:?}, expected task done write block {:?} with {context:?} context", block::Id::init()),
+    }
 
-//         // let open_status = GenServer::open(
-//         //     OpenParams {
-//         //         wheel_filename,
-//         //     },
-//         //     performer::PerformerBuilderInit::new(
-//         //         lru::Cache::new(0),
-//         //         None,
-//         //         64 * 1024,
-//         //     ).map_err(Error::PerformerBuild)?,
-//         // ).map_err(Error::Open)?;
-//         // let WheelData { sync_gen_server: gen_server, performer, } = match open_status {
-//         //     WheelOpenStatus::Success(wheel_data) =>
-//         //         wheel_data,
-//         //     WheelOpenStatus::FileNotFound { .. } =>
-//         //         panic!("file not found: {:?}", wheel_filename),
-//         // };
-//         // let mut schema = performer.decompose();
-//         // with_gen_server(gen_server, |mut pid, _blocks_pool| async move {
-//         //     let block_id = block::Id::init();
-//         //     let expected_offset = schema.storage_layout().wheel_header_size as u64;
-//         //     let (block_header, block_bytes) = match schema.process_read_block_request(&block_id) {
-//         //         schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
-//         //             return Err(Error::Unexpected(UnexpectedError::ReadCacheHit { block_id, })),
-//         //         schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
-//         //             let task_done = request_reply(
-//         //                 &mut pid,
-//         //                 expected_offset,
-//         //                 block_header.block_id.clone(),
-//         //                 task::TaskKind::ReadBlock(task::ReadBlock {
-//         //                     block_header: block_header.clone(),
-//         //                     context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(context)),
-//         //                 }),
-//         //             ).await?;
-//         //             match task_done {
-//         //                 task::Done {
-//         //                     task: task::TaskDone {
-//         //                         block_id,
-//         //                         kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-//         //                             block_bytes,
-//         //                             context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(ctx)),
-//         //                             ..
-//         //                         }),
-//         //                     },
-//         //                     ..
-//         //                 } if block_id == block_header.block_id && ctx == context =>
-//         //                     Ok((block_header.clone(), block_bytes)),
-//         //                 other_done_task =>
-//         //                     Err(Error::Unexpected(UnexpectedError::ReadDoneTask {
-//         //                         expected: format!("task done read block {:?} with {:?} context", block_header.block_id, context),
-//         //                         received: other_done_task,
-//         //                     })),
-//         //             }
-//         //         },
-//         //         schema::ReadBlockOp::NotFound =>
-//         //             Err(Error::Unexpected(UnexpectedError::ReadNotFound { block_id, })),
-//         //     }?;
-//         //     let interpret::BlockProcessReadJobDone { block_bytes, .. } =
-//         //         interpret::block_process_read_job(interpret::BlockProcessReadJobArgs {
-//         //             storage_layout: schema.storage_layout().clone(),
-//         //             block_header: block_header.clone(),
-//         //             block_bytes: block_bytes.freeze(),
-//         //         })
-//         //         .map_err(Error::ReadBlockProcess)?;
-//         //     assert_eq!(block_bytes, hello_world_bytes());
-//         //     Ok(())
-//         // }).await?;
-//         Ok::<_, Error>(())
-//     }).unwrap();
+    let open_status =
+        GenServerInit::open::<LocalContext, _>(
+            OpenParams {
+                wheel_filename,
+            },
+            performer::PerformerBuilderInit::new(
+                lru::Cache::new(0),
+                None,
+                64 * 1024,
+            ).unwrap(),
+        )
+        .unwrap();
+    let WheelData { sync_gen_server_init: gen_server_init, performer, } = match open_status {
+        WheelOpenStatus::Success(wheel_data) =>
+            wheel_data,
+        WheelOpenStatus::FileNotFound { .. } =>
+            panic!("file not found: {:?}", wheel_filename),
+    };
+    let gen_server = gen_server_init.finish::<LocalContext>();
+    let gen_server_pid = gen_server.pid();
+
+    let (error_tx, _error_rx) = oneshot::channel();
+    gen_server.run(meister.clone(), thread_pool.clone(), blocks_pool.clone(), error_tx, std::convert::identity)
+        .unwrap();
+
+    let mut schema = performer.decompose();
+
+    let block_id = block::Id::init();
+    let expected_offset = schema.storage_layout().wheel_header_size as u64;
+    let (block_header, block_bytes) = match schema.process_read_block_request(&block_id) {
+        schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
+            panic!("unexpected cache hit for block_id = {block_id:?}"),
+        schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
+            let task = task::Task {
+                block_id: block_header.block_id.clone(),
+                kind: task::TaskKind::ReadBlock(task::ReadBlock {
+                    block_header: block_header.clone(),
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(context)),
+                })
+            };
+            gen_server_pid.push_request(expected_offset, task)
+                .unwrap();
+            let order = orders_rx.recv().unwrap();
+            match order {
+                performer_sklave::Order::TaskDoneStats(
+                    performer_sklave::OrderTaskDoneStats {
+                        task_done: task::Done {
+                            task: task::TaskDone {
+                                block_id,
+                                kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                    block_bytes,
+                                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(ctx)),
+                                    ..
+                                }),
+                            },
+                            ..
+                        },
+                        ..
+                    },
+                ) if block_id == block_header.block_id && ctx == context =>
+                    (block_header.clone(), block_bytes),
+                other_order =>
+                    panic!(
+                        "unexpected order received: {other_order:?}, expected task done read block {:?} with {context:?} context",
+                        block_header.block_id,
+                    ),
+            }
+        },
+        schema::ReadBlockOp::NotFound =>
+            panic!("unexpected read not found for block_id = {block_id:?}"),
+    };
+    let interpret::RunBlockProcessReadJobDone { block_bytes, .. } =
+        interpret::run_block_process_read_job(
+            schema.storage_layout().clone(),
+            block_header.clone(),
+            block_bytes.freeze(),
+        )
+        .unwrap();
+    assert_eq!(block_bytes, hello_world_bytes());
+
     fs::remove_file(wheel_filename)
         .unwrap();
 }
@@ -587,6 +608,7 @@ fn create_read_one() {
 // }
 
 struct Welt {
+    orders_tx: mpsc::Sender<performer_sklave::Order<LocalContext>>,
 }
 
 enum Job {
@@ -602,11 +624,19 @@ impl From<arbeitssklave::SklaveJob<Welt, performer_sklave::Order<LocalContext>>>
 impl edeltraud::Job for Job {
     type Output = ();
 
-    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+    fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
         match self {
-            Job::Sklave(sklave_job) => {
-
-                todo!()
+            Job::Sklave(arbeitssklave::SklaveJob { mut sklave, mut sklavenwelt, }) => {
+                loop {
+                    match sklave.obey(sklavenwelt).unwrap() {
+                        arbeitssklave::Obey::Order { order, sklavenwelt: next_sklavenwelt, } => {
+                            sklavenwelt = next_sklavenwelt;
+                            sklavenwelt.orders_tx.send(order).unwrap();
+                        },
+                        arbeitssklave::Obey::Rest =>
+                            break,
+                    }
+                }
             },
         }
     }
@@ -628,42 +658,6 @@ impl Context for LocalContext {
 }
 
 type GenServerInit = super::SyncGenServerInit;
-type GenServer = super::SyncGenServer<LocalContext>;
-type Pid = super::Pid<LocalContext>;
-
-// async fn with_gen_server<F, FF>(
-//     gen_server: GenServer,
-//     body: F,
-// )
-//     -> Result<(), Error>
-// where F: FnOnce(Pid, BytesPool) -> FF,
-//       FF: Future<Output = Result<(), Error>>,
-// {
-//     let pid = gen_server.pid();
-//     let blocks_pool = BytesPool::new();
-
-//     let (error_tx, mut error_rx) = oneshot::channel();
-//     gen_server.run(blocks_pool.clone(), error_tx, std::convert::identity)
-//         .map_err(Error::Run)?;
-
-//     let body_task = body(pid, blocks_pool);
-//     let body_task_fused = body_task.fuse();
-//     pin_mut!(body_task_fused);
-
-//     loop {
-//         select! {
-//             result = body_task_fused =>
-//                 return result,
-//             result = &mut error_rx =>
-//                 match result {
-//                     Err(oneshot::Canceled) =>
-//                         (),
-//                     Ok(error) =>
-//                         return Err(Error::Run(error)),
-//                 },
-//         }
-//     }
-// }
 
 // async fn request_reply(
 //     pid: &mut Pid,

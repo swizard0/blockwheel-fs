@@ -21,7 +21,6 @@ use alloc_pool::{
 };
 
 use crate::{
-    job,
     context::{
         Context,
     },
@@ -158,9 +157,9 @@ impl<C> SyncGenServer<C> where C: Context {
         }
     }
 
-    pub fn run<F, E, P, J>(
+    pub fn run<F, E, P, J, W>(
         self,
-        meister: arbeitssklave::Meister<performer_sklave::Welt, performer_sklave::Order<C>>,
+        meister: arbeitssklave::Meister<W, performer_sklave::Order<C>>,
         thread_pool: P,
         blocks_pool: BytesPool,
         error_tx: oneshot::Sender<E>,
@@ -178,8 +177,8 @@ impl<C> SyncGenServer<C> where C: Context {
           C::IterBlocksStream: Send,
           C::Flush: Send,
           P: edeltraud::ThreadPool<J> + Send + 'static,
-          J: edeltraud::Job<Output = ()> + From<job::Job>,
-          job::Job: From<arbeitssklave::SklaveJob<performer_sklave::Welt, performer_sklave::Order<C>>>,
+          J: edeltraud::Job<Output = ()> + From<arbeitssklave::SklaveJob<W, performer_sklave::Order<C>>>,
+          W: Send + 'static,
     {
         thread::Builder::new()
             .name("wheel::interpret::ram".to_string())
@@ -202,19 +201,18 @@ impl<C> SyncGenServer<C> where C: Context {
     }
 }
 
-fn busyloop<C, P, J>(
+fn busyloop<C, P, J, W>(
     pid_inner: Arc<PidInner<C>>,
     memory: Vec<u8>,
     storage_layout: storage::Layout,
-    meister: arbeitssklave::Meister<performer_sklave::Welt, performer_sklave::Order<C>>,
+    meister: arbeitssklave::Meister<W, performer_sklave::Order<C>>,
     thread_pool: P,
     blocks_pool: BytesPool,
 )
     -> Result<(), Error>
 where C: Context,
       P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job<Output = ()> + From<job::Job>,
-      job::Job: From<arbeitssklave::SklaveJob<performer_sklave::Welt, performer_sklave::Order<C>>>,
+      J: edeltraud::Job<Output = ()> + From<arbeitssklave::SklaveJob<W, performer_sklave::Order<C>>>,
 {
     let mut stats = InterpretStats::default();
 
@@ -303,7 +301,7 @@ where C: Context,
                                 stats,
                             },
                         );
-                        match meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool)) {
+                        match meister.order(order, &thread_pool) {
                             Ok(()) =>
                                (),
                             Err(arbeitssklave::Error::Terminated) =>
@@ -338,7 +336,7 @@ where C: Context,
                                 stats,
                             },
                         );
-                        match meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool)) {
+                        match meister.order(order, &thread_pool) {
                             Ok(()) =>
                                (),
                             Err(arbeitssklave::Error::Terminated) =>
@@ -381,7 +379,7 @@ where C: Context,
                                 stats,
                             },
                         );
-                        match meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool)) {
+                        match meister.order(order, &thread_pool) {
                             Ok(()) =>
                                (),
                             Err(arbeitssklave::Error::Terminated) =>
@@ -399,7 +397,7 @@ where C: Context,
                         flush_context,
                     },
                 );
-                match meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool)) {
+                match meister.order(order, &thread_pool) {
                     Ok(()) =>
                         (),
                     Err(arbeitssklave::Error::Terminated) =>
