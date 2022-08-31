@@ -73,11 +73,8 @@ fn create_read_one() {
         .unwrap();
 
     let (orders_tx, orders_rx) = mpsc::channel();
-    let meister =
-        arbeitssklave::Meister::start(
-            Welt { orders_tx, },
-            &thread_pool,
-        )
+    let meister = arbeitssklave::Freie::new()
+        .versklaven(Welt { orders_tx, }, &thread_pool)
         .unwrap();
 
     let blocks_pool = BytesPool::new();
@@ -243,11 +240,8 @@ fn create_write_overlap_read_one() {
         .unwrap();
 
     let (orders_tx, orders_rx) = mpsc::channel();
-    let meister =
-        arbeitssklave::Meister::start(
-            Welt { orders_tx, },
-            &thread_pool,
-        )
+    let meister = arbeitssklave::Freie::new()
+        .versklaven(Welt { orders_tx, }, &thread_pool)
         .unwrap();
 
     let blocks_pool = BytesPool::new();
@@ -440,11 +434,8 @@ fn create_write_delete_read_one() {
         .unwrap();
 
     let (orders_tx, orders_rx) = mpsc::channel();
-    let meister =
-        arbeitssklave::Meister::start(
-            Welt { orders_tx, },
-            &thread_pool,
-        )
+    let meister = arbeitssklave::Freie::new()
+        .versklaven(Welt { orders_tx, }, &thread_pool)
         .unwrap();
 
     let blocks_pool = BytesPool::new();

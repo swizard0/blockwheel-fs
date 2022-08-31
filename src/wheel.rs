@@ -146,8 +146,8 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
             let interpreter_pid = interpreter_gen_server.pid();
             let (performer_sklave_error_tx, performer_sklave_error_rx) = mpsc::unbounded();
 
-            let meister =
-                arbeitssklave::Meister::start(
+            let meister = arbeitssklave::Freie::new()
+                .versklaven(
                     performer_sklave::Welt {
                         env: performer_sklave::Env {
                             interpreter_pid,
@@ -203,8 +203,8 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
             let interpreter_pid = interpreter_gen_server.pid();
             let (performer_sklave_error_tx, performer_sklave_error_rx) = mpsc::unbounded();
 
-            let meister =
-                arbeitssklave::Meister::start(
+            let meister = arbeitssklave::Freie::new()
+                .versklaven(
                     performer_sklave::Welt {
                         env: performer_sklave::Env {
                             interpreter_pid,
