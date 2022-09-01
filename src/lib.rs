@@ -93,25 +93,45 @@ pub enum Error {
     Arbeitssklave(arbeitssklave::Error),
 }
 
-pub trait ReplyPolicy<B>
-where
-    B: From<komm::UmschlagAbbrechen<Self::Info>> + From<komm::Umschlag<Info, Self::Info>>,
-    B: From<komm::UmschlagAbbrechen<Self::Flush>> + From<komm::Umschlag<Flushed, Self::Flush>>,
+pub trait AccessPolicy: Send + 'static
+where Self::Order: From<komm::UmschlagAbbrechen<Self::Info>>,
+      Self::Order: From<komm::Umschlag<Info, Self::Info>>,
+      Self::Order: From<komm::UmschlagAbbrechen<Self::Flush>>,
+      Self::Order: From<komm::Umschlag<Flushed, Self::Flush>>,
+      Self::Order: From<komm::UmschlagAbbrechen<Self::WriteBlock>>,
+      Self::Order: From<komm::Umschlag<Result<block::Id, RequestWriteBlockError>, Self::WriteBlock>>,
+      Self::Order: From<komm::UmschlagAbbrechen<Self::ReadBlock>>,
+      Self::Order: From<komm::Umschlag<Result<Bytes, RequestReadBlockError>, Self::ReadBlock>>,
+      Self::Order: From<komm::UmschlagAbbrechen<Self::DeleteBlock>>,
+      Self::Order: From<komm::Umschlag<Result<Deleted, RequestDeleteBlockError>, Self::DeleteBlock>>,
+      Self::Order: From<komm::UmschlagAbbrechen<Self::IterBlocksInit>>,
+      Self::Order: From<komm::Umschlag<IterBlocks, Self::IterBlocksInit>>,
+      Self::Order: From<komm::UmschlagAbbrechen<Self::IterBlocksNext>>,
+      Self::Order: From<komm::Umschlag<IterBlocksItem, Self::IterBlocksNext>>,
+      Self::Order: Send + 'static,
+      Self::Info: Send + 'static,
+      Self::Flush: Send + 'static,
+      Self::WriteBlock: Send + 'static,
+      Self::ReadBlock: Send + 'static,
+      Self::DeleteBlock: Send + 'static,
+      Self::IterBlocksInit: Send + 'static,
+      Self::IterBlocksNext: Send + 'static,
 {
-    type Info: Send + 'static;
-    type Flush: Send + 'static;
-    type WriteBlock: Send + 'static;
-    type ReadBlock: Send + 'static;
-    type DeleteBlock: Send + 'static;
-    type IterBlocksInit: Send + 'static;
-    type IterBlocksNext: Send + 'static;
+    type Order;
+    type Info;
+    type Flush;
+    type WriteBlock;
+    type ReadBlock;
+    type DeleteBlock;
+    type IterBlocksInit;
+    type IterBlocksNext;
 }
 
-pub struct Freie<B, R> {
-    arbeitssklave_freie: arbeitssklave::Freie<Welt, Order<B, R>>,
+pub struct Freie<A> where A: AccessPolicy {
+    arbeitssklave_freie: arbeitssklave::Freie<Welt, Order<A>>,
 }
 
-impl<B, R> Freie<B, R> {
+impl<A> Freie<A> where A: AccessPolicy {
     pub fn new() -> Self {
         Self {
             arbeitssklave_freie: arbeitssklave::Freie::new(),
@@ -124,8 +144,8 @@ impl<B, R> Freie<B, R> {
         blocks_pool: BytesPool,
         thread_pool: &P,
     )
-        -> Result<Meister<B, R>, Error>
-    where P: edeltraud::ThreadPool<job::Job<B, R>> + Clone,
+        -> Result<Meister<A>, Error>
+    where P: edeltraud::ThreadPool<job::Job<A>> + Clone,
     {
         let arbeitssklave_meister = self.arbeitssklave_freie
             .versklaven(
@@ -140,8 +160,8 @@ impl<B, R> Freie<B, R> {
     }
 }
 
-pub struct Meister<B, R> {
-    arbeitssklave_meister: arbeitssklave::Meister<Welt, Order<B, R>>,
+pub struct Meister<A> where A: AccessPolicy {
+    arbeitssklave_meister: arbeitssklave::Meister<Welt, Order<A>>,
 }
 
 // impl<B, S> Meister<B, S> {
@@ -153,15 +173,29 @@ struct Welt {
     blocks_pool: BytesPool,
 }
 
-enum Order<B, R> where R: ReplyPolicy<B> {
-    Outer(proto::Request<blockwheel_context::Context<B, R>>),
-    Inner(OrderInner<B, R>),
+enum Order<A> where A: AccessPolicy {
+    Outer(proto::Request<blockwheel_context::Context<A>>),
+    Inner(OrderInner<A>),
 }
 
-enum OrderInner<B, R> {
-    Dummy(B, R),
+enum OrderInner<A> {
+    Dummy(A),
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RequestWriteBlockError {
+    NoSpaceLeft,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RequestReadBlockError {
+    NotFound,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RequestDeleteBlockError {
+    NotFound,
+}
 
 
 // type Request = proto::Request<blockwheel_context::Context>;
@@ -304,6 +338,7 @@ pub enum IterBlocksItem {
     NoMoreBlocks,
 }
 
+#[derive(Debug)]
 pub struct IterBlocksIterator {
     block_id_from: block::Id,
 }

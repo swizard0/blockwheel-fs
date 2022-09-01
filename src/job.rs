@@ -9,19 +9,19 @@ use std::{
 
 use crate::{
     sklave,
-    ReplyPolicy,
+    AccessPolicy,
 //     wheel::{
 //         interpret,
 //         performer_sklave,
 //     },
 };
 
-pub enum Job<B, R> where R: ReplyPolicy<B> {
+pub enum Job<A> where A: AccessPolicy {
     // BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs),
     // BlockProcessRead(interpret::BlockProcessReadJobArgs),
     // BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs),
     // PerformerSklave(performer_sklave::SklaveJob),
-    Sklave(sklave::SklaveJob<B, R>),
+    Sklave(sklave::SklaveJob<A>),
 }
 
 // impl From<interpret::BlockPrepareWriteJobArgs> for Job {
@@ -48,8 +48,8 @@ pub enum Job<B, R> where R: ReplyPolicy<B> {
 //     }
 // }
 
-impl<B, R> From<sklave::SklaveJob<B, R>> for Job<B, R> where R: ReplyPolicy<B> {
-    fn from(sklave_job: sklave::SklaveJob<B, R>) -> Job<B, R> {
+impl<A> From<sklave::SklaveJob<A>> for Job<A> where A: AccessPolicy {
+    fn from(sklave_job: sklave::SklaveJob<A>) -> Job<A> {
         Job::Sklave(sklave_job)
     }
 }
@@ -60,9 +60,7 @@ pub static JOB_BLOCK_PREPARE_DELETE: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_PERFORMER_SKLAVE: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_SKLAVE: AtomicUsize = AtomicUsize::new(0);
 
-impl<B, R> edeltraud::Job for Job<B, R>
-where R: ReplyPolicy<B> + Send + 'static,
-{
+impl<A> edeltraud::Job for Job<A> where A: AccessPolicy {
     type Output = ();
 
     fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {

@@ -4,27 +4,27 @@ use crate::{
     Welt,
     Order,
     Error,
-    ReplyPolicy,
+    AccessPolicy,
 };
 
-pub type SklaveJob<B, R> = arbeitssklave::SklaveJob<Welt, Order<B, R>>;
+pub type SklaveJob<A> = arbeitssklave::SklaveJob<Welt, Order<A>>;
 
-pub fn run_job<B, R, P>(sklave_job: SklaveJob<B, R>, thread_pool: &P)
-where P: edeltraud::ThreadPool<job::Job<B, R>>,
-      R: ReplyPolicy<B>,
+pub fn run_job<A, P>(sklave_job: SklaveJob<A>, thread_pool: &P)
+where P: edeltraud::ThreadPool<job::Job<A>>,
+      A: AccessPolicy,
 {
     if let Err(error) = job(sklave_job, thread_pool) {
         log::error!("terminated with an error: {error:?}");
     }
 }
 
-fn job<B, R, P>(
-    SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob<B, R>,
+fn job<A, P>(
+    SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob<A>,
     thread_pool: &P,
 )
     -> Result<(), Error>
-where P: edeltraud::ThreadPool<job::Job<B, R>>,
-      R: ReplyPolicy<B>,
+where P: edeltraud::ThreadPool<job::Job<A>>,
+      A: AccessPolicy,
 {
 
     todo!()
