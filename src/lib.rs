@@ -126,14 +126,14 @@ impl GenServer {
         }
     }
 
-    pub async fn run<J>(
+    pub async fn run<P>(
         self,
         parent_supervisor: SupervisorPid,
-        thread_pool: edeltraud::Edeltraud<J>,
+        thread_pool: P,
         blocks_pool: BytesPool,
         params: Params,
     )
-    where J: edeltraud::Job<Output = ()> + From<job::Job>,
+    where P: edeltraud::ThreadPool<job::Job> + Clone + Send + 'static,
     {
         let terminate_result = restart::restartable(
             ero::Params {

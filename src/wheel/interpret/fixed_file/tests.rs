@@ -678,12 +678,12 @@ impl edeltraud::Job for Job {
         match self {
             Job::Sklave(arbeitssklave::SklaveJob { mut sklave, mut sklavenwelt, }) => {
                 loop {
-                    match sklave.obey(sklavenwelt).unwrap() {
-                        arbeitssklave::Obey::Order { order, sklavenwelt: next_sklavenwelt, } => {
+                    match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                        arbeitssklave::Gehorsam::Machen { befehl, sklavenwelt: next_sklavenwelt, } => {
                             sklavenwelt = next_sklavenwelt;
-                            sklavenwelt.orders_tx.send(order).unwrap();
+                            sklavenwelt.orders_tx.send(befehl).unwrap();
                         },
-                        arbeitssklave::Obey::Rest =>
+                        arbeitssklave::Gehorsam::Rasten =>
                             break,
                     }
                 }

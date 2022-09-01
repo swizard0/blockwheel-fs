@@ -184,7 +184,7 @@ impl<C> SyncGenServer<C> where C: Context {
                 );
                 if let Err(error) = result {
                     log::error!("wheel::interpret::ram terminated with {:?}", error);
-                    meister.order(
+                    meister.befehl(
                         performer_sklave::Order::InterpreterError(RunError::Ram(error)),
                         &thread_pool,
                     ).ok();
@@ -295,7 +295,7 @@ where C: Context,
                                 stats,
                             },
                         );
-                        match meister.order(order, &thread_pool) {
+                        match meister.befehl(order, &thread_pool) {
                             Ok(()) =>
                                (),
                             Err(arbeitssklave::Error::Terminated) =>
@@ -330,7 +330,7 @@ where C: Context,
                                 stats,
                             },
                         );
-                        match meister.order(order, &thread_pool) {
+                        match meister.befehl(order, &thread_pool) {
                             Ok(()) =>
                                (),
                             Err(arbeitssklave::Error::Terminated) =>
@@ -373,7 +373,7 @@ where C: Context,
                                 stats,
                             },
                         );
-                        match meister.order(order, &thread_pool) {
+                        match meister.befehl(order, &thread_pool) {
                             Ok(()) =>
                                (),
                             Err(arbeitssklave::Error::Terminated) =>
@@ -391,7 +391,7 @@ where C: Context,
                         flush_context,
                     },
                 );
-                match meister.order(order, &thread_pool) {
+                match meister.befehl(order, &thread_pool) {
                     Ok(()) =>
                         (),
                     Err(arbeitssklave::Error::Terminated) =>

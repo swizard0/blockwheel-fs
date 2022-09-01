@@ -111,7 +111,12 @@ pub async fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &
     let gen_server = GenServer::new();
     let mut pid = gen_server.pid();
     supervisor_pid.spawn_link_permanent(
-        gen_server.run(supervisor_pid.clone(), thread_pool.clone(), blocks_pool.clone(), params),
+        gen_server.run(
+            supervisor_pid.clone(),
+            edeltraud::ThreadPoolMap::new(thread_pool.clone()),
+            blocks_pool.clone(),
+            params,
+        ),
     );
 
     let (done_tx, done_rx) = mpsc::channel(0);
@@ -396,13 +401,13 @@ impl edeltraud::Job for Job {
     fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
         match self {
             Job::BlockwheelFs(job) => {
-                job.run(&edeltraud::EdeltraudJobMap::new(thread_pool));
+                job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
             },
             Job::GenRandomBlock(job) => {
-                job.run(&edeltraud::EdeltraudJobMap::new(thread_pool));
+                job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
             },
             Job::CalcCrc(job) => {
-                job.run(&edeltraud::EdeltraudJobMap::new(thread_pool));
+                job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
             },
         }
     }

@@ -81,6 +81,7 @@ pub struct Welt {
 }
 
 pub enum Kont {
+    Taken,
     Start {
         performer: performer::Performer<Context>,
     },
@@ -121,33 +122,39 @@ fn job<P>(SklaveJob { mut sklave, mut sklavenwelt, }: SklaveJob, thread_pool: &P
     loop {
         let mut incoming_order = None;
         let mut performer_op = loop {
-            match (incoming_order, sklavenwelt.kont) {
+            match (incoming_order, std::mem::replace(&mut sklavenwelt.kont, Kont::Taken)) {
+                (_, Kont::Taken) =>
+                    unreachable!(),
                 (None, Kont::Start { performer, }) =>
                     break performer.next(),
                 (Some(..), Kont::Start { .. }) =>
                     unreachable!(),
-                (None, kont @ Kont::PollRequestAndInterpreter { .. }) =>
-                    match sklave.obey(Welt { env: sklavenwelt.env, kont, }) {
-                        Ok(arbeitssklave::Obey::Order { order, sklavenwelt: next_sklavenwelt, }) => {
-                            incoming_order = Some(order);
+                (None, kont @ Kont::PollRequestAndInterpreter { .. }) => {
+                    sklavenwelt.kont = kont;
+                    match sklave.zu_ihren_diensten(sklavenwelt) {
+                        Ok(arbeitssklave::Gehorsam::Machen { befehl, sklavenwelt: next_sklavenwelt, }) => {
                             sklavenwelt = next_sklavenwelt;
+                            incoming_order = Some(befehl);
                         },
-                        Ok(arbeitssklave::Obey::Rest) =>
+                        Ok(arbeitssklave::Gehorsam::Rasten) =>
                             return Ok(()),
                         Err(error) =>
                             return Err(Error::Arbeitssklave(error)),
-                    },
-                (None, kont @ Kont::PollRequest { .. }) =>
-                    match sklave.obey(Welt { env: sklavenwelt.env, kont, }) {
-                        Ok(arbeitssklave::Obey::Order { order, sklavenwelt: next_sklavenwelt, }) => {
-                            incoming_order = Some(order);
+                    }
+                },
+                (None, kont @ Kont::PollRequest { .. }) => {
+                    sklavenwelt.kont = kont;
+                    match sklave.zu_ihren_diensten(sklavenwelt) {
+                        Ok(arbeitssklave::Gehorsam::Machen { befehl, sklavenwelt: next_sklavenwelt, }) => {
                             sklavenwelt = next_sklavenwelt;
+                            incoming_order = Some(befehl);
                         },
-                        Ok(arbeitssklave::Obey::Rest) =>
+                        Ok(arbeitssklave::Gehorsam::Rasten) =>
                             return Ok(()),
                         Err(error) =>
                             return Err(Error::Arbeitssklave(error)),
-                    },
+                    }
+                },
 
                 (Some(Order::Request(request)), Kont::PollRequestAndInterpreter { poll, }) =>
                     break poll.next.incoming_request(request),

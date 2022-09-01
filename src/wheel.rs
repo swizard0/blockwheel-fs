@@ -58,20 +58,20 @@ pub enum Error {
 
 type Request = proto::Request<Context>;
 
-pub struct State<J> where J: edeltraud::Job {
+pub struct State<P> {
     pub parent_supervisor: SupervisorPid,
-    pub thread_pool: edeltraud::Edeltraud<J>,
+    pub thread_pool: P,
     pub blocks_pool: BytesPool,
     pub fused_request_rx: stream::Fuse<mpsc::Receiver<Request>>,
     pub params: Params,
 }
 
-pub async fn busyloop_init<J>(
+pub async fn busyloop_init<P>(
     supervisor_pid: SupervisorPid,
-    state: State<J>,
+    state: State<P>,
 )
-    -> Result<(), ErrorSeverity<State<J>, Error>>
-where J: edeltraud::Job<Output = ()> + From<job::Job>,
+    -> Result<(), ErrorSeverity<State<P>, Error>>
+where P: edeltraud::ThreadPool<job::Job> + Clone + Send + 'static,
 {
     let performer_builder = performer::PerformerBuilderInit::new(
         lru::Cache::new(state.params.lru_cache_size_bytes),
@@ -156,7 +156,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                         },
                         kont: performer_sklave::Kont::Start { performer, },
                     },
-                    &edeltraud::EdeltraudJobMap::new(&state.thread_pool),
+                    &state.thread_pool,
                 )
                 .map_err(Error::Arbeitssklave)
                 .map_err(ErrorSeverity::Fatal)?;
@@ -164,7 +164,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
             interpreter_gen_server
                 .run(
                     meister.clone(),
-                    edeltraud::EdeltraudJobMap::new(state.thread_pool.clone()),
+                    state.thread_pool.clone(),
                     state.blocks_pool.clone(),
                 )
                 .map_err(interpret::RunError::FixedFile)
@@ -213,7 +213,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                         },
                         kont: performer_sklave::Kont::Start { performer, },
                     },
-                    &edeltraud::EdeltraudJobMap::new(&state.thread_pool),
+                    &state.thread_pool,
                 )
                 .map_err(Error::Arbeitssklave)
                 .map_err(ErrorSeverity::Fatal)?;
@@ -221,7 +221,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
             interpreter_gen_server
                 .run(
                     meister.clone(),
-                    edeltraud::EdeltraudJobMap::new(state.thread_pool.clone()),
+                    state.thread_pool.clone(),
                     state.blocks_pool.clone(),
                 )
                 .map_err(interpret::RunError::Ram)
@@ -236,14 +236,14 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
     busyloop(supervisor_pid, meister, performer_sklave_error_rx.fuse(), state).await
 }
 
-async fn busyloop<J>(
+async fn busyloop<P>(
     mut supervisor_pid: SupervisorPid,
     meister: performer_sklave::Meister,
     mut fused_performer_sklave_error_rx: stream::Fuse<mpsc::UnboundedReceiver<performer_sklave::Error>>,
-    mut state: State<J>,
+    mut state: State<P>,
 )
-    -> Result<(), ErrorSeverity<State<J>, Error>>
-where J: edeltraud::Job<Output = ()> + From<job::Job>,
+    -> Result<(), ErrorSeverity<State<P>, Error>>
+where P: edeltraud::ThreadPool<job::Job> + Clone + Send + 'static,
 {
     enum Mode {
         Regular,
@@ -297,7 +297,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                 let order = performer_sklave::Order::Request(
                     proto::Request::Flush(proto::RequestFlush { context: done_tx, }),
                 );
-                match meister.order(order, &edeltraud::EdeltraudJobMap::new(&state.thread_pool)) {
+                match meister.befehl(order, &state.thread_pool) {
                     Ok(()) =>
                         (),
                     Err(arbeitssklave::Error::Terminated) => {
@@ -331,7 +331,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                         },
                     }),
                 );
-                match meister.order(order, &edeltraud::EdeltraudJobMap::new(&state.thread_pool)) {
+                match meister.befehl(order, &state.thread_pool) {
                     Ok(()) =>
                         (),
                     Err(arbeitssklave::Error::Terminated) => {
@@ -353,7 +353,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
 
             Event::Request(Some(request)) => {
                 let order = performer_sklave::Order::Request(request);
-                match meister.order(order, &edeltraud::EdeltraudJobMap::new(&state.thread_pool)) {
+                match meister.befehl(order, &state.thread_pool) {
                     Ok(()) =>
                         (),
                     Err(arbeitssklave::Error::Terminated) => {
@@ -475,12 +475,12 @@ impl future::Future for IterTask {
     }
 }
 
-async fn forward_blocks_iter<J>(
+async fn forward_blocks_iter<P>(
     iter_task_rx: oneshot::Receiver<IterTask>,
     meister: performer_sklave::Meister,
-    thread_pool: edeltraud::Edeltraud<J>,
+    thread_pool: P,
 )
-where J: edeltraud::Job<Output = ()> + From<job::Job>,
+where P: edeltraud::ThreadPool<job::Job>,
 {
     if let Err(error) = run_forward_blocks_iter(iter_task_rx, meister, thread_pool).await {
         log::debug!("canceling blocks iterator forwarding because of: {error:?}");
@@ -494,13 +494,13 @@ enum ForwardBlocksIterError {
     Arbeitssklave(arbeitssklave::Error),
 }
 
-async fn run_forward_blocks_iter<J>(
+async fn run_forward_blocks_iter<P>(
     mut iter_task_rx: oneshot::Receiver<IterTask>,
     meister: performer_sklave::Meister,
-    thread_pool: edeltraud::Edeltraud<J>,
+    thread_pool: P,
 )
     -> Result<(), ForwardBlocksIterError>
-where J: edeltraud::Job<Output = ()> + From<job::Job>,
+where P: edeltraud::ThreadPool<job::Job>,
 {
     loop {
         let iter_task = iter_task_rx.await
@@ -515,7 +515,7 @@ where J: edeltraud::Job<Output = ()> + From<job::Job>,
                         iter_blocks_state,
                     },
                 );
-                meister.order(order, &edeltraud::EdeltraudJobMap::new(&thread_pool))
+                meister.befehl(order, &thread_pool)
                     .map_err(ForwardBlocksIterError::Arbeitssklave)?;
                 iter_task_rx = next_iter_task_rx;
             },

@@ -186,7 +186,7 @@ where P: edeltraud::ThreadPool<job::Job>
     let order = performer_sklave::Order::PreparedWriteBlockDone(
         performer_sklave::OrderPreparedWriteBlockDone { output, },
     );
-    if let Err(error) = meister.order(order, thread_pool) {
+    if let Err(error) = meister.befehl(order, thread_pool) {
         log::warn!("arbeitssklave error during block_prepare_write_job respond: {error:?}");
     }
 }
@@ -275,7 +275,7 @@ where P: edeltraud::ThreadPool<job::Job>
     let order = performer_sklave::Order::PreparedDeleteBlockDone(
         performer_sklave::OrderPreparedDeleteBlockDone { output, },
     );
-    if let Err(error) = meister.order(order, thread_pool) {
+    if let Err(error) = meister.befehl(order, thread_pool) {
         log::warn!("arbeitssklave error during block_prepare_delete_job respond: {error:?}");
     }
 }
@@ -366,7 +366,7 @@ where P: edeltraud::ThreadPool<job::Job>
     let order = performer_sklave::Order::ProcessReadBlockDone(
         performer_sklave::OrderProcessReadBlockDone { output, },
     );
-    if let Err(error) = meister.order(order, thread_pool) {
+    if let Err(error) = meister.befehl(order, thread_pool) {
         log::warn!("arbeitssklave error during block_process_read_job respond: {error:?}");
     }
 }
