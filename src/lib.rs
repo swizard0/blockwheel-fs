@@ -138,7 +138,7 @@ impl GenServer {
         let terminate_result = restart::restartable(
             ero::Params {
                 name: format!(
-                    "ero-blockwheel on {:?}",
+                    "blockwheel on {:?}",
                     match params.interpreter {
                         InterpreterParams::FixedFile(ref interpreter_params) =>
                             format!("fixed file: {:?}", interpreter_params.wheel_filename),

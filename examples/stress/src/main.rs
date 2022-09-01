@@ -8,8 +8,6 @@ use ero::{
     },
 };
 
-use ero_blockwheel_fs as blockwheel;
-
 #[derive(Parser, Debug)]
 struct CliArgs {
     /// Filename for blockwheel data
@@ -43,9 +41,9 @@ async fn main() {
     pretty_env_logger::init();
     let cli_args = CliArgs::parse();
 
-    let params = blockwheel::Params {
-        interpreter: blockwheel::InterpreterParams::FixedFile(
-            blockwheel::FixedFileInterpreterParams {
+    let params = blockwheel_fs::Params {
+        interpreter: blockwheel_fs::InterpreterParams::FixedFile(
+            blockwheel_fs::FixedFileInterpreterParams {
                 wheel_filename: cli_args.wheel_filename.clone().into(),
                 init_wheel_size_bytes: cli_args.init_wheel_size_bytes,
             },
@@ -56,7 +54,7 @@ async fn main() {
         ..Default::default()
     };
 
-    let limits = blockwheel::stress::Limits {
+    let limits = blockwheel_fs::stress::Limits {
         active_tasks: cli_args.stress_active_tasks_count,
         actions: cli_args.stress_actions_count,
         block_size_bytes: cli_args.work_block_size_bytes - 256,
@@ -66,16 +64,16 @@ async fn main() {
     let supervisor_gen_server = SupervisorGenServer::new();
     let mut supervisor_pid = supervisor_gen_server.pid();
 
-    log::debug!("creating blockwheel gen_server");
-    let blockwheel_gen_server = blockwheel::GenServer::new();
-    let _blockwheel_pid = blockwheel_gen_server.pid();
+    log::debug!("creating blockwheel_fs gen_server");
+    let blockwheel_fs_gen_server = blockwheel_fs::GenServer::new();
+    let _blockwheel_fs_pid = blockwheel_fs_gen_server.pid();
 
     std::fs::remove_file(&cli_args.wheel_filename).ok();
 
     supervisor_pid.spawn_link_permanent(async move {
         let mut blocks = Vec::new();
-        let mut counter = blockwheel::stress::Counter::default();
-        let stress_task = blockwheel::stress::stress_loop(params, &mut blocks, &mut counter, &limits);
+        let mut counter = blockwheel_fs::stress::Counter::default();
+        let stress_task = blockwheel_fs::stress::stress_loop(params, &mut blocks, &mut counter, &limits);
         match stress_task.await {
             Ok(()) =>
                 log::info!("stress task done: counters = {counter:?}"),
