@@ -1,8 +1,14 @@
-use alloc_pool::bytes::Bytes;
+use alloc_pool::{
+    bytes::{
+        Bytes,
+    },
+};
 
-use super::{
+use crate::{
     block,
-    context::Context,
+    context::{
+        Context,
+    },
 };
 
 #[derive(Debug)]
@@ -12,7 +18,8 @@ pub enum Request<C> where C: Context {
     WriteBlock(RequestWriteBlock<C::WriteBlock>),
     ReadBlock(RequestReadBlock<C::ReadBlock>),
     DeleteBlock(RequestDeleteBlock<C::DeleteBlock>),
-    IterBlocks(RequestIterBlocks<C::IterBlocks>),
+    IterBlocksInit(RequestIterBlocksInit<C::IterBlocksInit>),
+    IterBlocksNext(RequestIterBlocksNext<C::IterBlocksNext>),
 }
 
 #[derive(Debug)]
@@ -44,6 +51,11 @@ pub struct RequestDeleteBlock<C> {
 }
 
 #[derive(Debug)]
-pub struct RequestIterBlocks<C> {
+pub struct RequestIterBlocksInit<C> {
+    pub context: C,
+}
+
+#[derive(Debug)]
+pub struct RequestIterBlocksNext<C> {
     pub context: C,
 }

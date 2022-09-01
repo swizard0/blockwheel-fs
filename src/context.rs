@@ -4,6 +4,6 @@ pub trait Context {
     type WriteBlock;
     type ReadBlock;
     type DeleteBlock;
-    type IterBlocks;
-    type IterBlocksStream;
+    type IterBlocksInit;
+    type IterBlocksNext;
 }
