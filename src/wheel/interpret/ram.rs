@@ -18,11 +18,11 @@ use arbeitssklave::{
 
 use crate::{
     job,
+    storage,
     blockwheel_context::{
         Context,
     },
     wheel::{
-        storage,
         performer_sklave,
         core::{
             task,
@@ -89,7 +89,7 @@ where A: AccessPolicy,
 
 fn create<A>(
     params: &RamInterpreterParams,
-    mut performer_builder: performer::PerformerBuilderInit<Context<A>>,
+    performer_builder: performer::PerformerBuilderInit<Context<A>>,
 )
     -> Result<WheelData<A>, WheelCreateError>
 where A: AccessPolicy,
@@ -145,7 +145,7 @@ struct WheelData<A> where A: AccessPolicy {
 
 pub fn run<A, P>(
     sklave: &mut ewig::Sklave<Order<A>, InterpretError>,
-    mut memory: Vec<u8>,
+    memory: Vec<u8>,
     storage_layout: storage::Layout,
     performer_sklave_meister: performer_sklave::Meister<A>,
     blocks_pool: BytesPool,
@@ -168,9 +168,6 @@ where A: AccessPolicy,
         let orders = sklave.zu_ihren_diensten()?;
         for order in orders {
             match order {
-
-                Order::Terminate =>
-                    break 'outer,
 
                 Order::Request(Request { offset, task, }) => {
                     stats.count_total += 1;

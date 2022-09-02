@@ -13,11 +13,15 @@ use o1::{
     forest::Forest1,
 };
 
-use super::{
+use crate::{
+    proto,
     block,
-    BlockGet,
-    DefragGaps,
-    super::proto,
+    wheel::{
+        core::{
+            BlockGet,
+            DefragGaps,
+        },
+    },
 };
 
 pub struct Queues<C> {

@@ -16,14 +16,14 @@ use arbeitssklave::{
 
 use crate::{
     job,
+    block,
     context,
+    storage,
     blockwheel_context::{
         Context,
     },
     wheel::{
         lru,
-        block,
-        storage,
         performer_sklave,
         core::{
             task,
@@ -46,7 +46,6 @@ pub struct Request<A> where A: AccessPolicy {
 pub enum Order<A> where A: AccessPolicy {
     Request(Request<A>),
     DeviceSync { flush_context: <Context<A> as context::Context>::Flush, },
-    Terminate,
 }
 
 #[derive(Debug)]
@@ -139,6 +138,16 @@ impl<A> Interpreter<A> where A: AccessPolicy {
                 Ok(Interpreter { interpreter_meister, })
             },
         }
+    }
+
+    pub fn push_task(&self, offset: u64, task: task::Task<Context<A>>) -> Result<(), Error> {
+        self.interpreter_meister
+            .befehl(Order::Request(Request { offset, task, }))
+    }
+
+    pub fn device_sync(&self, flush_context: <Context<A> as context::Context>::Flush) -> Result<(), Error> {
+        self.interpreter_meister
+            .befehl(Order::DeviceSync { flush_context, })
     }
 }
 

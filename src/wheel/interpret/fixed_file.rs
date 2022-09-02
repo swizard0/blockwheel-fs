@@ -29,12 +29,12 @@ use arbeitssklave::{
 
 use crate::{
     job,
+    block,
+    storage,
     blockwheel_context::{
         Context,
     },
     wheel::{
-        block,
-        storage,
         performer_sklave,
         core::{
             task,
@@ -533,9 +533,6 @@ where A: AccessPolicy,
 
         for order in orders {
             match order {
-
-                Order::Terminate =>
-                    break 'outer,
 
                 Order::Request(Request { offset, task, }) => {
                     stats.count_total += 1;

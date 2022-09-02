@@ -16,7 +16,6 @@ use crate::{
         },
     },
     blockwheel_context::{
-        self,
         Context,
     },
     Flushed,
@@ -25,6 +24,9 @@ use crate::{
     AccessPolicy,
     IterBlocksItem,
     InterpretStats,
+    RequestWriteBlockError,
+    RequestReadBlockError,
+    RequestDeleteBlockError,
 };
 
 pub enum Order<A> where A: AccessPolicy {
@@ -99,8 +101,8 @@ pub type DeleteBlockContext<A> = task::DeleteBlockContext<<Context<A> as context
 pub enum Error {
     Edeltraud(edeltraud::SpawnError),
     Arbeitssklave(arbeitssklave::Error),
-    WheelProcessLost,
-    InterpreterProcessIsLost,
+    InterpretPushTask(interpret::Error),
+    InterpretDeviceSync(interpret::Error),
     InterpretBlockPrepareWrite(interpret::BlockPrepareWriteJobError),
     InterpretBlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
     InterpretBlockProcessRead(interpret::BlockProcessReadJobError),
@@ -145,14 +147,10 @@ where A: AccessPolicy,
                             Kont::Start { .. } | Kont::PollRequestAndInterpreter { .. } | Kont::PollRequest { .. } =>
                                 panic!("unexpected Order::Bootstrap without Kont::Initialize"),
                         },
-                    Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: done_tx, }) => {
-
-                        todo!();
-                        // if let Err(_send_error) = done_tx.send(Flushed) {
-                        //     return Err(Error::WheelProcessLost);
-                        // }
-                        // sklavenwelt.kont = kont;
-                        // incoming_order = None;
+                    Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: rueckkopplung, }) => {
+                        if let Err(commit_error) = rueckkopplung.commit(Flushed) {
+                            log::warn!("rueckkopplung is gone during Flush query result send: {commit_error:?}");
+                        }
                     },
                     Order::Request(request) =>
                         match kont {
@@ -223,6 +221,7 @@ where A: AccessPolicy,
                         return Err(Error::InterpretBlockPrepareDelete(error)),
                 }
             }
+            sklavenwelt.kont = kont;
 
             match sklave.zu_ihren_diensten(sklavenwelt) {
                 Ok(arbeitssklave::Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, }) => {
@@ -236,289 +235,267 @@ where A: AccessPolicy,
             }
         };
 
-        todo!();
+        loop {
+            performer_op = match performer_op {
 
-    //     loop {
-    //         performer_op = match performer_op {
+                performer::Op::Idle(performer) =>
+                    performer.next(),
 
-    //             performer::Op::Idle(performer) =>
-    //                 performer.next(),
+                performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
+                    sklavenwelt.kont = Kont::PollRequestAndInterpreter { poll, };
+                    break;
+                },
 
-    //             performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
-    //                 sklavenwelt.kont = Kont::PollRequestAndInterpreter { poll, };
-    //                 break;
-    //             },
+                performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
+                    sklavenwelt.kont = Kont::PollRequest { poll, };
+                    break;
+                },
 
-    //             performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
-    //                 sklavenwelt.kont = Kont::PollRequest { poll, };
-    //                 break;
-    //             },
+                performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
+                    sklavenwelt.env.interpreter.push_task(offset, task)
+                        .map_err(Error::InterpretPushTask)?;
+                    let performer = next.task_accepted();
+                    performer.next()
+                },
 
-    //             performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
+                performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
+                    blocks_total_count,
+                    blocks_total_size,
+                    iter_blocks_context,
+                    next,
+                })) => {
 
-    //                 todo!()
-    //                 // if let Err(ero::NoProcError) = sklavenwelt.env.interpreter_pid.push_request(offset, task) {
-    //                 //     return Err(Error::InterpreterProcessIsLost);
-    //                 // }
-    //                 // let performer = next.task_accepted();
-    //                 // performer.next()
-    //             },
+                    todo!()
+                    // let (blocks_tx, blocks_rx) = futures::channel::mpsc::channel(0);
+                    // let iter_blocks = IterBlocks {
+                    //     blocks_total_count,
+                    //     blocks_total_size,
+                    //     blocks_rx,
+                    // };
+                    // if let Err(_send_error) = reply_tx.send(iter_blocks) {
+                    //     log::warn!("Pid is gone during IterBlocks query result send");
+                    // }
 
-    //             performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
-    //                 blocks_total_count,
-    //                 blocks_total_size,
-    //                 iter_blocks_context,
-    //                 next,
-    //             })) => {
+                    // let iter_blocks_stream = blockwheel_context::IterBlocksStreamContext {
+                    //     blocks_tx,
+                    //     iter_task_tx,
+                    // };
+                    // next.stream_ready(iter_blocks_stream)
+                },
 
-    //                 todo!()
-    //                 // let (blocks_tx, blocks_rx) = futures::channel::mpsc::channel(0);
-    //                 // let iter_blocks = IterBlocks {
-    //                 //     blocks_total_count,
-    //                 //     blocks_total_size,
-    //                 //     blocks_rx,
-    //                 // };
-    //                 // if let Err(_send_error) = reply_tx.send(iter_blocks) {
-    //                 //     log::warn!("Pid is gone during IterBlocks query result send");
-    //                 // }
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::Info(
+                        performer::TaskDoneOp { context: rueckkopplung, op: performer::InfoOp::Success { info, }, },
+                    ),
+                    performer,
+                }) => {
+                    if let Err(commit_error) = rueckkopplung.commit(info) {
+                        log::warn!("rueckkopplung is gone during Info query result send: {commit_error:?}");
+                    }
+                    performer.next()
+                },
 
-    //                 // let iter_blocks_stream = blockwheel_context::IterBlocksStreamContext {
-    //                 //     blocks_tx,
-    //                 //     iter_task_tx,
-    //                 // };
-    //                 // next.stream_ready(iter_blocks_stream)
-    //             },
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::Flush(
+                        performer::TaskDoneOp { context: rueckkopplung, op: performer::FlushOp::Flushed, },
+                    ),
+                    performer,
+                }) => {
+                    sklavenwelt.env.interpreter.device_sync(rueckkopplung)
+                        .map_err(Error::InterpretDeviceSync)?;
+                    performer.next()
+                },
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::WriteBlock(
+                        performer::TaskDoneOp { context: rueckkopplung, op: performer::WriteBlockOp::NoSpaceLeft, },
+                    ),
+                    performer,
+                }) => {
+                    if let Err(commit_error) = rueckkopplung.commit(Err(RequestWriteBlockError::NoSpaceLeft)) {
+                        log::warn!("rueckkopplung is gone during WriteBlock result send: {commit_error:?}");
+                    }
+                    performer.next()
+                },
 
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::Info(
-    //                     performer::TaskDoneOp { context: reply_tx, op: performer::InfoOp::Success { info, }, },
-    //                 ),
-    //                 performer,
-    //             }) => {
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::WriteBlock(
+                        performer::TaskDoneOp { context: rueckkopplung, op: performer::WriteBlockOp::Done { block_id, }, },
+                    ),
+                    performer,
+                }) => {
+                    if let Err(commit_error) = rueckkopplung.commit(Ok(block_id)) {
+                        log::warn!("rueckkopplung is gone during WriteBlock result send: {commit_error:?}");
+                    }
+                    performer.next()
+                },
 
-    //                 todo!()
-    //                 // if let Err(_send_error) = reply_tx.send(info) {
-    //                 //     log::warn!("Pid is gone during Info query result send");
-    //                 // }
-    //                 // performer.next()
-    //             },
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::ReadBlock(
+                        performer::TaskDoneOp { context: rueckkopplung, op: performer::ReadBlockOp::NotFound, },
+                    ),
+                    performer,
+                }) => {
+                    if let Err(commit_error) = rueckkopplung.commit(Err(RequestReadBlockError::NotFound)) {
+                        log::warn!("rueckkopplung is gone during ReadBlock result send: {commit_error:?}");
+                    }
+                    performer.next()
+                },
 
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::Flush(
-    //                     performer::TaskDoneOp { context: reply_tx, op: performer::FlushOp::Flushed, },
-    //                 ),
-    //                 performer,
-    //             }) => {
-    //                 todo!()
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::ReadBlock(
+                        performer::TaskDoneOp { context: rueckkopplung, op: performer::ReadBlockOp::Done { block_bytes, }, },
+                    ),
+                    performer,
+                }) => {
+                    if let Err(commit_error) = rueckkopplung.commit(Ok(block_bytes)) {
+                        log::warn!("rueckkopplung is gone during ReadBlock result send: {commit_error:?}");
+                    }
+                    performer.next()
+                },
 
-    //                 // if let Err(ero::NoProcError) = sklavenwelt.env.interpreter_pid.device_sync(reply_tx) {
-    //                 //     return Err(Error::InterpreterProcessIsLost);
-    //                 // }
-    //                 // performer.next()
-    //             },
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::WriteBlock(
-    //                     performer::TaskDoneOp { context: reply_tx, op: performer::WriteBlockOp::NoSpaceLeft, },
-    //                 ),
-    //                 performer,
-    //             }) => {
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::DeleteBlock(
+                        performer::TaskDoneOp { context: rueckkopplung, op: performer::DeleteBlockOp::NotFound, },
+                    ),
+                    performer,
+                }) => {
+                    if let Err(commit_error) = rueckkopplung.commit(Err(RequestDeleteBlockError::NotFound)) {
+                        log::warn!("rueckkopplung is gone during DeleteBlock result send: {commit_error:?}");
+                    }
+                    performer.next()
+                },
 
-    //                 todo!()
-    //                 // if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) {
-    //                 //     log::warn!("reply channel has been closed during WriteBlock result send");
-    //                 // }
-    //                 // performer.next()
-    //             },
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::DeleteBlock(
+                        performer::TaskDoneOp { context: rueckkopplung, op: performer::DeleteBlockOp::Done { .. }, },
+                    ),
+                    performer,
+                }) => {
+                    if let Err(commit_error) = rueckkopplung.commit(Ok(Deleted)) {
+                        log::warn!("rueckkopplung is gone during DeleteBlock result send: {commit_error:?}");
+                    }
+                    performer.next()
+                },
 
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::WriteBlock(
-    //                     performer::TaskDoneOp { context: reply_tx, op: performer::WriteBlockOp::Done { block_id, }, },
-    //                 ),
-    //                 performer,
-    //             }) => {
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::IterBlocksItem(
+                        performer::IterBlocksItemOp {
+                            block_id,
+                            block_bytes,
+                            iter_blocks_state: performer::IterBlocksState {
+                                iter_blocks_stream_context,
+                                iter_blocks_cursor,
+                            },
+                        },
+                    ),
+                    performer,
+                }) => {
 
-    //                 todo!()
-    //                 // if let Err(_send_error) = reply_tx.send(Ok(block_id)) {
-    //                 //     log::warn!("client channel was closed before a block is actually written");
-    //                 // }
-    //                 // performer.next()
-    //             },
+                    todo!()
+                    // let iter_task = IterTask::Item {
+                    //     blocks_tx,
+                    //     item: IterBlocksItem::Block {
+                    //         block_id,
+                    //         block_bytes,
+                    //     },
+                    //     iter_blocks_cursor,
+                    // };
+                    // if let Err(_send_error) = iter_task_tx.send(iter_task) {
+                    //     return Err(Error::WheelProcessLost);
+                    // }
+                    // performer.next()
+                },
 
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::ReadBlock(
-    //                     performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::NotFound, },
-    //                 ),
-    //                 performer,
-    //             }) => {
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::IterBlocksFinish(
+                        performer::IterBlocksFinishOp {
+                            iter_blocks_stream_context,
+                        },
+                    ),
+                    performer,
+                }) => {
 
-    //                 todo!()
-    //                 // if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestReadBlockError::NotFound)) {
-    //                 //     log::warn!("reply channel has been closed during ReadBlock result send");
-    //                 // }
-    //                 // performer.next()
-    //             },
+                    todo!()
+                    // if let Err(_send_error) = iter_task_tx.send(IterTask::Finish { blocks_tx, }) {
+                    //     return Err(Error::WheelProcessLost);
+                    // }
+                    // performer.next()
+                },
 
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::ReadBlock(
-    //                     performer::TaskDoneOp { context: reply_tx, op: performer::ReadBlockOp::Done { block_bytes, }, },
-    //                 ),
-    //                 performer,
-    //             }) => {
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::PrepareInterpretTask(
+                        performer::PrepareInterpretTaskOp {
+                            block_id,
+                            task: performer::PrepareInterpretTaskKind::WriteBlock(performer::PrepareInterpretTaskWriteBlock {
+                                block_bytes,
+                                context,
+                            }),
+                        },
+                    ),
+                    performer,
+                }) => {
+                    let job_args = interpret::BlockPrepareWriteJobArgs {
+                        block_id,
+                        block_bytes,
+                        blocks_pool: sklavenwelt.env.blocks_pool.clone(),
+                        context,
+                        meister: sklave.meister()
+                            .map_err(Error::Arbeitssklave)?,
+                    };
+                    edeltraud::job(thread_pool, job_args)
+                        .map_err(Error::Edeltraud)?;
+                    performer.next()
+                },
 
-    //                 todo!()
-    //                 // if let Err(_send_error) = reply_tx.send(Ok(block_bytes)) {
-    //                 //     log::warn!("client channel was closed before a block is actually read");
-    //                 // }
-    //                 // performer.next()
-    //             },
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::PrepareInterpretTask(
+                        performer::PrepareInterpretTaskOp {
+                            block_id,
+                            task: performer::PrepareInterpretTaskKind::DeleteBlock(performer::PrepareInterpretTaskDeleteBlock {
+                                context,
+                            }),
+                        },
+                    ),
+                    performer,
+                }) => {
+                    let job_args = interpret::BlockPrepareDeleteJobArgs {
+                        block_id,
+                        blocks_pool: sklavenwelt.env.blocks_pool.clone(),
+                        context,
+                        meister: sklave.meister()
+                            .map_err(Error::Arbeitssklave)?,
+                    };
+                    edeltraud::job(thread_pool, job_args)
+                        .map_err(Error::Edeltraud)?;
+                    performer.next()
+                },
 
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::DeleteBlock(
-    //                     performer::TaskDoneOp { context: reply_tx, op: performer::DeleteBlockOp::NotFound, },
-    //                 ),
-    //                 performer,
-    //             }) => {
+                performer::Op::Event(performer::Event {
+                    op: performer::EventOp::ProcessReadBlockTaskDone(
+                        performer::ProcessReadBlockTaskDoneOp {
+                            storage_layout,
+                            block_header,
+                            block_bytes,
+                            pending_contexts,
+                        },
+                    ),
+                    performer,
+                }) => {
+                    let job_args = interpret::BlockProcessReadJobArgs {
+                        storage_layout,
+                        block_header,
+                        block_bytes,
+                        pending_contexts,
+                        meister: sklave.meister()
+                            .map_err(Error::Arbeitssklave)?,
+                    };
+                    edeltraud::job(thread_pool, job_args)
+                        .map_err(Error::Edeltraud)?;
+                    performer.next()
+                },
 
-    //                 todo!()
-    //                 // if let Err(_send_error) = reply_tx.send(Err(blockwheel_context::RequestDeleteBlockError::NotFound)) {
-    //                 //     log::warn!("reply channel has been closed during DeleteBlock result send");
-    //                 // }
-    //                 // performer.next()
-    //             },
-
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::DeleteBlock(
-    //                     performer::TaskDoneOp { context: reply_tx, op: performer::DeleteBlockOp::Done { .. }, },
-    //                 ),
-    //                 performer,
-    //             }) => {
-
-    //                 todo!()
-    //                 // if let Err(_send_error) = reply_tx.send(Ok(Deleted)) {
-    //                 //     log::warn!("client channel was closed before a block is actually deleted");
-    //                 // }
-    //                 // performer.next()
-    //             },
-
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::IterBlocksItem(
-    //                     performer::IterBlocksItemOp {
-    //                         block_id,
-    //                         block_bytes,
-    //                         iter_blocks_state: performer::IterBlocksState {
-    //                             iter_blocks_stream_context,
-    //                             iter_blocks_cursor,
-    //                         },
-    //                     },
-    //                 ),
-    //                 performer,
-    //             }) => {
-
-    //                 todo!()
-    //                 // let iter_task = IterTask::Item {
-    //                 //     blocks_tx,
-    //                 //     item: IterBlocksItem::Block {
-    //                 //         block_id,
-    //                 //         block_bytes,
-    //                 //     },
-    //                 //     iter_blocks_cursor,
-    //                 // };
-    //                 // if let Err(_send_error) = iter_task_tx.send(iter_task) {
-    //                 //     return Err(Error::WheelProcessLost);
-    //                 // }
-    //                 // performer.next()
-    //             },
-
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::IterBlocksFinish(
-    //                     performer::IterBlocksFinishOp {
-    //                         iter_blocks_stream_context,
-    //                     },
-    //                 ),
-    //                 performer,
-    //             }) => {
-
-    //                 todo!()
-    //                 // if let Err(_send_error) = iter_task_tx.send(IterTask::Finish { blocks_tx, }) {
-    //                 //     return Err(Error::WheelProcessLost);
-    //                 // }
-    //                 // performer.next()
-    //             },
-
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::PrepareInterpretTask(
-    //                     performer::PrepareInterpretTaskOp {
-    //                         block_id,
-    //                         task: performer::PrepareInterpretTaskKind::WriteBlock(performer::PrepareInterpretTaskWriteBlock {
-    //                             block_bytes,
-    //                             context,
-    //                         }),
-    //                     },
-    //                 ),
-    //                 performer,
-    //             }) => {
-    //                 let job_args = interpret::BlockPrepareWriteJobArgs {
-    //                     block_id,
-    //                     block_bytes,
-    //                     blocks_pool: sklavenwelt.env.blocks_pool.clone(),
-    //                     context,
-    //                     meister: sklave.meister()
-    //                         .map_err(Error::Arbeitssklave)?,
-    //                 };
-    //                 edeltraud::job(thread_pool, job_args)
-    //                     .map_err(Error::Edeltraud)?;
-    //                 performer.next()
-    //             },
-
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::PrepareInterpretTask(
-    //                     performer::PrepareInterpretTaskOp {
-    //                         block_id,
-    //                         task: performer::PrepareInterpretTaskKind::DeleteBlock(performer::PrepareInterpretTaskDeleteBlock {
-    //                             context,
-    //                         }),
-    //                     },
-    //                 ),
-    //                 performer,
-    //             }) => {
-    //                 let job_args = interpret::BlockPrepareDeleteJobArgs {
-    //                     block_id,
-    //                     blocks_pool: sklavenwelt.env.blocks_pool.clone(),
-    //                     context,
-    //                     meister: sklave.meister()
-    //                         .map_err(Error::Arbeitssklave)?,
-    //                 };
-    //                 edeltraud::job(thread_pool, job_args)
-    //                     .map_err(Error::Edeltraud)?;
-    //                 performer.next()
-    //             },
-
-    //             performer::Op::Event(performer::Event {
-    //                 op: performer::EventOp::ProcessReadBlockTaskDone(
-    //                     performer::ProcessReadBlockTaskDoneOp {
-    //                         storage_layout,
-    //                         block_header,
-    //                         block_bytes,
-    //                         pending_contexts,
-    //                     },
-    //                 ),
-    //                 performer,
-    //             }) => {
-    //                 let job_args = interpret::BlockProcessReadJobArgs {
-    //                     storage_layout,
-    //                     block_header,
-    //                     block_bytes,
-    //                     pending_contexts,
-    //                     meister: sklave.meister()
-    //                         .map_err(Error::Arbeitssklave)?,
-    //                 };
-    //                 edeltraud::job(thread_pool, job_args)
-    //                     .map_err(Error::Edeltraud)?;
-    //                 performer.next()
-    //             },
-
-    //         };
-    //     }
+            };
+        }
     }
 }
 
