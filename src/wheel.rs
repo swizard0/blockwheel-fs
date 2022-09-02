@@ -29,13 +29,13 @@ pub mod performer_sklave;
 
 mod lru;
 
-#[derive(Debug)]
-pub enum Error {
-    Arbeitssklave(arbeitssklave::Error),
-    PerformerSklave(performer_sklave::Error),
-}
+// #[derive(Debug)]
+// pub enum Error {
+//     Arbeitssklave(arbeitssklave::Error),
+//     PerformerSklave(performer_sklave::Error),
+// }
 
-type Request<A> = proto::Request<Context<A>>;
+// type Request<A> = proto::Request<Context<A>>;
 
 // pub struct State<P> {
 //     pub parent_supervisor: SupervisorPid,

@@ -1,17 +1,12 @@
 use std::{
     fs,
-    thread,
     io::{
         self,
         Seek,
         Read,
         Write,
     },
-    sync::{
-        Arc,
-    },
     path::{
-        Path,
         PathBuf,
     },
     time::{
@@ -34,7 +29,6 @@ use arbeitssklave::{
 
 use crate::{
     job,
-    context,
     blockwheel_context::{
         Context,
     },
@@ -157,8 +151,10 @@ where A: AccessPolicy,
         match open(&params, performer_builder) {
             Ok(WheelOpenStatus::Success(wheel_data)) =>
                 wheel_data,
-            Ok(WheelOpenStatus::FileNotFound { performer_builder, }) =>
-                todo!(),
+            Ok(WheelOpenStatus::FileNotFound { performer_builder, }) => {
+                create(&params, performer_builder)
+                    .map_err(Error::WheelCreate)?
+            },
             Err(wheel_open_error) =>
                 return Err(Error::WheelOpen(wheel_open_error).into()),
         };
@@ -529,7 +525,7 @@ where A: AccessPolicy,
         .map_err(Error::WheelFileInitialSeek)?;
     let mut pending_terminator = false;
     let mut timings = Timings::default();
-    loop {
+    'outer: loop {
         let now_loop = Instant::now();
 
         let orders = sklave.zu_ihren_diensten()?;
@@ -539,7 +535,7 @@ where A: AccessPolicy,
             match order {
 
                 Order::Terminate =>
-                    return Ok(()),
+                    break 'outer,
 
                 Order::Request(Request { offset, task, }) => {
                     stats.count_total += 1;
@@ -619,7 +615,7 @@ where A: AccessPolicy,
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
-                                    return Ok(()),
+                                    break 'outer,
                                 Err(error) =>
                                     return Err(Error::Arbeitssklave(error).into()),
                             }
@@ -667,7 +663,7 @@ where A: AccessPolicy,
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
-                                    return Ok(()),
+                                    break 'outer,
                                 Err(error) =>
                                     return Err(Error::Arbeitssklave(error).into()),
                             }
@@ -708,7 +704,7 @@ where A: AccessPolicy,
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
-                                    return Ok(()),
+                                    break 'outer,
                                 Err(error) =>
                                     return Err(Error::Arbeitssklave(error).into()),
                             }
@@ -740,7 +736,7 @@ where A: AccessPolicy,
                         Ok(()) =>
                             (),
                         Err(arbeitssklave::Error::Terminated) =>
-                            return Ok(()),
+                            break 'outer,
                         Err(error) =>
                             return Err(Error::Arbeitssklave(error).into()),
                     }
@@ -753,6 +749,6 @@ where A: AccessPolicy,
         timings.total += now_loop.elapsed();
     }
 
-    log::debug!("master channel closed in interpret_loop, shutting down");
+    log::debug!("performer meister dropped in interpret_loop, shutting down");
     Ok(())
 }

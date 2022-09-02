@@ -12,7 +12,6 @@ use alloc_pool::{
 
 use arbeitssklave::{
     ewig,
-    Meister,
 };
 
 use crate::{
@@ -51,17 +50,6 @@ pub enum Order<A> where A: AccessPolicy {
 }
 
 #[derive(Debug)]
-pub enum CreateError {
-    FixedFile(fixed_file::WheelCreateError),
-    Ram(ram::WheelCreateError),
-}
-
-#[derive(Debug)]
-pub enum OpenError {
-    FixedFile(fixed_file::WheelOpenError),
-}
-
-#[derive(Debug)]
 pub enum Error {
     Ewig(ewig::Error),
     FixedFile(fixed_file::Error),
@@ -88,7 +76,7 @@ impl From<ram::Error> for Error {
 }
 
 pub struct Interpreter<A> where A: AccessPolicy {
-    ewig_meister: ewig::Meister<Order<A>, Error>
+    interpreter_meister: ewig::Meister<Order<A>, Error>
 }
 
 impl<A> Interpreter<A> where A: AccessPolicy {
@@ -113,10 +101,10 @@ impl<A> Interpreter<A> where A: AccessPolicy {
             )
             .map_err(Error::PerformerBuilderInit)?;
 
+        let thread_pool_clone = thread_pool.clone();
         let interpreter_frei = ewig::Freie::new();
         match params.interpreter {
             InterpreterParams::FixedFile(interpreter_params) => {
-                let thread_pool_clone = thread_pool.clone();
                 let interpreter_meister = interpreter_frei
                     .versklaven_als(
                         "blockwheel_fs::wheel::interpret::fixed_file".to_string(),
@@ -131,13 +119,24 @@ impl<A> Interpreter<A> where A: AccessPolicy {
                             )
                         },
                     )?;
-
-
-                todo!()
+                Ok(Interpreter { interpreter_meister, })
             },
             InterpreterParams::Ram(interpreter_params) => {
-
-                todo!()
+                let interpreter_meister = interpreter_frei
+                    .versklaven_als(
+                        "blockwheel_fs::wheel::interpret::ram".to_string(),
+                        move |sklave| {
+                            ram::bootstrap(
+                                sklave,
+                                interpreter_params,
+                                performer_sklave_meister,
+                                performer_builder,
+                                blocks_pool,
+                                thread_pool_clone,
+                            )
+                        },
+                    )?;
+                Ok(Interpreter { interpreter_meister, })
             },
         }
     }
