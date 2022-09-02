@@ -153,12 +153,12 @@ pub struct ReadBlockDefragContext {
 pub enum ReadBlockProcessContext<C> where C: Context {
     External(C::ReadBlock),
     IterBlocks {
-        iter_blocks_stream_context: C::IterBlocksStream,
+        iter_blocks_stream_context: C::IterBlocksNext,
         next_block_id: block::Id,
     },
 }
 
-impl<C> cmp::PartialEq for ReadBlockProcessContext<C> where C: Context, C::ReadBlock: PartialEq, C::IterBlocksStream: PartialEq {
+impl<C> cmp::PartialEq for ReadBlockProcessContext<C> where C: Context, C::ReadBlock: PartialEq, C::IterBlocksNext: PartialEq {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (ReadBlockProcessContext::External(a), ReadBlockProcessContext::External(b)) =>
@@ -174,7 +174,7 @@ impl<C> cmp::PartialEq for ReadBlockProcessContext<C> where C: Context, C::ReadB
     }
 }
 
-impl<C> cmp::PartialEq for ReadBlockContext<C> where C: Context, C::ReadBlock: PartialEq, C::IterBlocksStream: PartialEq {
+impl<C> cmp::PartialEq for ReadBlockContext<C> where C: Context, C::ReadBlock: PartialEq, C::IterBlocksNext: PartialEq {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (ReadBlockContext::Process(a), ReadBlockContext::Process(b)) =>

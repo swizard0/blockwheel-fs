@@ -19,9 +19,8 @@ pub mod job;
 pub mod block;
 // pub mod stress;
 
-// mod wheel;
+mod wheel;
 mod proto;
-mod sklave;
 mod storage;
 mod context;
 mod blockwheel_context;
@@ -128,13 +127,13 @@ where Self::Order: From<komm::UmschlagAbbrechen<Self::Info>>,
 }
 
 pub struct Freie<A> where A: AccessPolicy {
-    arbeitssklave_freie: arbeitssklave::Freie<Welt, Order<A>>,
+    freie: arbeitssklave::Freie<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
 }
 
 impl<A> Freie<A> where A: AccessPolicy {
     pub fn new() -> Self {
         Self {
-            arbeitssklave_freie: arbeitssklave::Freie::new(),
+            freie: arbeitssklave::Freie::new(),
         }
     }
 
@@ -147,39 +146,26 @@ impl<A> Freie<A> where A: AccessPolicy {
         -> Result<Meister<A>, Error>
     where P: edeltraud::ThreadPool<job::Job<A>> + Clone,
     {
-        let arbeitssklave_meister = self.arbeitssklave_freie
-            .versklaven(
-                Welt {
-                    params,
-                    blocks_pool,
-                },
-                thread_pool,
-            )
-            .map_err(Error::Arbeitssklave)?;
-        Ok(Meister { arbeitssklave_meister, })
+        let arbeitssklave_meister =
+            self.freie.meister();
+
+        // let arbeitssklave_meister = self.arbeitssklave_freie
+        //     .versklaven(
+        //         Welt {
+        //             params,
+        //             blocks_pool,
+        //         },
+        //         thread_pool,
+        //     )
+        //     .map_err(Error::Arbeitssklave)?;
+        // Ok(Meister { arbeitssklave_meister, })
+
+        todo!()
     }
 }
 
 pub struct Meister<A> where A: AccessPolicy {
-    arbeitssklave_meister: arbeitssklave::Meister<Welt, Order<A>>,
-}
-
-// impl<B, S> Meister<B, S> {
-
-// }
-
-struct Welt {
-    params: Params,
-    blocks_pool: BytesPool,
-}
-
-enum Order<A> where A: AccessPolicy {
-    Outer(proto::Request<blockwheel_context::Context<A>>),
-    Inner(OrderInner<A>),
-}
-
-enum OrderInner<A> {
-    Dummy(A),
+    meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

@@ -1,12 +1,6 @@
-use std::{
-    sync::{
-        Arc,
-        Mutex,
-        Condvar,
-    },
+use bincode::{
+    Options,
 };
-
-use bincode::Options;
 
 use alloc_pool::{
     bytes::{
@@ -16,9 +10,15 @@ use alloc_pool::{
     },
 };
 
+use arbeitssklave::{
+    ewig,
+    Meister,
+};
+
 use crate::{
     job,
-    context::{
+    context,
+    blockwheel_context::{
         Context,
     },
     wheel::{
@@ -29,19 +29,21 @@ use crate::{
             task,
         },
     },
+    AccessPolicy,
+    InterpreterParams,
 };
 
 pub mod ram;
 pub mod fixed_file;
 
-struct Request<C> where C: Context {
+struct Request<A> where A: AccessPolicy {
     offset: u64,
-    task: task::Task<C>,
+    task: task::Task<Context<A>>,
 }
 
-enum Command<C> where C: Context {
-    Request(Request<C>),
-    DeviceSync { flush_context: C::Flush, },
+enum Order<A> where A: AccessPolicy {
+    Request(Request<A>),
+    DeviceSync { flush_context: <Context<A> as context::Context>::Flush, },
     Terminate,
 }
 
@@ -63,72 +65,88 @@ pub enum RunError {
 }
 
 #[derive(Debug)]
-pub enum TaskJoinError {
-    FixedFile(fixed_file::TaskJoinError),
-    Ram(ram::TaskJoinError),
+pub enum Error {
 }
 
-pub struct Pid<C> where C: Context {
-    inner: Arc<PidInner<C>>,
+pub struct Interpreter<A> where A: AccessPolicy {
+    ewig_meister: ewig::Meister<Order<A>, Error>
 }
 
-struct PidInner<C> where C: Context {
-    commands_queue: Mutex<Vec<Command<C>>>,
-    condvar: Condvar,
-}
+impl<A> Interpreter<A> where A: AccessPolicy {
+    fn starten(
+        params: InterpreterParams,
+        meister: performer_sklave::Meister<A>,
+    )
+        -> Self
+    {
 
-impl<C> PidInner<C> where C: Context {
-    fn new() -> Self {
-        Self {
-            commands_queue: Mutex::new(Vec::with_capacity(2)),
-            condvar: Condvar::new(),
-        }
-    }
-
-    fn schedule(&self, command: Command<C>) {
-        let mut commands_queue = self.commands_queue.lock().unwrap();
-        commands_queue.push(command);
-        self.condvar.notify_one();
-    }
-
-    fn acquire(&self) -> Command<C> {
-        let mut commands_queue = self.commands_queue.lock().unwrap();
-        loop {
-            if let Some(task) = commands_queue.pop() {
-                return task;
-            }
-            commands_queue = self.condvar.wait(commands_queue).unwrap();
-        }
+        todo!()
     }
 }
 
-impl<C> Pid<C> where C: Context {
-    pub fn push_request(&self, offset: u64, task: task::Task<C>) -> Result<(), ero::NoProcError> {
-        if Arc::strong_count(&self.inner) > 1 {
-            self.inner.schedule(Command::Request(Request { offset, task, }));
-            Ok(())
-        } else {
-            Err(ero::NoProcError)
-        }
-    }
 
-    pub fn device_sync(&self, flush_context: C::Flush) -> Result<(), ero::NoProcError> {
-        if Arc::strong_count(&self.inner) > 1 {
-            self.inner.schedule(Command::DeviceSync { flush_context, });
-            Ok(())
-        } else {
-            return Err(ero::NoProcError);
-        }
-    }
-}
 
-impl<C> Drop for Pid<C> where C: Context {
-    fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) > 1 {
-            self.inner.schedule(Command::Terminate);
-        }
-    }
-}
+// pub struct Pid<C> where C: Context {
+//     inner: Arc<PidInner<C>>,
+// }
+
+// struct PidInner<C> where C: Context {
+//     commands_queue: Mutex<Vec<Command<C>>>,
+//     condvar: Condvar,
+// }
+
+// impl<C> PidInner<C> where C: Context {
+//     fn new() -> Self {
+//         Self {
+//             commands_queue: Mutex::new(Vec::with_capacity(2)),
+//             condvar: Condvar::new(),
+//         }
+//     }
+
+//     fn schedule(&self, command: Command<C>) {
+//         let mut commands_queue = self.commands_queue.lock().unwrap();
+//         commands_queue.push(command);
+//         self.condvar.notify_one();
+//     }
+
+//     fn acquire(&self) -> Command<C> {
+//         let mut commands_queue = self.commands_queue.lock().unwrap();
+//         loop {
+//             if let Some(task) = commands_queue.pop() {
+//                 return task;
+//             }
+//             commands_queue = self.condvar.wait(commands_queue).unwrap();
+//         }
+//     }
+// }
+
+// impl<C> Pid<C> where C: Context {
+//     pub fn push_request(&self, offset: u64, task: task::Task<C>) -> Result<(), ero::NoProcError> {
+//         if Arc::strong_count(&self.inner) > 1 {
+//             self.inner.schedule(Command::Request(Request { offset, task, }));
+//             Ok(())
+//         } else {
+//             Err(ero::NoProcError)
+//         }
+//     }
+
+//     pub fn device_sync(&self, flush_context: C::Flush) -> Result<(), ero::NoProcError> {
+//         if Arc::strong_count(&self.inner) > 1 {
+//             self.inner.schedule(Command::DeviceSync { flush_context, });
+//             Ok(())
+//         } else {
+//             return Err(ero::NoProcError);
+//         }
+//     }
+// }
+
+// impl<C> Drop for Pid<C> where C: Context {
+//     fn drop(&mut self) {
+//         if Arc::strong_count(&self.inner) > 1 {
+//             self.inner.schedule(Command::Terminate);
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 pub enum AppendTerminatorError {
@@ -141,18 +159,18 @@ pub fn block_append_terminator(block_bytes: &mut BytesMut) -> Result<(), AppendT
         .map_err(AppendTerminatorError::TerminatorTagSerialize)
 }
 
-pub struct BlockPrepareWriteJobArgs {
+pub struct BlockPrepareWriteJobArgs<A> where A: AccessPolicy {
     pub block_id: block::Id,
     pub block_bytes: Bytes,
     pub blocks_pool: BytesPool,
-    pub context: performer_sklave::WriteBlockContext,
-    pub meister: performer_sklave::Meister,
+    pub context: performer_sklave::WriteBlockContext<A>,
+    pub meister: performer_sklave::Meister<A>,
 }
 
-pub struct BlockPrepareWriteJobDone {
+pub struct BlockPrepareWriteJobDone<A> where A: AccessPolicy {
     pub block_id: block::Id,
     pub write_block_bytes: task::WriteBlockBytes,
-    pub context: performer_sklave::WriteBlockContext,
+    pub context: performer_sklave::WriteBlockContext<A>,
 }
 
 #[derive(Debug)]
@@ -161,19 +179,20 @@ pub enum BlockPrepareWriteJobError {
     CommitTagSerialize(bincode::Error),
 }
 
-pub type BlockPrepareWriteJobOutput = Result<BlockPrepareWriteJobDone, BlockPrepareWriteJobError>;
+pub type BlockPrepareWriteJobOutput<A> = Result<BlockPrepareWriteJobDone<A>, BlockPrepareWriteJobError>;
 
-pub fn block_prepare_write_job<P>(
+pub fn block_prepare_write_job<A, P>(
     BlockPrepareWriteJobArgs {
         block_id,
         block_bytes,
         blocks_pool,
         context,
         meister,
-    }: BlockPrepareWriteJobArgs,
+    }: BlockPrepareWriteJobArgs<A>,
     thread_pool: &P,
 )
-where P: edeltraud::ThreadPool<job::Job>
+where A: AccessPolicy,
+      P: edeltraud::ThreadPool<job::Job<A>>,
 {
     let output = run_block_prepare_write_job(block_id.clone(), block_bytes, blocks_pool)
         .map(|RunBlockPrepareWriteJobDone { write_block_bytes, }| {
@@ -233,17 +252,17 @@ fn run_block_prepare_write_job(
     })
 }
 
-pub struct BlockPrepareDeleteJobArgs {
+pub struct BlockPrepareDeleteJobArgs<A> where A: AccessPolicy {
     pub block_id: block::Id,
     pub blocks_pool: BytesPool,
-    pub context: performer_sklave::DeleteBlockContext,
-    pub meister: performer_sklave::Meister,
+    pub context: performer_sklave::DeleteBlockContext<A>,
+    pub meister: performer_sklave::Meister<A>,
 }
 
-pub struct BlockPrepareDeleteJobDone {
+pub struct BlockPrepareDeleteJobDone<A> where A: AccessPolicy {
     pub block_id: block::Id,
     pub delete_block_bytes: BytesMut,
-    pub context: performer_sklave::DeleteBlockContext,
+    pub context: performer_sklave::DeleteBlockContext<A>,
 }
 
 #[derive(Debug)]
@@ -251,18 +270,19 @@ pub enum BlockPrepareDeleteJobError {
     TombstoneTagSerialize(bincode::Error),
 }
 
-pub type BlockPrepareDeleteJobOutput = Result<BlockPrepareDeleteJobDone, BlockPrepareDeleteJobError>;
+pub type BlockPrepareDeleteJobOutput<A> = Result<BlockPrepareDeleteJobDone<A>, BlockPrepareDeleteJobError>;
 
-pub fn block_prepare_delete_job<P>(
+pub fn block_prepare_delete_job<A, P>(
     BlockPrepareDeleteJobArgs {
         block_id,
         blocks_pool,
         context,
         meister,
-    }: BlockPrepareDeleteJobArgs,
+    }: BlockPrepareDeleteJobArgs<A>,
     thread_pool: &P,
 )
-where P: edeltraud::ThreadPool<job::Job>
+where A: AccessPolicy,
+      P: edeltraud::ThreadPool<job::Job<A>>,
 {
     let output = run_block_prepare_delete_job(blocks_pool)
         .map(|RunBlockPrepareDeleteJobDone { delete_block_bytes, }| {
@@ -299,12 +319,12 @@ fn run_block_prepare_delete_job(
     Ok(RunBlockPrepareDeleteJobDone { delete_block_bytes, })
 }
 
-pub struct BlockProcessReadJobArgs {
+pub struct BlockProcessReadJobArgs<A> where A: AccessPolicy {
     pub storage_layout: storage::Layout,
     pub block_header: storage::BlockHeader,
     pub block_bytes: Bytes,
     pub pending_contexts: task::queue::PendingReadContextBag,
-    pub meister: performer_sklave::Meister,
+    pub meister: performer_sklave::Meister<A>,
 }
 
 pub struct BlockProcessReadJobDone {
@@ -343,17 +363,18 @@ pub enum CorruptedDataError {
 
 pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
-pub fn block_process_read_job<P>(
+pub fn block_process_read_job<A, P>(
     BlockProcessReadJobArgs {
         storage_layout,
         block_header,
         block_bytes,
         pending_contexts,
         meister,
-    }: BlockProcessReadJobArgs,
+    }: BlockProcessReadJobArgs<A>,
     thread_pool: &P,
 )
-where P: edeltraud::ThreadPool<job::Job>
+where A: AccessPolicy,
+      P: edeltraud::ThreadPool<job::Job<A>>,
 {
     let output = run_block_process_read_job(storage_layout, block_header, block_bytes)
         .map(|RunBlockProcessReadJobDone { block_id, block_bytes, }| {
