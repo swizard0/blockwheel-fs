@@ -21,16 +21,15 @@ use crate::{
             schema,
             performer,
         },
-        interpret,
+        interpret::{
+            self,
+            fixed_file::{
+                WheelOpenStatus,
+                WheelData,
+            },
+        },
         performer_sklave,
     },
-};
-
-use super::{
-    OpenParams,
-    CreateParams,
-    WheelOpenStatus,
-    WheelData,
 };
 
 #[test]
@@ -703,8 +702,8 @@ impl Context for LocalContext {
     type WriteBlock = C;
     type ReadBlock = C;
     type DeleteBlock = C;
-    type IterBlocks = C;
-    type IterBlocksStream = C;
+    type IterBlocksInit = C;
+    type IterBlocksNext = C;
 }
 
 type GenServerInit = super::SyncGenServerInit;

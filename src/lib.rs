@@ -25,8 +25,8 @@ mod storage;
 mod context;
 mod blockwheel_context;
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 #[derive(Clone, Debug)]
 pub struct Params {
@@ -343,14 +343,14 @@ pub struct Deleted;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Flushed;
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct IterBlocks {
     pub blocks_total_count: usize,
     pub blocks_total_size: usize,
     pub iterator_next: IterBlocksIterator,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum IterBlocksItem {
     Block {
         block_id: block::Id,
@@ -360,7 +360,7 @@ pub enum IterBlocksItem {
     NoMoreBlocks,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct IterBlocksIterator {
     block_id_from: block::Id,
 }

@@ -1,34 +1,34 @@
-use super::{
-    task,
+use crate::{
     proto,
     block,
     storage,
-    init,
-    interpret,
-    hello_world_bytes,
-    hello_world_write_req,
-    hello_world_read_done,
-    Info,
-    ScriptOp,
-    ExpectOp,
-    DoOp,
-    ExpectTask,
-    ExpectTaskKind,
-    ExpectTaskWriteBlock,
-    ExpectTaskReadBlock,
-    ExpectTaskDeleteBlock,
-};
-
-use crate::{
-    InterpretStats,
     wheel::{
         core::{
+            task,
             performer::{
-                IterBlocksState,
-                IterBlocksCursor,
+                tests::{
+                    init,
+                    interpret,
+                    hello_world_bytes,
+                    hello_world_write_req,
+                    hello_world_read_done,
+                    Info,
+                    ScriptOp,
+                    ExpectOp,
+                    DoOp,
+                    ExpectTask,
+                    ExpectTaskKind,
+                    ExpectTaskWriteBlock,
+                    ExpectTaskReadBlock,
+                    ExpectTaskDeleteBlock,
+                },
             },
         },
     },
+    InterpretStats,
+    IterBlocks,
+    IterBlocksItem,
+    IterBlocksIterator,
 };
 
 #[test]
@@ -522,12 +522,31 @@ fn script_iter() {
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
 
-        // request iter
+        // request iter init
         ScriptOp::Do(DoOp::RequestIncomingRequest {
-            request: proto::Request::IterBlocks(proto::RequestIterBlocks { context: "ectx04", }),
+            request: proto::Request::IterBlocksInit(proto::RequestIterBlocksInit { context: "ectx04", }),
         }),
-        ScriptOp::Expect(ExpectOp::MakeIterBlocksStream),
-        ScriptOp::Do(DoOp::StreamReady { iter_context: "sctx00", }),
+        ScriptOp::Expect(ExpectOp::IterBlocksInit {
+            expect_iter_blocks: IterBlocks {
+                blocks_total_count: 2,
+                blocks_total_size: 26,
+                iterator_next: IterBlocksIterator {
+                    block_id_from: block::Id::init(),
+                },
+            },
+            expect_context: "ectx04",
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+
+        // request iter next
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::IterBlocksNext(proto::RequestIterBlocksNext {
+                iterator_next: IterBlocksIterator {
+                    block_id_from: block::Id::init(),
+                },
+                context: "ectx05",
+            }),
+        }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
             expect_offset: 24,
@@ -540,7 +559,7 @@ fn script_iter() {
                         ..Default::default()
                     },
                     context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
-                        iter_blocks_stream_context: "sctx00",
+                        iter_blocks_next_context: "ectx05",
                         next_block_id: block::Id::init().next(),
                     }),
                 }),
@@ -556,7 +575,7 @@ fn script_iter() {
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                         block_bytes: hello_world_bytes(),
                         context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
-                            iter_blocks_stream_context: "sctx00",
+                            iter_blocks_next_context: "ectx05",
                             next_block_id: block::Id::init().next(),
                         }),
                     }),
@@ -577,19 +596,26 @@ fn script_iter() {
             pending_contexts_key: "pk2",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::IterBlocksItem {
-            expect_block_id: block::Id::init(),
-            expect_block_bytes: hello_world_bytes().freeze(),
-            expect_context: "sctx00",
-        }),
-        ScriptOp::Expect(ExpectOp::PollRequest),
-        ScriptOp::Do(DoOp::RequestIncomingIterBlocks {
-            iter_blocks_state: IterBlocksState {
-                iter_blocks_stream_context: "sctx00",
-                iter_blocks_cursor: IterBlocksCursor {
-                    block_id: block::Id::init().next(),
+        ScriptOp::Expect(ExpectOp::IterBlocksNext {
+            expect_item: IterBlocksItem::Block {
+                block_id: block::Id::init(),
+                block_bytes: hello_world_bytes().freeze(),
+                iterator_next: IterBlocksIterator {
+                    block_id_from: block::Id::init().next(),
                 },
             },
+            expect_context: "ectx05",
+        }),
+        ScriptOp::Expect(ExpectOp::PollRequest),
+
+        // request iter next
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::IterBlocksNext(proto::RequestIterBlocksNext {
+                iterator_next: IterBlocksIterator {
+                    block_id_from: block::Id::init().next(),
+                },
+                context: "ectx06",
+            }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
@@ -603,7 +629,7 @@ fn script_iter() {
                         ..Default::default()
                     },
                     context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
-                        iter_blocks_stream_context: "sctx00",
+                        iter_blocks_next_context: "ectx06",
                         next_block_id: block::Id::init().next().next(),
                     }),
                 }),
@@ -619,7 +645,7 @@ fn script_iter() {
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                         block_bytes: hello_world_bytes(),
                         context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
-                            iter_blocks_stream_context: "sctx00",
+                            iter_blocks_next_context: "ectx06",
                             next_block_id: block::Id::init().next().next(),
                         }),
                     }),
@@ -640,22 +666,30 @@ fn script_iter() {
             pending_contexts_key: "pk3",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        ScriptOp::Expect(ExpectOp::IterBlocksItem {
-            expect_block_id: block::Id::init().next(),
-            expect_block_bytes: hello_world_bytes().freeze(),
-            expect_context: "sctx00",
-        }),
-        ScriptOp::Expect(ExpectOp::PollRequest),
-        ScriptOp::Do(DoOp::RequestIncomingIterBlocks {
-            iter_blocks_state: IterBlocksState {
-                iter_blocks_stream_context: "sctx00",
-                iter_blocks_cursor: IterBlocksCursor {
-                    block_id: block::Id::init().next().next(),
+        ScriptOp::Expect(ExpectOp::IterBlocksNext {
+            expect_item: IterBlocksItem::Block {
+                block_id: block::Id::init().next(),
+                block_bytes: hello_world_bytes().freeze(),
+                iterator_next: IterBlocksIterator {
+                    block_id_from: block::Id::init().next().next(),
                 },
             },
+            expect_context: "ectx06",
         }),
-        ScriptOp::Expect(ExpectOp::IterBlocksFinish {
-            expect_context: "sctx00",
+        ScriptOp::Expect(ExpectOp::PollRequest),
+
+        // request iter next
+        ScriptOp::Do(DoOp::RequestIncomingRequest {
+            request: proto::Request::IterBlocksNext(proto::RequestIterBlocksNext {
+                iterator_next: IterBlocksIterator {
+                    block_id_from: block::Id::init().next().next(),
+                },
+                context: "ectx07",
+            }),
+        }),
+        ScriptOp::Expect(ExpectOp::IterBlocksNext {
+            expect_item: IterBlocksItem::NoMoreBlocks,
+            expect_context: "ectx07",
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
     ];

@@ -1,44 +1,56 @@
-use std::collections::HashMap;
-
-use alloc_pool::bytes::{
-    Bytes,
-    BytesMut,
-};
-
-use super::{
-    lru,
-    task,
-    block,
-    proto,
-    Op,
-    Event,
-    InfoOp,
-    FlushOp,
-    QueryOp,
-    EventOp,
-    Performer,
-    TaskDoneOp,
-    ReadBlockOp,
-    WriteBlockOp,
-    DeleteBlockOp,
-    IterBlocksItemOp,
-    IterBlocksFinishOp,
-    IterBlocksState,
-    PrepareInterpretTaskOp,
-    PrepareInterpretTaskKind,
-    PrepareInterpretTaskWriteBlock,
-    PrepareInterpretTaskDeleteBlock,
-    ProcessReadBlockTaskDoneOp,
-    InterpretTask,
-    DefragConfig,
-    PerformerBuilderInit,
-    Context as BaseContext,
-    super::{
-        storage,
+use std::{
+    collections::{
+        HashMap,
     },
 };
 
-use crate::Info;
+use alloc_pool::{
+    bytes::{
+        Bytes,
+        BytesMut,
+    },
+};
+
+use crate::{
+    block,
+    proto,
+    storage,
+    context::{
+        Context as BaseContext,
+    },
+    wheel::{
+        lru,
+        core::{
+            task,
+            performer::{
+                Op,
+                Event,
+                InfoOp,
+                FlushOp,
+                QueryOp,
+                EventOp,
+                Performer,
+                TaskDoneOp,
+                ReadBlockOp,
+                WriteBlockOp,
+                DeleteBlockOp,
+                IterBlocksInitOp,
+                IterBlocksNextOp,
+                PrepareInterpretTaskOp,
+                PrepareInterpretTaskKind,
+                PrepareInterpretTaskWriteBlock,
+                PrepareInterpretTaskDeleteBlock,
+                ProcessReadBlockTaskDoneOp,
+                InterpretTask,
+                DefragConfig,
+                PerformerBuilderInit,
+            },
+        },
+    },
+    Info,
+    IterBlocks,
+    IterBlocksItem,
+};
 
 mod basic;
 mod defrag;
@@ -55,8 +67,8 @@ impl BaseContext for Context {
     type WriteBlock = C;
     type ReadBlock = C;
     type DeleteBlock = C;
-    type IterBlocks = C;
-    type IterBlocksStream = C;
+    type IterBlocksInit = C;
+    type IterBlocksNext = C;
 }
 
 fn init() -> Performer<Context> {
@@ -113,7 +125,6 @@ enum ExpectOp {
     Idle,
     PollRequest,
     PollRequestAndInterpreter,
-    MakeIterBlocksStream,
     InterpretTask { expect_offset: u64, expect_task: ExpectTask, },
     InfoSuccess { expect_info: Info, expect_context: C, },
     FlushSuccess { expect_context: C, },
@@ -123,19 +134,18 @@ enum ExpectOp {
     ReadBlockDone { expect_block_bytes: Bytes, expect_context: C, },
     DeleteBlockNotFound { expect_context: C, },
     DeleteBlockDone { expect_block_id: block::Id, expect_context: C, },
-    IterBlocksItem { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: C, },
-    IterBlocksFinish { expect_context: C, },
+    IterBlocksInit { expect_iter_blocks: IterBlocks, expect_context: C, },
+    IterBlocksNext { expect_item: IterBlocksItem, expect_context: C, },
     PrepareInterpretTaskWriteBlock { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_context: task::WriteBlockContext<C>, },
     PrepareInterpretTaskDeleteBlock { expect_block_id: block::Id, expect_context: task::DeleteBlockContext<C>, },
     ProcessReadBlockTaskDone { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_pending_contexts_key: &'static str, },
 }
 
-#[allow(dead_code)]
+// #[allow(dead_code)]
 #[derive(Debug)]
 enum DoOp {
     RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, },
     RequestAndInterpreterIncomingTaskDone { task_done: task::Done<Context>, },
-    RequestAndInterpreterIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, },
     RequestAndInterpreterIncomingPreparedWriteBlockDone {
         block_id: block::Id,
         write_block_bytes: BytesMut,
@@ -146,13 +156,13 @@ enum DoOp {
         delete_block_bytes: BytesMut,
         context: task::DeleteBlockContext<C>,
     },
-    RequestAndInterpreterIncomingProcessReadBlockDone {
-        block_id: block::Id,
-        block_bytes: Bytes,
-        pending_contexts_key: &'static str,
-    },
+    // // temporarily not used anywhere
+    // RequestAndInterpreterIncomingProcessReadBlockDone {
+    //     block_id: block::Id,
+    //     block_bytes: Bytes,
+    //     pending_contexts_key: &'static str,
+    // },
     RequestIncomingRequest { request: proto::Request<Context>, },
-    RequestIncomingIterBlocks { iter_blocks_state: IterBlocksState<C>, },
     RequestIncomingPreparedWriteBlockDone { block_id: block::Id, write_block_bytes: BytesMut, context: task::WriteBlockContext<C>, },
     RequestIncomingPreparedDeleteBlockDone { block_id: block::Id, delete_block_bytes: BytesMut, context: task::DeleteBlockContext<C>, },
     RequestIncomingProcessReadBlockDone {
@@ -161,7 +171,6 @@ enum DoOp {
         pending_contexts_key: &'static str,
     },
     TaskAccept,
-    StreamReady { iter_context: C, },
 }
 
 #[derive(Debug)]
@@ -232,8 +241,6 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 poll.next.incoming_request(request),
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone { task_done, })) =>
                                 poll.next.incoming_task_done(task_done),
-                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingIterBlocks { iter_blocks_state, })) =>
-                                poll.next.incoming_iter_blocks(iter_blocks_state),
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
                                 block_id,
                                 write_block_bytes,
@@ -244,14 +251,15 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                     task::WriteBlockBytes::Chunk(write_block_bytes.freeze()),
                                     context,
                                 ),
-                            Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingProcessReadBlockDone {
-                                block_id,
-                                block_bytes,
-                                pending_contexts_key,
-                            })) => {
-                                let pending_contexts = pending_contexts_table.remove(pending_contexts_key).unwrap();
-                                poll.next.process_read_block_done(block_id, block_bytes, pending_contexts)
-                            },
+                            // // temporarily not used anywhere
+                            // Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingProcessReadBlockDone {
+                            //     block_id,
+                            //     block_bytes,
+                            //     pending_contexts_key,
+                            // })) => {
+                            //     let pending_contexts = pending_contexts_table.remove(pending_contexts_key).unwrap();
+                            //     poll.next.process_read_block_done(block_id, block_bytes, pending_contexts)
+                            // },
                             Some(ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
                                 block_id,
                                 delete_block_bytes,
@@ -282,8 +290,6 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                                 break,
                             Some(ScriptOp::Do(DoOp::RequestIncomingRequest { request, })) =>
                                 poll.next.incoming_request(request),
-                            Some(ScriptOp::Do(DoOp::RequestIncomingIterBlocks { iter_blocks_state, })) =>
-                                poll.next.incoming_iter_blocks(iter_blocks_state),
                             Some(ScriptOp::Do(DoOp::RequestIncomingPreparedWriteBlockDone { block_id, write_block_bytes, context, })) =>
                                 poll.next.prepared_write_block_done(
                                     block_id,
@@ -301,32 +307,6 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         },
                     Some(other_op) =>
                         panic!("expecting exact ExpectOp::PollRequest for PollRequest but got {:?} @ {}", other_op, script_len - script.len()),
-                },
-
-            Op::Query(QueryOp::MakeIterBlocksStream(make_iter_block_stream)) =>
-                match script.pop() {
-                    None =>
-                        panic!(
-                            "unexpected script end on MakeIterBlocksStream, expecting ExpectOp::MakeIterBlocksStream @ {}",
-                            script_len - script.len(),
-                        ),
-                    Some(ScriptOp::Expect(ExpectOp::MakeIterBlocksStream)) =>
-                        match script.pop() {
-                            None =>
-                                panic!(
-                                    "unexpected script end on ExpectOp::MakeIterBlocksStream, expecting DoOp::StreamReady @ {}",
-                                    script_len - script.len(),
-                                ),
-                            Some(ScriptOp::Do(DoOp::StreamReady { iter_context, })) =>
-                                make_iter_block_stream.next.stream_ready(iter_context),
-                            Some(other_op) =>
-                                panic!("expected DoOp::StreamReady but got {:?} @ {}", other_op, script_len - script.len()),
-                        },
-                    Some(other_op) =>
-                        panic!(
-                            "expecting exact ExpectOp::MakeIterBlocksStream for MakeIterBlocksStream but got {:?} @ {}",
-                            other_op, script_len - script.len(),
-                        ),
                 },
 
             Op::Query(QueryOp::InterpretTask(InterpretTask { offset, task, next, })) =>
@@ -492,42 +472,36 @@ fn interpret(performer: Performer<Context>, mut script: Vec<ScriptOp>) {
                         ),
                 },
 
-            Op::Event(Event {
-                op: EventOp::IterBlocksItem(IterBlocksItemOp {
-                    block_id,
-                    block_bytes,
-                    iter_blocks_state: IterBlocksState { iter_blocks_stream_context, .. },
-                }),
-                performer,
-            }) =>
+            Op::Event(Event { op: EventOp::IterBlocksInit(IterBlocksInitOp { iter_blocks, iter_blocks_init_context, }), performer, }) =>
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on IterBlocksItemOp, expecting ExpectOp::IterBlocksItem @ {}",
+                            "unexpected script end on EventOp::IterBlocksInit, expecting ExpectOp::IterBlocksInit @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::Expect(ExpectOp::IterBlocksItem { expect_block_id, expect_block_bytes, expect_context, }))
-                        if expect_block_id == block_id && expect_block_bytes == block_bytes && expect_context == iter_blocks_stream_context =>
+                    Some(ScriptOp::Expect(ExpectOp::IterBlocksInit { expect_iter_blocks, expect_context, }))
+                        if expect_iter_blocks == iter_blocks && expect_context == iter_blocks_init_context =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectOp::IterBlocksItem for IterBlocksItemOp but got {:?} @ {}",
-                            other_op, script_len - script.len(),
+                            "expecting exact ExpectOp::IterBlocksInit with {:?} for ExpectOp::IterBlocksInit but got {:?} @ {}",
+                            iter_blocks, other_op, script_len - script.len(),
                         ),
                 },
 
-            Op::Event(Event { op: EventOp::IterBlocksFinish(IterBlocksFinishOp { iter_blocks_stream_context, }, ), performer, }) =>
+            Op::Event(Event { op: EventOp::IterBlocksNext(IterBlocksNextOp { item, iter_blocks_next_context, }), performer, }) =>
                 match script.pop() {
                     None =>
                         panic!(
-                            "unexpected script end on IterBlocksFinishOp, expecting ExpectOp::IterBlocksFinish @ {}",
+                            "unexpected script end on EventOp::IterBlocksNext, expecting ExpectOp::IterBlocksNext @ {}",
                             script_len - script.len(),
                         ),
-                    Some(ScriptOp::Expect(ExpectOp::IterBlocksFinish { expect_context, })) if expect_context == iter_blocks_stream_context =>
+                    Some(ScriptOp::Expect(ExpectOp::IterBlocksNext { expect_item, expect_context, }))
+                        if expect_item == item && expect_context == iter_blocks_next_context =>
                         performer.next(),
                     Some(other_op) =>
                         panic!(
-                            "expecting exact ExpectOp::IterBlocksFinish for IterBlocksFinishOp but got {:?} @ {}",
+                            "expecting exact ExpectOp::IterBlocksNext for ExpectOp::IterBlocksNext but got {:?} @ {}",
                             other_op, script_len - script.len(),
                         ),
                 },
