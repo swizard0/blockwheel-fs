@@ -9,6 +9,7 @@ use crate::{
     context::{
         Context,
     },
+    IterBlocksIterator,
 };
 
 #[derive(Debug)]
@@ -57,5 +58,6 @@ pub struct RequestIterBlocksInit<C> {
 
 #[derive(Debug)]
 pub struct RequestIterBlocksNext<C> {
+    pub iterator_next: IterBlocksIterator,
     pub context: C,
 }

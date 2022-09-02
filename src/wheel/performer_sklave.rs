@@ -20,9 +20,7 @@ use crate::{
     },
     Flushed,
     Deleted,
-    IterBlocks,
     AccessPolicy,
-    IterBlocksItem,
     InterpretStats,
     RequestWriteBlockError,
     RequestReadBlockError,
@@ -34,7 +32,6 @@ pub enum Order<A> where A: AccessPolicy {
     Request(proto::Request<Context<A>>),
     TaskDoneStats(OrderTaskDoneStats<A>),
     DeviceSyncDone(OrderDeviceSyncDone<A>),
-    IterBlocks(OrderIterBlocks<A>),
     PreparedWriteBlockDone(OrderPreparedWriteBlockDone<A>),
     ProcessReadBlockDone(OrderProcessReadBlockDone),
     PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone<A>),
@@ -51,10 +48,6 @@ pub struct OrderTaskDoneStats<A> where A: AccessPolicy {
 
 pub struct OrderDeviceSyncDone<A> where A: AccessPolicy {
     pub flush_context: <Context<A> as context::Context>::Flush,
-}
-
-pub struct OrderIterBlocks<A> where A: AccessPolicy {
-    pub iter_blocks_state: performer::IterBlocksState<<Context<A> as context::Context>::IterBlocksNext>,
 }
 
 pub struct OrderPreparedWriteBlockDone<A> where A: AccessPolicy {
@@ -168,18 +161,6 @@ where A: AccessPolicy,
                             Kont::Initialize | Kont::Start { .. } | Kont::PollRequest { .. } =>
                                 panic!("unexpected Order::TaskDoneStats without poll Kont::PollRequestAndInterpreter"),
                         },
-                    Order::IterBlocks(OrderIterBlocks { iter_blocks_state, }) => {
-
-                        todo!()
-                        // match kont {
-                        //     Kont::PollRequestAndInterpreter { poll, } =>
-                        //         break 'op poll.next.incoming_iter_blocks(iter_blocks_state),
-                        //     Kont::PollRequest { poll, } =>
-                        //         break 'op poll.next.incoming_iter_blocks(iter_blocks_state),
-                        //     Kont::Initialize | Kont::Start { .. } =>
-                        //         panic!("unexpected Order::IterBlocks without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
-                        // },
-                    },
                     Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
                         output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
                     }) =>
@@ -256,31 +237,6 @@ where A: AccessPolicy,
                         .map_err(Error::InterpretPushTask)?;
                     let performer = next.task_accepted();
                     performer.next()
-                },
-
-                performer::Op::Query(performer::QueryOp::MakeIterBlocksStream(performer::MakeIterBlocksStream {
-                    blocks_total_count,
-                    blocks_total_size,
-                    iter_blocks_context,
-                    next,
-                })) => {
-
-                    todo!()
-                    // let (blocks_tx, blocks_rx) = futures::channel::mpsc::channel(0);
-                    // let iter_blocks = IterBlocks {
-                    //     blocks_total_count,
-                    //     blocks_total_size,
-                    //     blocks_rx,
-                    // };
-                    // if let Err(_send_error) = reply_tx.send(iter_blocks) {
-                    //     log::warn!("Pid is gone during IterBlocks query result send");
-                    // }
-
-                    // let iter_blocks_stream = blockwheel_context::IterBlocksStreamContext {
-                    //     blocks_tx,
-                    //     iter_task_tx,
-                    // };
-                    // next.stream_ready(iter_blocks_stream)
                 },
 
                 performer::Op::Event(performer::Event {
@@ -378,48 +334,33 @@ where A: AccessPolicy,
                 },
 
                 performer::Op::Event(performer::Event {
-                    op: performer::EventOp::IterBlocksItem(
-                        performer::IterBlocksItemOp {
-                            block_id,
-                            block_bytes,
-                            iter_blocks_state: performer::IterBlocksState {
-                                iter_blocks_stream_context,
-                                iter_blocks_cursor,
-                            },
+                    op: performer::EventOp::IterBlocksInit(
+                        performer::IterBlocksInitOp {
+                            iter_blocks,
+                            iter_blocks_init_context: rueckkopplung,
                         },
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // let iter_task = IterTask::Item {
-                    //     blocks_tx,
-                    //     item: IterBlocksItem::Block {
-                    //         block_id,
-                    //         block_bytes,
-                    //     },
-                    //     iter_blocks_cursor,
-                    // };
-                    // if let Err(_send_error) = iter_task_tx.send(iter_task) {
-                    //     return Err(Error::WheelProcessLost);
-                    // }
-                    // performer.next()
+                    if let Err(commit_error) = rueckkopplung.commit(iter_blocks) {
+                        log::warn!("rueckkopplung is gone during IterBlocksInit result send: {commit_error:?}");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
-                    op: performer::EventOp::IterBlocksFinish(
-                        performer::IterBlocksFinishOp {
-                            iter_blocks_stream_context,
+                    op: performer::EventOp::IterBlocksNext(
+                        performer::IterBlocksNextOp {
+                            item,
+                            iter_blocks_next_context: rueckkopplung,
                         },
                     ),
                     performer,
                 }) => {
-
-                    todo!()
-                    // if let Err(_send_error) = iter_task_tx.send(IterTask::Finish { blocks_tx, }) {
-                    //     return Err(Error::WheelProcessLost);
-                    // }
-                    // performer.next()
+                    if let Err(commit_error) = rueckkopplung.commit(item) {
+                        log::warn!("rueckkopplung is gone during IterBlocksNext result send: {commit_error:?}");
+                    }
+                    performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
@@ -512,8 +453,6 @@ impl<A> fmt::Debug for Order<A> where A: AccessPolicy {
                 fmt.debug_tuple("Order::TaskDoneStats").finish(),
             Order::DeviceSyncDone(..) =>
                 fmt.debug_tuple("Order::DeviceSyncDone").finish(),
-            Order::IterBlocks(..) =>
-                fmt.debug_tuple("Order::IterBlocks").finish(),
             Order::PreparedWriteBlockDone(..) =>
                 fmt.debug_tuple("Order::PreparedWriteBlockDone").finish(),
             Order::ProcessReadBlockDone(..) =>

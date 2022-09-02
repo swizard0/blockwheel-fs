@@ -9,7 +9,6 @@ use arbeitssklave::{
 };
 
 use crate::{
-    block,
     context,
     AccessPolicy,
 };

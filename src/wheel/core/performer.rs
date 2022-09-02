@@ -6,17 +6,19 @@ use std::{
     },
 };
 
-use alloc_pool::bytes::{
-    Bytes,
-    BytesMut,
+use alloc_pool::{
+    bytes::{
+        Bytes,
+        BytesMut,
+    },
 };
 
 use crate::{
-    Info,
-    InterpretStats,
     proto,
     storage,
-    context::Context,
+    context::{
+        Context,
+    },
     wheel::{
         lru,
         core::{
@@ -30,6 +32,11 @@ use crate::{
             BlockEntryGet,
         },
     },
+    Info,
+    IterBlocks,
+    IterBlocksItem,
+    InterpretStats,
+    IterBlocksIterator,
 };
 
 #[cfg(test)]
@@ -89,14 +96,6 @@ pub enum QueryOp<C> where C: Context {
     PollRequestAndInterpreter(PollRequestAndInterpreter<C>),
     PollRequest(PollRequest<C>),
     InterpretTask(InterpretTask<C>),
-    MakeIterBlocksStream(MakeIterBlocksStream<C>),
-}
-
-pub struct MakeIterBlocksStream<C> where C: Context {
-    pub blocks_total_count: usize,
-    pub blocks_total_size: usize,
-    pub iter_blocks_context: C::IterBlocksInit,
-    pub next: MakeIterBlocksStreamNext<C>,
 }
 
 pub struct PollRequestAndInterpreter<C> where C: Context {
@@ -118,8 +117,8 @@ pub enum EventOp<C> where C: Context {
     WriteBlock(TaskDoneOp<C::WriteBlock, WriteBlockOp>),
     ReadBlock(TaskDoneOp<C::ReadBlock, ReadBlockOp>),
     DeleteBlock(TaskDoneOp<C::DeleteBlock, DeleteBlockOp>),
-    IterBlocksItem(IterBlocksItemOp<C::IterBlocksNext>),
-    IterBlocksFinish(IterBlocksFinishOp<C::IterBlocksNext>),
+    IterBlocksInit(IterBlocksInitOp<C::IterBlocksInit>),
+    IterBlocksNext(IterBlocksNextOp<C::IterBlocksNext>),
     PrepareInterpretTask(PrepareInterpretTaskOp<C>),
     ProcessReadBlockTaskDone(ProcessReadBlockTaskDoneOp),
 }
@@ -152,10 +151,14 @@ pub enum DeleteBlockOp {
     Done { block_id: block::Id, },
 }
 
-pub struct IterBlocksItemOp<C> {
-    pub block_id: block::Id,
-    pub block_bytes: Bytes,
-    pub iter_blocks_state: IterBlocksState<C>,
+pub struct IterBlocksInitOp<C> {
+    pub iter_blocks: IterBlocks,
+    pub iter_blocks_init_context: C,
+}
+
+pub struct IterBlocksNextOp<C> {
+    pub item: IterBlocksItem,
+    pub iter_blocks_next_context: C,
 }
 
 pub struct PrepareInterpretTaskOp<C> where C: Context {
@@ -184,21 +187,6 @@ pub struct ProcessReadBlockTaskDoneOp {
     pub pending_contexts: task::queue::PendingReadContextBag,
 }
 
-#[derive(Debug)]
-pub struct IterBlocksState<C> {
-    pub iter_blocks_stream_context: C,
-    pub iter_blocks_cursor: IterBlocksCursor,
-}
-
-#[derive(Debug)]
-pub struct IterBlocksCursor {
-    block_id: block::Id,
-}
-
-pub struct IterBlocksFinishOp<C> {
-    pub iter_blocks_stream_context: C,
-}
-
 pub struct InterpretTask<C> where C: Context {
     pub offset: u64,
     pub task: task::Task<C>,
@@ -214,10 +202,6 @@ pub struct PollRequestAndInterpreterNext<C> where C: Context {
 }
 
 pub struct PollRequestNext<C> where C: Context {
-    inner: Inner<C>,
-}
-
-pub struct MakeIterBlocksStreamNext<C> where C: Context {
     inner: Inner<C>,
 }
 
@@ -406,32 +390,12 @@ impl<C> PollRequestAndInterpreterNext<C> where C: Context {
         self.inner.rollback_bg_task_state();
         self.inner.process_read_block_done(block_id, block_bytes, pending_contexts)
     }
-
-    // pub fn incoming_iter_blocks(
-    //     mut self,
-    //     iter_blocks_state: IterBlocksState<C::IterBlocksStream>,
-    // )
-    //     -> Op<C>
-    // {
-    //     self.inner.rollback_bg_task_state();
-    //     self.inner.iter_blocks_stream_next(
-    //         iter_blocks_state.iter_blocks_cursor.block_id,
-    //         iter_blocks_state.iter_blocks_stream_context,
-    //     )
-    // }
 }
 
 impl<C> PollRequestNext<C> where C: Context {
     pub fn incoming_request(self, request: proto::Request<C>) -> Op<C> {
         self.inner.incoming_request(request)
     }
-
-    // pub fn incoming_iter_blocks(self, iter_blocks_state: IterBlocksState<C::IterBlocksStream>) -> Op<C> {
-    //     self.inner.iter_blocks_stream_next(
-    //         iter_blocks_state.iter_blocks_cursor.block_id,
-    //         iter_blocks_state.iter_blocks_stream_context,
-    //     )
-    // }
 
     pub fn prepared_write_block_done(
         self,
@@ -476,12 +440,6 @@ impl<C> InterpretTaskNext<C> where C: Context {
                 unreachable!(),
         };
         Performer { inner: self.inner, }
-    }
-}
-
-impl<C> MakeIterBlocksStreamNext<C> where C: Context {
-    pub fn stream_ready(self, iter_blocks_stream_context: C::IterBlocksNext) -> Op<C> {
-        self.inner.iter_blocks_stream_ready(iter_blocks_stream_context)
     }
 }
 
@@ -629,28 +587,28 @@ impl<C> Inner<C> where C: Context {
                         (
                             None,
                             task::ReadBlockContext::Process(
-                                task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, },
+                                task::ReadBlockProcessContext::IterBlocks { iter_blocks_next_context, next_block_id, },
                             ),
                         ) => {
                             // skip this block, proceed with the next one
-                            self.iter_blocks_stream_next_op(next_block_id, iter_blocks_stream_context)
+                            self.iter_blocks_next_op(next_block_id, iter_blocks_next_context)
                         },
 
                         (
                             Some(block_bytes),
                             task::ReadBlockContext::Process(
-                                task::ReadBlockProcessContext::IterBlocks { iter_blocks_stream_context, next_block_id, },
+                                task::ReadBlockProcessContext::IterBlocks { iter_blocks_next_context, next_block_id, },
                             ),
                         ) =>
-                            Some(EventOp::IterBlocksItem(IterBlocksItemOp {
-                                block_id: block_id.clone(),
-                                block_bytes,
-                                iter_blocks_state: IterBlocksState {
-                                    iter_blocks_stream_context,
-                                    iter_blocks_cursor: IterBlocksCursor {
-                                        block_id: next_block_id,
+                            Some(EventOp::IterBlocksNext(IterBlocksNextOp {
+                                item: IterBlocksItem::Block {
+                                    block_id: block_id.clone(),
+                                    block_bytes,
+                                    iterator_next: IterBlocksIterator {
+                                        block_id_from: next_block_id,
                                     },
                                 },
+                                iter_blocks_next_context,
                             })),
 
                         (_, task::ReadBlockContext::Defrag(..)) =>
@@ -701,11 +659,11 @@ impl<C> Inner<C> where C: Context {
                             });
                         },
                         task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
-                            iter_blocks_stream_context,
+                            iter_blocks_next_context,
                             next_block_id,
                         }) => {
                             // skip this block, proceed with the next one
-                            return self.iter_blocks_stream_next(next_block_id, iter_blocks_stream_context);
+                            return self.iter_blocks_next(next_block_id, iter_blocks_next_context);
                         },
                         task::ReadBlockContext::Defrag { .. } => {
                             // cancel defrag read task
@@ -853,9 +811,9 @@ impl<C> Inner<C> where C: Context {
             proto::Request::DeleteBlock(request_delete_block) =>
                 self.incoming_request_delete_block(request_delete_block),
             proto::Request::IterBlocksInit(request_iter_blocks_init) =>
-                todo!(),
+                self.incoming_request_iter_blocks_init(request_iter_blocks_init),
             proto::Request::IterBlocksNext(request_iter_blocks_next) =>
-                todo!(),
+                self.incoming_request_iter_blocks_next(request_iter_blocks_next),
         }
     }
 
@@ -1035,16 +993,28 @@ impl<C> Inner<C> where C: Context {
         }
     }
 
-    fn incoming_request_iter_blocks(self, request_iter_blocks: proto::RequestIterBlocksInit<C::IterBlocksInit>) -> Op<C> {
+    fn incoming_request_iter_blocks_init(self, request_iter_blocks_init: proto::RequestIterBlocksInit<C::IterBlocksInit>) -> Op<C> {
         let info = self.schema.info();
-        Op::Query(QueryOp::MakeIterBlocksStream(MakeIterBlocksStream {
-            blocks_total_count: info.blocks_count,
-            blocks_total_size: info.data_bytes_used,
-            iter_blocks_context: request_iter_blocks.context,
-            next: MakeIterBlocksStreamNext {
-                inner: self,
-            },
-        }))
+        Op::Event(Event {
+            op: EventOp::IterBlocksInit(IterBlocksInitOp {
+                iter_blocks: IterBlocks {
+                    blocks_total_count: info.blocks_count,
+                    blocks_total_size: info.data_bytes_used,
+                    iterator_next: IterBlocksIterator {
+                        block_id_from: block::Id::init(),
+                    },
+                },
+                iter_blocks_init_context: request_iter_blocks_init.context,
+            }),
+            performer: Performer { inner: self, },
+        })
+    }
+
+    fn incoming_request_iter_blocks_next(self, request_iter_blocks_next: proto::RequestIterBlocksNext<C::IterBlocksNext>) -> Op<C> {
+        self.iter_blocks_next(
+            request_iter_blocks_next.iterator_next.block_id_from,
+            request_iter_blocks_next.context,
+        )
     }
 
     fn prepared_write_block_done(
@@ -1272,52 +1242,48 @@ impl<C> Inner<C> where C: Context {
         }
     }
 
-    fn iter_blocks_stream_ready(self, iter_blocks_stream_context: C::IterBlocksNext) -> Op<C> {
-        self.iter_blocks_stream_next(block::Id::init(), iter_blocks_stream_context)
-    }
-
-    fn iter_blocks_stream_next(mut self, block_id_from: block::Id, iter_blocks_stream_context: C::IterBlocksNext) -> Op<C> {
-        if let Some(op) = self.iter_blocks_stream_next_op(block_id_from, iter_blocks_stream_context) {
+    fn iter_blocks_next(mut self, block_id_from: block::Id, iter_blocks_next_context: C::IterBlocksNext) -> Op<C> {
+        if let Some(op) = self.iter_blocks_next_op(block_id_from, iter_blocks_next_context) {
             Op::Event(Event { op, performer: Performer { inner: self, }, })
         } else {
             Op::Idle(Performer { inner: self, })
         }
     }
 
-    fn iter_blocks_stream_next_op(&mut self, block_id_from: block::Id, iter_blocks_stream_context: C::IterBlocksNext) -> Option<EventOp<C>> {
+    fn iter_blocks_next_op(&mut self, block_id_from: block::Id, iter_blocks_next_context: C::IterBlocksNext) -> Option<EventOp<C>> {
         match self.schema.next_block_id_from(block_id_from) {
             None =>
-                Some(EventOp::IterBlocksFinish(IterBlocksFinishOp {
-                    iter_blocks_stream_context,
+                Some(EventOp::IterBlocksNext(IterBlocksNextOp {
+                    item: IterBlocksItem::NoMoreBlocks,
+                    iter_blocks_next_context,
                 })),
 
             Some(block_id) =>
                 match self.schema.process_read_block_request(&block_id) {
 
-                    schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { block_bytes, .. }) => {
-                        Some(EventOp::IterBlocksItem(IterBlocksItemOp {
-                            block_id: block_id.clone(),
-                            block_bytes: block_bytes,
-                            iter_blocks_state: IterBlocksState {
-                                iter_blocks_stream_context,
-                                iter_blocks_cursor: IterBlocksCursor {
-                                    block_id: block_id.next(),
+                    schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { block_bytes, .. }) =>
+                        Some(EventOp::IterBlocksNext(IterBlocksNextOp {
+                            item: IterBlocksItem::Block {
+                                block_id: block_id.clone(),
+                                block_bytes,
+                                iterator_next: IterBlocksIterator {
+                                    block_id_from: block_id.next(),
                                 },
                             },
-                        }))
-                    },
+                            iter_blocks_next_context,
+                        })),
 
                     schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) =>
                         if let Some(block_bytes) = self.lru_cache.get(&block_id) {
-                            Some(EventOp::IterBlocksItem(IterBlocksItemOp {
-                                block_id: block_id.clone(),
-                                block_bytes: block_bytes.clone(),
-                                iter_blocks_state: IterBlocksState {
-                                    iter_blocks_stream_context,
-                                    iter_blocks_cursor: IterBlocksCursor {
-                                        block_id: block_id.next(),
+                            Some(EventOp::IterBlocksNext(IterBlocksNextOp {
+                                item: IterBlocksItem::Block {
+                                    block_id: block_id.clone(),
+                                    block_bytes: block_bytes.clone(),
+                                    iterator_next: IterBlocksIterator {
+                                        block_id_from: block_id.next(),
                                     },
                                 },
+                                iter_blocks_next_context,
                             }))
                         } else {
                             let mut lens = self.tasks_queue.focus_block_id(block_id.clone());
@@ -1327,7 +1293,7 @@ impl<C> Inner<C> where C: Context {
                                     kind: task::TaskKind::ReadBlock(task::ReadBlock {
                                         block_header: block_header.clone(),
                                         context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::IterBlocks {
-                                            iter_blocks_stream_context,
+                                            iter_blocks_next_context,
                                             next_block_id: block_id.next(),
                                         }),
                                     }),
