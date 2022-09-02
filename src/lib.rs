@@ -89,6 +89,7 @@ impl Default for RamInterpreterParams {
 
 #[derive(Debug)]
 pub enum Error {
+    Interpreter(wheel::interpret::Error),
     Arbeitssklave(arbeitssklave::Error),
 }
 
@@ -149,25 +150,29 @@ impl<A> Freie<A> where A: AccessPolicy {
         let performer_sklave_meister =
             self.performer_sklave_freie.meister();
 
-        let interpreter = wheel::interpret::Interpreter::starten(
-            params,
-            performer_sklave_meister,
-            blocks_pool.clone(),
-            thread_pool,
-        );
+        let interpreter =
+            wheel::interpret::Interpreter::starten(
+                params,
+                performer_sklave_meister,
+                blocks_pool.clone(),
+                thread_pool,
+            )
+            .map_err(Error::Interpreter)?;
 
-        // let arbeitssklave_meister = self.arbeitssklave_freie
-        //     .versklaven(
-        //         Welt {
-        //             params,
-        //             blocks_pool,
-        //         },
-        //         thread_pool,
-        //     )
-        //     .map_err(Error::Arbeitssklave)?;
-        // Ok(Meister { arbeitssklave_meister, })
+        let performer_sklave_meister = arbeitssklave::Freie::new()
+            .versklaven(
+                wheel::performer_sklave::Welt {
+                    env: wheel::performer_sklave::Env {
+                        interpreter,
+                        blocks_pool,
+                    },
+                    kont: wheel::performer_sklave::Kont::Initialize,
+                },
+                thread_pool,
+            )
+            .map_err(Error::Arbeitssklave)?;
 
-        todo!()
+        Ok(Meister { performer_sklave_meister, })
     }
 }
 

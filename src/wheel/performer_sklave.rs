@@ -36,7 +36,6 @@ pub enum Order<A> where A: AccessPolicy {
     PreparedWriteBlockDone(OrderPreparedWriteBlockDone<A>),
     ProcessReadBlockDone(OrderProcessReadBlockDone),
     PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone<A>),
-    InterpreterError(interpret::Error),
 }
 
 pub struct OrderBootstrap<A> where A: AccessPolicy {
@@ -79,7 +78,7 @@ pub struct Welt<A> where A: AccessPolicy {
 }
 
 pub enum Kont<A> where A: AccessPolicy {
-    Initializing,
+    Initialize,
     Start {
         performer: performer::Performer<Context<A>>,
     },
@@ -124,120 +123,120 @@ fn job<A, P>(
 where A: AccessPolicy,
       P: edeltraud::ThreadPool<job::Job<A>>,
 {
+    let mut incoming_orders = Vec::new();
 
-    todo!()
-    // loop {
-    //     let mut incoming_order = None;
-    //     let mut performer_op = loop {
-    //         match (incoming_order, std::mem::replace(&mut sklavenwelt.kont, Kont::Taken)) {
-    //             (_, Kont::Taken) =>
-    //                 unreachable!(),
-    //             (None, Kont::Start { performer, }) =>
-    //                 break performer.next(),
-    //             (Some(..), Kont::Start { .. }) =>
-    //                 unreachable!(),
-    //             (None, kont @ Kont::PollRequestAndInterpreter { .. }) => {
-    //                 sklavenwelt.kont = kont;
-    //                 match sklave.zu_ihren_diensten(sklavenwelt) {
-    //                     Ok(arbeitssklave::Gehorsam::Machen { befehl, sklavenwelt: next_sklavenwelt, }) => {
-    //                         sklavenwelt = next_sklavenwelt;
-    //                         incoming_order = Some(befehl);
-    //                     },
-    //                     Ok(arbeitssklave::Gehorsam::Rasten) =>
-    //                         return Ok(()),
-    //                     Err(error) =>
-    //                         return Err(Error::Arbeitssklave(error)),
-    //                 }
-    //             },
-    //             (None, kont @ Kont::PollRequest { .. }) => {
-    //                 sklavenwelt.kont = kont;
-    //                 match sklave.zu_ihren_diensten(sklavenwelt) {
-    //                     Ok(arbeitssklave::Gehorsam::Machen { befehl, sklavenwelt: next_sklavenwelt, }) => {
-    //                         sklavenwelt = next_sklavenwelt;
-    //                         incoming_order = Some(befehl);
-    //                     },
-    //                     Ok(arbeitssklave::Gehorsam::Rasten) =>
-    //                         return Ok(()),
-    //                     Err(error) =>
-    //                         return Err(Error::Arbeitssklave(error)),
-    //                 }
-    //             },
+    loop {
+        let mut performer_op = 'op: loop {
+            let kont = match std::mem::replace(&mut sklavenwelt.kont, Kont::Initialize) {
+                Kont::Start { performer, } =>
+                    break 'op performer.next(),
+                other_kont =>
+                    other_kont,
+            };
 
-    //             (Some(Order::Request(request)), Kont::PollRequestAndInterpreter { poll, }) =>
-    //                 break poll.next.incoming_request(request),
-    //             (Some(Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, })), Kont::PollRequestAndInterpreter { poll, }) =>
-    //                 break poll.next.incoming_task_done_stats(task_done, stats),
-    //             (Some(Order::IterBlocks(OrderIterBlocks { iter_blocks_state, })), Kont::PollRequestAndInterpreter { poll, }) =>
-    //                 break poll.next.incoming_iter_blocks(iter_blocks_state),
-    //             (
-    //                 Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
-    //                     output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
-    //                 })),
-    //                 Kont::PollRequestAndInterpreter { poll, },
-    //             ) =>
-    //                 break poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
-    //             (
-    //                 Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
-    //                     output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
-    //                 })),
-    //                 Kont::PollRequestAndInterpreter { poll, },
-    //             ) =>
-    //                 break poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
-    //             (
-    //                 Some(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
-    //                     output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
-    //                 })),
-    //                 Kont::PollRequestAndInterpreter { poll, },
-    //             ) =>
-    //                 break poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
+            while let Some(incoming_order) = incoming_orders.pop() {
+                match incoming_order {
+                    Order::Bootstrap(OrderBootstrap { performer, }) =>
+                        match kont {
+                            Kont::Initialize => {
+                                sklavenwelt.kont = Kont::Start { performer, };
+                                continue 'op;
+                            },
+                            Kont::Start { .. } | Kont::PollRequestAndInterpreter { .. } | Kont::PollRequest { .. } =>
+                                panic!("unexpected Order::Bootstrap without Kont::Initialize"),
+                        },
+                    Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: done_tx, }) => {
 
-    //             (Some(Order::Request(request)), Kont::PollRequest { poll, }) =>
-    //                 break poll.next.incoming_request(request),
-    //             (Some(Order::TaskDoneStats(..)), Kont::PollRequest { .. }) =>
-    //                 unreachable!(),
-    //             (Some(Order::IterBlocks(OrderIterBlocks { iter_blocks_state, })), Kont::PollRequest { poll, }) =>
-    //                 break poll.next.incoming_iter_blocks(iter_blocks_state),
-    //             (
-    //                 Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
-    //                     output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
-    //                 })),
-    //                 Kont::PollRequest { poll, },
-    //             ) =>
-    //                 break poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
-    //             (
-    //                 Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
-    //                     output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
-    //                 })),
-    //                 Kont::PollRequest { poll, },
-    //             ) =>
-    //                 break poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
-    //             (
-    //                 Some(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
-    //                     output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
-    //                 })),
-    //                 Kont::PollRequest { poll, },
-    //             ) =>
-    //                 break poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
+                        todo!();
+                        // if let Err(_send_error) = done_tx.send(Flushed) {
+                        //     return Err(Error::WheelProcessLost);
+                        // }
+                        // sklavenwelt.kont = kont;
+                        // incoming_order = None;
+                    },
+                    Order::Request(request) =>
+                        match kont {
+                            Kont::PollRequestAndInterpreter { poll, } =>
+                                break 'op poll.next.incoming_request(request),
+                            Kont::PollRequest { poll, } =>
+                                break 'op poll.next.incoming_request(request),
+                            Kont::Initialize | Kont::Start { .. } =>
+                                panic!("unexpected Order::Request without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                        },
+                    Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, }) =>
+                        match kont {
+                            Kont::PollRequestAndInterpreter { poll, } =>
+                                break 'op poll.next.incoming_task_done_stats(task_done, stats),
+                            Kont::Initialize | Kont::Start { .. } | Kont::PollRequest { .. } =>
+                                panic!("unexpected Order::TaskDoneStats without poll Kont::PollRequestAndInterpreter"),
+                        },
+                    Order::IterBlocks(OrderIterBlocks { iter_blocks_state, }) => {
 
-    //             (Some(Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: done_tx, })), kont) => {
+                        todo!()
+                        // match kont {
+                        //     Kont::PollRequestAndInterpreter { poll, } =>
+                        //         break 'op poll.next.incoming_iter_blocks(iter_blocks_state),
+                        //     Kont::PollRequest { poll, } =>
+                        //         break 'op poll.next.incoming_iter_blocks(iter_blocks_state),
+                        //     Kont::Initialize | Kont::Start { .. } =>
+                        //         panic!("unexpected Order::IterBlocks without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                        // },
+                    },
+                    Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
+                        output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
+                    }) =>
+                        match kont {
+                            Kont::PollRequestAndInterpreter { poll, } =>
+                                break 'op poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
+                            Kont::PollRequest { poll, } =>
+                                break 'op poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
+                            Kont::Initialize | Kont::Start { .. } =>
+                                panic!("unexpected Order::PreparedWriteBlockDone without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                        },
+                    Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { output: Err(error), }) =>
+                        return Err(Error::InterpretBlockPrepareWrite(error)),
+                    Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
+                        output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
+                    }) =>
+                        match kont {
+                            Kont::PollRequestAndInterpreter { poll, } =>
+                                break 'op poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
+                            Kont::PollRequest { poll, } =>
+                                break 'op poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
+                            Kont::Initialize | Kont::Start { .. } =>
+                                panic!("unexpected Order::ProcessReadBlockDone without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                        },
+                    Order::ProcessReadBlockDone(OrderProcessReadBlockDone { output: Err(error), }) =>
+                        return Err(Error::InterpretBlockProcessRead(error)),
+                    Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
+                        output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
+                    }) =>
+                        match kont {
+                            Kont::PollRequestAndInterpreter { poll, } =>
+                                break 'op poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
+                            Kont::PollRequest { poll, } =>
+                                break 'op poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
+                            Kont::Initialize | Kont::Start { .. } =>
+                                panic!("unexpected Order::PreparedDeleteBlockDone without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                        },
+                    Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone { output: Err(error), }) =>
+                        return Err(Error::InterpretBlockPrepareDelete(error)),
+                }
+            }
 
-    //                 todo!();
-    //                 // if let Err(_send_error) = done_tx.send(Flushed) {
-    //                 //     return Err(Error::WheelProcessLost);
-    //                 // }
-    //                 // sklavenwelt.kont = kont;
-    //                 // incoming_order = None;
-    //             },
-    //             (Some(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { output: Err(error), })), _kont) =>
-    //                 return Err(Error::InterpretBlockPrepareWrite(error)),
-    //             (Some(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone { output: Err(error), })), _kont) =>
-    //                 return Err(Error::InterpretBlockPrepareDelete(error)),
-    //             (Some(Order::ProcessReadBlockDone(OrderProcessReadBlockDone { output: Err(error), })), _kont) =>
-    //                 return Err(Error::InterpretBlockProcessRead(error)),
-    //             (Some(Order::InterpreterError(error)), _kont) =>
-    //                 return Err(Error::InterpretRun(error)),
-    //         }
-    //     };
+            match sklave.zu_ihren_diensten(sklavenwelt) {
+                Ok(arbeitssklave::Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, }) => {
+                    sklavenwelt = next_sklavenwelt;
+                    incoming_orders.extend(befehle);
+                },
+                Ok(arbeitssklave::Gehorsam::Rasten) =>
+                    return Ok(()),
+                Err(error) =>
+                    return Err(Error::Arbeitssklave(error)),
+            }
+        };
+
+        todo!();
 
     //     loop {
     //         performer_op = match performer_op {
@@ -520,7 +519,7 @@ where A: AccessPolicy,
 
     //         };
     //     }
-    // }
+    }
 }
 
 use std::fmt;
@@ -544,8 +543,6 @@ impl<A> fmt::Debug for Order<A> where A: AccessPolicy {
                 fmt.debug_tuple("Order::ProcessReadBlockDone").finish(),
             Order::PreparedDeleteBlockDone(..) =>
                 fmt.debug_tuple("Order::PreparedDeleteBlockDone").finish(),
-            Order::InterpreterError(error) =>
-                fmt.debug_tuple("Order::InterpreterError").field(error).finish(),
         }
     }
 }
