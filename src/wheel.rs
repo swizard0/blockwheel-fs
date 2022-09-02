@@ -31,10 +31,6 @@ mod lru;
 
 #[derive(Debug)]
 pub enum Error {
-    InterpreterInit(performer::BuilderError),
-    InterpreterOpen(interpret::OpenError),
-    InterpreterCreate(interpret::CreateError),
-    InterpreterRun(interpret::RunError),
     Arbeitssklave(arbeitssklave::Error),
     PerformerSklave(performer_sklave::Error),
 }

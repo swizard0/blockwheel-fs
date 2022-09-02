@@ -28,6 +28,7 @@ use crate::{
 };
 
 pub enum Order<A> where A: AccessPolicy {
+    Bootstrap(OrderBootstrap<A>),
     Request(proto::Request<Context<A>>),
     TaskDoneStats(OrderTaskDoneStats<A>),
     DeviceSyncDone(OrderDeviceSyncDone<A>),
@@ -35,7 +36,11 @@ pub enum Order<A> where A: AccessPolicy {
     PreparedWriteBlockDone(OrderPreparedWriteBlockDone<A>),
     ProcessReadBlockDone(OrderProcessReadBlockDone),
     PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone<A>),
-    InterpreterError(interpret::RunError),
+    InterpreterError(interpret::Error),
+}
+
+pub struct OrderBootstrap<A> where A: AccessPolicy {
+    pub performer: performer::Performer<Context<A>>,
 }
 
 pub struct OrderTaskDoneStats<A> where A: AccessPolicy {
@@ -100,7 +105,6 @@ pub enum Error {
     InterpretBlockPrepareWrite(interpret::BlockPrepareWriteJobError),
     InterpretBlockPrepareDelete(interpret::BlockPrepareDeleteJobError),
     InterpretBlockProcessRead(interpret::BlockProcessReadJobError),
-    InterpretRun(interpret::RunError),
 }
 
 pub fn run_job<A, P>(sklave_job: SklaveJob<A>, thread_pool: &P)
@@ -524,6 +528,8 @@ use std::fmt;
 impl<A> fmt::Debug for Order<A> where A: AccessPolicy {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Order::Bootstrap(..) =>
+                fmt.debug_tuple("Order::Bootstrap").finish(),
             Order::Request(..) =>
                 fmt.debug_tuple("Order::Request").finish(),
             Order::TaskDoneStats(..) =>

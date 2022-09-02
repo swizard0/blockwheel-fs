@@ -22,13 +22,16 @@ use crate::{
         Context,
     },
     wheel::{
+        lru,
         block,
         storage,
         performer_sklave,
         core::{
             task,
+            performer,
         },
     },
+    Params,
     AccessPolicy,
     InterpreterParams,
 };
@@ -36,12 +39,12 @@ use crate::{
 pub mod ram;
 pub mod fixed_file;
 
-struct Request<A> where A: AccessPolicy {
+pub struct Request<A> where A: AccessPolicy {
     offset: u64,
     task: task::Task<Context<A>>,
 }
 
-enum Order<A> where A: AccessPolicy {
+pub enum Order<A> where A: AccessPolicy {
     Request(Request<A>),
     DeviceSync { flush_context: <Context<A> as context::Context>::Flush, },
     Terminate,
@@ -59,13 +62,29 @@ pub enum OpenError {
 }
 
 #[derive(Debug)]
-pub enum RunError {
+pub enum Error {
+    Ewig(ewig::Error),
     FixedFile(fixed_file::Error),
     Ram(ram::Error),
+    PerformerBuilderInit(performer::BuilderError),
 }
 
-#[derive(Debug)]
-pub enum Error {
+impl From<ewig::Error> for Error {
+    fn from(error: ewig::Error) -> Error {
+        Error::Ewig(error)
+    }
+}
+
+impl From<fixed_file::Error> for Error {
+    fn from(error: fixed_file::Error) -> Error {
+        Error::FixedFile(error)
+    }
+}
+
+impl From<ram::Error> for Error {
+    fn from(error: ram::Error) -> Error {
+        Error::Ram(error)
+    }
 }
 
 pub struct Interpreter<A> where A: AccessPolicy {
@@ -73,14 +92,54 @@ pub struct Interpreter<A> where A: AccessPolicy {
 }
 
 impl<A> Interpreter<A> where A: AccessPolicy {
-    fn starten(
-        params: InterpreterParams,
-        meister: performer_sklave::Meister<A>,
+    pub fn starten<P>(
+        params: Params,
+        performer_sklave_meister: performer_sklave::Meister<A>,
+        blocks_pool: BytesPool,
+        thread_pool: &P
     )
-        -> Self
+        -> Result<Self, Error>
+    where P: edeltraud::ThreadPool<job::Job<A>> + Clone + Send + 'static,
     {
+        let performer_builder =
+            performer::PerformerBuilderInit::new(
+                lru::Cache::new(params.lru_cache_size_bytes),
+                if params.defrag_parallel_tasks_limit == 0 {
+                    None
+                } else {
+                    Some(performer::DefragConfig::new(params.defrag_parallel_tasks_limit))
+                },
+                params.work_block_size_bytes,
+            )
+            .map_err(Error::PerformerBuilderInit)?;
 
-        todo!()
+        let interpreter_frei = ewig::Freie::new();
+        match params.interpreter {
+            InterpreterParams::FixedFile(interpreter_params) => {
+                let thread_pool_clone = thread_pool.clone();
+                let interpreter_meister = interpreter_frei
+                    .versklaven_als(
+                        "blockwheel_fs::wheel::interpret::fixed_file".to_string(),
+                        move |sklave| {
+                            fixed_file::bootstrap(
+                                sklave,
+                                interpreter_params,
+                                performer_sklave_meister,
+                                performer_builder,
+                                blocks_pool,
+                                thread_pool_clone,
+                            )
+                        },
+                    )?;
+
+
+                todo!()
+            },
+            InterpreterParams::Ram(interpreter_params) => {
+
+                todo!()
+            },
+        }
     }
 }
 

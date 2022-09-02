@@ -127,13 +127,13 @@ where Self::Order: From<komm::UmschlagAbbrechen<Self::Info>>,
 }
 
 pub struct Freie<A> where A: AccessPolicy {
-    freie: arbeitssklave::Freie<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
+    performer_sklave_freie: arbeitssklave::Freie<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
 }
 
 impl<A> Freie<A> where A: AccessPolicy {
     pub fn new() -> Self {
         Self {
-            freie: arbeitssklave::Freie::new(),
+            performer_sklave_freie: arbeitssklave::Freie::new(),
         }
     }
 
@@ -144,10 +144,17 @@ impl<A> Freie<A> where A: AccessPolicy {
         thread_pool: &P,
     )
         -> Result<Meister<A>, Error>
-    where P: edeltraud::ThreadPool<job::Job<A>> + Clone,
+    where P: edeltraud::ThreadPool<job::Job<A>> + Clone + Send + 'static,
     {
-        let arbeitssklave_meister =
-            self.freie.meister();
+        let performer_sklave_meister =
+            self.performer_sklave_freie.meister();
+
+        let interpreter = wheel::interpret::Interpreter::starten(
+            params,
+            performer_sklave_meister,
+            blocks_pool.clone(),
+            thread_pool,
+        );
 
         // let arbeitssklave_meister = self.arbeitssklave_freie
         //     .versklaven(
@@ -165,7 +172,7 @@ impl<A> Freie<A> where A: AccessPolicy {
 }
 
 pub struct Meister<A> where A: AccessPolicy {
-    meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
+    performer_sklave_meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

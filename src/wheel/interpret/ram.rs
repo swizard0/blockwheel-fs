@@ -28,7 +28,6 @@ use crate::{
         interpret::{
             Order,
             Request,
-            RunError,
             AppendTerminatorError,
             block_append_terminator,
         },
