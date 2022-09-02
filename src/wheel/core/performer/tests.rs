@@ -141,7 +141,6 @@ enum ExpectOp {
     ProcessReadBlockTaskDone { expect_block_id: block::Id, expect_block_bytes: Bytes, expect_pending_contexts_key: &'static str, },
 }
 
-// #[allow(dead_code)]
 #[derive(Debug)]
 enum DoOp {
     RequestAndInterpreterIncomingRequest { request: proto::Request<Context>, },

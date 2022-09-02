@@ -364,27 +364,3 @@ pub enum IterBlocksItem {
 pub struct IterBlocksIterator {
     block_id_from: block::Id,
 }
-
-
-//     pub async fn iter_blocks(&mut self) -> Result<IterBlocks, IterBlocksError> {
-//         loop {
-//             let (reply_tx, reply_rx) = oneshot::channel();
-//             self.request_tx
-//                 .send(proto::Request::IterBlocks(proto::RequestIterBlocks {
-//                     context: blockwheel_context::IterBlocksContext {
-//                         reply_tx,
-//                         maybe_iter_task_tx: None,
-//                     },
-//                 }))
-//                 .await
-//                 .map_err(|_send_error| IterBlocksError::GenServer(ero::NoProcError))?;
-
-//             match reply_rx.await {
-//                 Ok(iter_blocks) =>
-//                     return Ok(iter_blocks),
-//                 Err(oneshot::Canceled) =>
-//                     (),
-//             }
-//         }
-//     }
-// }
