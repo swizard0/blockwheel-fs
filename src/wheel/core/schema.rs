@@ -15,7 +15,9 @@ use super::{
     RightEnvirons,
 };
 
-use crate::Info;
+use crate::{
+    Info,
+};
 
 #[derive(Debug)]
 pub struct Schema {

@@ -144,7 +144,7 @@ impl<A> Freie<A> where A: AccessPolicy {
         blocks_pool: BytesPool,
         thread_pool: &P,
     )
-        -> Result<Meister<A>, Error>
+        -> Result<Meister<A, P>, Error>
     where P: edeltraud::ThreadPool<job::Job<A>> + Clone + Send + 'static,
     {
         let performer_sklave_meister =
@@ -172,12 +172,133 @@ impl<A> Freie<A> where A: AccessPolicy {
             )
             .map_err(Error::Arbeitssklave)?;
 
-        Ok(Meister { performer_sklave_meister, })
+        Ok(Meister {
+            performer_sklave_meister,
+            thread_pool: thread_pool.clone(),
+        })
     }
 }
 
-pub struct Meister<A> where A: AccessPolicy {
+pub struct Meister<A, P> where A: AccessPolicy {
     performer_sklave_meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
+    thread_pool: P,
+}
+
+impl<A, P> Clone for Meister<A, P> where A: AccessPolicy, P: Clone, {
+    fn clone(&self) -> Self {
+        Meister {
+            performer_sklave_meister: self.performer_sklave_meister.clone(),
+            thread_pool: self.thread_pool.clone(),
+        }
+    }
+}
+
+impl<A, P> Meister<A, P>
+where A: AccessPolicy,
+      P: edeltraud::ThreadPool<job::Job<A>>,
+{
+    pub fn info(
+        &self,
+        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::Info,
+    )
+        -> Result<(), arbeitssklave::Error>
+    {
+        self.order(proto::Request::Info(
+            proto::RequestInfo { context: rueckkopplung, },
+        ))
+    }
+
+    pub fn flush(
+        &self,
+        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::Flush,
+    )
+        -> Result<(), arbeitssklave::Error>
+    {
+        self.order(proto::Request::Flush(
+            proto::RequestFlush { context: rueckkopplung, },
+        ))
+    }
+
+    pub fn write_block(
+        &self,
+        block_bytes: Bytes,
+        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::WriteBlock,
+    )
+        -> Result<(), arbeitssklave::Error>
+    {
+        self.order(proto::Request::WriteBlock(
+            proto::RequestWriteBlock {
+                block_bytes,
+                context: rueckkopplung,
+            },
+        ))
+    }
+
+    pub fn read_block(
+        &self,
+        block_id: block::Id,
+        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::ReadBlock,
+    )
+        -> Result<(), arbeitssklave::Error>
+    {
+        self.order(proto::Request::ReadBlock(
+            proto::RequestReadBlock {
+                block_id,
+                context: rueckkopplung,
+            },
+        ))
+    }
+
+    pub fn delete_block(
+        &self,
+        block_id: block::Id,
+        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::DeleteBlock,
+    )
+        -> Result<(), arbeitssklave::Error>
+    {
+        self.order(proto::Request::DeleteBlock(
+            proto::RequestDeleteBlock {
+                block_id,
+                context: rueckkopplung,
+            },
+        ))
+    }
+
+    pub fn iter_blocks_init(
+        &self,
+        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::IterBlocksInit,
+    )
+        -> Result<(), arbeitssklave::Error>
+    {
+        self.order(proto::Request::IterBlocksInit(
+            proto::RequestIterBlocksInit {
+                context: rueckkopplung,
+            },
+        ))
+    }
+
+    pub fn iter_blocks_next(
+        &self,
+        iterator_next: IterBlocksIterator,
+        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::IterBlocksNext,
+    )
+        -> Result<(), arbeitssklave::Error>
+    {
+        self.order(proto::Request::IterBlocksNext(
+            proto::RequestIterBlocksNext {
+                iterator_next,
+                context: rueckkopplung,
+            },
+        ))
+    }
+
+    fn order(&self, request: proto::Request<blockwheel_context::Context<A>>) -> Result<(), arbeitssklave::Error> {
+        self.performer_sklave_meister
+            .befehl(
+                wheel::performer_sklave::Order::Request(request),
+                &self.thread_pool,
+            )
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -244,100 +365,6 @@ pub struct IterBlocksIterator {
     block_id_from: block::Id,
 }
 
-// impl Pid {
-//     pub async fn info(&mut self) -> Result<Info, ero::NoProcError> {
-//         loop {
-//             let (reply_tx, reply_rx) = oneshot::channel();
-//             self.request_tx.send(proto::Request::Info(proto::RequestInfo { context: reply_tx, })).await
-//                 .map_err(|_send_error| ero::NoProcError)?;
-//             match reply_rx.await {
-//                 Ok(info) =>
-//                     return Ok(info),
-//                 Err(oneshot::Canceled) =>
-//                     (),
-//             }
-//         }
-//     }
-
-//     pub async fn flush(&mut self) -> Result<Flushed, ero::NoProcError> {
-//         loop {
-//             let (reply_tx, reply_rx) = oneshot::channel();
-//             self.request_tx.send(proto::Request::Flush(proto::RequestFlush { context: reply_tx, })).await
-//                 .map_err(|_send_error| ero::NoProcError)?;
-//             match reply_rx.await {
-//                 Ok(Flushed) =>
-//                     return Ok(Flushed),
-//                 Err(oneshot::Canceled) =>
-//                     (),
-//             }
-//         }
-//     }
-
-//     pub async fn write_block(&mut self, block_bytes: Bytes) -> Result<block::Id, WriteBlockError> {
-//         loop {
-//             let (reply_tx, reply_rx) = oneshot::channel();
-//             self.request_tx
-//                 .send(proto::Request::WriteBlock(proto::RequestWriteBlock {
-//                     block_bytes: block_bytes.clone(),
-//                     context: reply_tx,
-//                 }))
-//                 .await
-//                 .map_err(|_send_error| WriteBlockError::GenServer(ero::NoProcError))?;
-
-//             match reply_rx.await {
-//                 Ok(Ok(block_id)) =>
-//                     return Ok(block_id),
-//                 Ok(Err(blockwheel_context::RequestWriteBlockError::NoSpaceLeft)) =>
-//                     return Err(WriteBlockError::NoSpaceLeft),
-//                 Err(oneshot::Canceled) =>
-//                     (),
-//             }
-//         }
-//     }
-
-//     pub async fn read_block(&mut self, block_id: block::Id) -> Result<Bytes, ReadBlockError> {
-//         loop {
-//             let (reply_tx, reply_rx) = oneshot::channel();
-//             self.request_tx
-//                 .send(proto::Request::ReadBlock(proto::RequestReadBlock {
-//                     block_id: block_id.clone(),
-//                     context: reply_tx,
-//                 }))
-//                 .await
-//                 .map_err(|_send_error| ReadBlockError::GenServer(ero::NoProcError))?;
-
-//             match reply_rx.await {
-//                 Ok(Ok(block_bytes)) =>
-//                     return Ok(block_bytes),
-//                 Ok(Err(blockwheel_context::RequestReadBlockError::NotFound)) =>
-//                     return Err(ReadBlockError::NotFound),
-//                 Err(oneshot::Canceled) =>
-//                     (),
-//             }
-//         }
-//     }
-
-//     pub async fn delete_block(&mut self, block_id: block::Id) -> Result<Deleted, DeleteBlockError> {
-//         loop {
-//             let (reply_tx, reply_rx) = oneshot::channel();
-//             self.request_tx
-//                 .send(proto::Request::DeleteBlock(proto::RequestDeleteBlock {
-//                     block_id: block_id.clone(),
-//                     context: reply_tx,
-//                 }))
-//                 .await
-//                 .map_err(|_send_error| DeleteBlockError::GenServer(ero::NoProcError))?;
-
-//             match reply_rx.await {
-//                 Ok(Ok(Deleted)) =>
-//                     return Ok(Deleted),
-//                 Ok(Err(blockwheel_context::RequestDeleteBlockError::NotFound)) =>
-//                     return Err(DeleteBlockError::NotFound),
-//                 Err(oneshot::Canceled) =>
-//                     (),
-//             }
-//         }
-//     }
 
 //     pub async fn iter_blocks(&mut self) -> Result<IterBlocks, IterBlocksError> {
 //         loop {
