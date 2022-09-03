@@ -28,7 +28,6 @@ use arbeitssklave::{
 };
 
 use crate::{
-    job,
     block,
     storage,
     blockwheel_context::{
@@ -135,17 +134,19 @@ pub enum WheelOpenError {
     BlockSeekEnd(io::Error),
 }
 
-pub fn bootstrap<A, P>(
+pub fn bootstrap<A, W, B, P, J>(
     sklave: &mut ewig::Sklave<Order<A>, InterpretError>,
     params: FixedFileInterpreterParams,
-    performer_sklave_meister: performer_sklave::Meister<A>,
+    performer_sklave_meister: arbeitssklave::Meister<W, B>,
     performer_builder: performer::PerformerBuilderInit<Context<A>>,
     blocks_pool: BytesPool,
     thread_pool: P,
 )
     -> Result<(), InterpretError>
 where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+      P: edeltraud::ThreadPool<J>,
+      J: edeltraud::Job<Output = ()> + From<arbeitssklave::SklaveJob<W, B>>,
+      B: From<performer_sklave::Order<A>>,
 {
     let WheelData { wheel_file, storage_layout, performer, } =
         match open(&params, performer_builder) {
@@ -164,7 +165,7 @@ where A: AccessPolicy,
                 performer_sklave::OrderBootstrap {
                     performer,
                 },
-            ),
+            ).into(),
             &thread_pool,
         )
         .map_err(Error::Arbeitssklave)?;
@@ -502,17 +503,19 @@ struct Timings {
     total: Duration,
 }
 
-pub fn run<A, P>(
+pub fn run<A, W, B, P, J>(
     sklave: &mut ewig::Sklave<Order<A>, InterpretError>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
-    performer_sklave_meister: performer_sklave::Meister<A>,
+    performer_sklave_meister: arbeitssklave::Meister<W, B>,
     blocks_pool: BytesPool,
     thread_pool: P,
 )
     -> Result<(), InterpretError>
 where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+      P: edeltraud::ThreadPool<J>,
+      J: edeltraud::Job<Output = ()> + From<arbeitssklave::SklaveJob<W, B>>,
+      B: From<performer_sklave::Order<A>>,
 {
     let mut stats = InterpretStats::default();
 
@@ -608,7 +611,7 @@ where A: AccessPolicy,
                                     stats,
                                 },
                             );
-                            match performer_sklave_meister.befehl(order, &thread_pool) {
+                            match performer_sklave_meister.befehl(order.into(), &thread_pool) {
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
@@ -656,7 +659,7 @@ where A: AccessPolicy,
                                     stats,
                                 },
                             );
-                            match performer_sklave_meister.befehl(order, &thread_pool) {
+                            match performer_sklave_meister.befehl(order.into(), &thread_pool) {
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
@@ -697,7 +700,7 @@ where A: AccessPolicy,
                                     stats,
                                 },
                             );
-                            match performer_sklave_meister.befehl(order, &thread_pool) {
+                            match performer_sklave_meister.befehl(order.into(), &thread_pool) {
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
@@ -729,7 +732,7 @@ where A: AccessPolicy,
                             flush_context,
                         },
                     );
-                    match performer_sklave_meister.befehl(order, &thread_pool) {
+                    match performer_sklave_meister.befehl(order.into(), &thread_pool) {
                         Ok(()) =>
                             (),
                         Err(arbeitssklave::Error::Terminated) =>

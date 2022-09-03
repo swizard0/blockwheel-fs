@@ -3,6 +3,9 @@ use std::{
     sync::{
         mpsc,
     },
+    path::{
+        PathBuf,
+    },
 };
 
 use alloc_pool::{
@@ -14,6 +17,7 @@ use alloc_pool::{
 };
 
 use arbeitssklave::{
+    ewig,
     komm,
 };
 
@@ -23,19 +27,21 @@ use crate::{
         lru,
         core::{
             task,
-            schema,
+            // schema,
             performer,
         },
         interpret::{
             self,
             fixed_file::{
-                WheelOpenStatus,
-                WheelData,
+                bootstrap,
+                open,
+                create,
             },
         },
         performer_sklave,
     },
     AccessPolicy,
+    FixedFileInterpreterParams,
     Info,
     Deleted,
     Flushed,
@@ -49,144 +55,161 @@ use crate::{
 #[test]
 fn create_read_empty() {
     let wheel_filename = "/tmp/blockwheel_create_read_empty";
-    // let _wheel_data =
-    //     GenServerInit::create::<LocalContext, _>(
-    //         CreateParams {
-    //             wheel_filename,
-    //             init_wheel_size_bytes: 256 * 1024,
-    //         },
-    //         performer::PerformerBuilderInit::new(
-    //             lru::Cache::new(0),
-    //             None,
-    //             64 * 1024,
-    //         ).unwrap(),
-    //     )
-    //     .unwrap();
-    // let _wheel_open_status =
-    //     GenServerInit::open::<LocalContext, _>(
-    //         OpenParams {
-    //             wheel_filename,
-    //         },
-    //         performer::PerformerBuilderInit::new(
-    //             lru::Cache::new(0),
-    //             None,
-    //             64 * 1024,
-    //         ).unwrap(),
-    //     )
-    //     .unwrap();
+    let _wheel_data =
+        create::<LocalAccessPolicy>(
+            &FixedFileInterpreterParams {
+                wheel_filename: wheel_filename.into(),
+                init_wheel_size_bytes: 256 * 1024,
+            },
+            performer::PerformerBuilderInit::new(
+                lru::Cache::new(0),
+                None,
+                64 * 1024,
+            ).unwrap(),
+        )
+        .unwrap();
+    let _wheel_open_status =
+        open::<LocalAccessPolicy>(
+            &FixedFileInterpreterParams {
+                wheel_filename: wheel_filename.into(),
+                init_wheel_size_bytes: 256 * 1024,
+            },
+            performer::PerformerBuilderInit::new(
+                lru::Cache::new(0),
+                None,
+                64 * 1024,
+            ).unwrap(),
+        )
+        .unwrap();
     fs::remove_file(wheel_filename)
         .unwrap();
 }
 
-// #[test]
-// fn create_read_one() {
-//     let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-//         .worker_threads(1)
-//         .build()
-//         .unwrap();
+#[test]
+fn create_read_one() {
+    let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
+        .build()
+        .unwrap();
+    let (orders_tx, orders_rx) = mpsc::channel();
+    let performer_sklave_freie = arbeitssklave::Freie::new();
+    let sendegeraet =
+        komm::Sendegeraet::starten(
+            &performer_sklave_freie,
+            thread_pool.clone(),
+        )
+        .unwrap();
+    let performer_sklave_meister = performer_sklave_freie
+        .versklaven(Welt { orders_tx, }, &thread_pool).unwrap();
 
-//     let (orders_tx, orders_rx) = mpsc::channel();
-//     let meister = arbeitssklave::Freie::new()
-//         .versklaven(Welt { orders_tx, }, &thread_pool)
-//         .unwrap();
+    let blocks_pool = BytesPool::new();
+    let wheel_filename = "/tmp/blockwheel_create_read_one";
+    fs::remove_file(wheel_filename).ok();
 
-//     let blocks_pool = BytesPool::new();
+    let interpreter = make_interpreter(
+        wheel_filename.into(),
+        performer_sklave_meister.clone(),
+        blocks_pool.clone(),
+        thread_pool.clone(),
+    );
+    let performer = match orders_rx.recv() {
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+            performer,
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    };
 
-//     let wheel_filename = "/tmp/blockwheel_create_read_one";
-//     let context = "ectx00";
+    let schema = performer.decompose();
 
-//     let WheelData { sync_gen_server_init: gen_server_init, performer, } =
-//         GenServerInit::create::<LocalContext, _>(
-//             CreateParams {
-//                 wheel_filename,
-//                 init_wheel_size_bytes: 256 * 1024,
-//             },
-//             performer::PerformerBuilderInit::new(
-//                 lru::Cache::new(0),
-//                 None,
-//                 64 * 1024,
-//             ).unwrap(),
-//         )
-//         .unwrap();
-//     let gen_server = gen_server_init.finish::<LocalContext>();
-//     let gen_server_pid = gen_server.pid();
+    let block_id = block::Id::init();
+    let interpret::RunBlockPrepareWriteJobDone { write_block_bytes, } =
+        interpret::run_block_prepare_write_job(
+            block_id.clone(),
+            hello_world_bytes(),
+            blocks_pool.clone(),
+        )
+        .unwrap();
+    let task = task::Task {
+        block_id,
+        kind: task::TaskKind::WriteBlock(task::WriteBlock {
+            write_block_bytes: write_block_bytes.clone(),
+            commit: task::Commit::WithTerminator,
+            context: task::WriteBlockContext::External(sendegeraet.rueckkopplung(ReplyWriteBlock)),
+        }),
+    };
+    interpreter.push_task(schema.storage_layout().wheel_header_size as u64, task)
+        .unwrap();
+    match orders_rx.recv() {
+        Ok(Order::PerformerSklave(
+            performer_sklave::Order::TaskDoneStats(
+                performer_sklave::OrderTaskDoneStats {
+                    task_done: task::Done {
+                        task: task::TaskDone {
+                            block_id,
+                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(rueckkopplung), }),
+                        },
+                        ..
+                    },
+                    ..
+                },
+            ),
+        )) if block_id == block::Id::init() => {
+            rueckkopplung.commit(Ok(block_id)).unwrap();
+        },
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
+    match orders_rx.recv() {
+        Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
+            payload: Ok(block_id),
+            stamp: ReplyWriteBlock,
+        }))) if block_id == block::Id::init() =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
 
-//     gen_server.run(meister.clone(), thread_pool.clone(), blocks_pool.clone())
-//         .unwrap();
+    interpreter.device_sync(sendegeraet.rueckkopplung(ReplyFlush)).unwrap();
+    match orders_rx.recv() {
+        Ok(Order::PerformerSklave(
+            performer_sklave::Order::DeviceSyncDone(
+                performer_sklave::OrderDeviceSyncDone {
+                    flush_context: rueckkopplung,
+                },
+            ),
+        )) => {
+            rueckkopplung.commit(Flushed).unwrap();
+        },
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
+    match orders_rx.recv() {
+        Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { payload: Flushed, stamp: ReplyFlush, }))) =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
 
-//     let schema = performer.decompose();
+    let _interpreter = make_interpreter(
+        wheel_filename.into(),
+        performer_sklave_meister.clone(),
+        blocks_pool.clone(),
+        thread_pool.clone(),
+    );
+    let _performer = match orders_rx.recv() {
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+            performer,
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    };
 
-//     let block_id = block::Id::init();
-//     let interpret::RunBlockPrepareWriteJobDone { write_block_bytes, } =
-//         interpret::run_block_prepare_write_job(
-//             block_id.clone(),
-//             hello_world_bytes(),
-//             blocks_pool.clone(),
-//         )
-//         .unwrap();
-//     let task = task::Task {
-//         block_id,
-//         kind: task::TaskKind::WriteBlock(task::WriteBlock {
-//             write_block_bytes,
-//             commit: task::Commit::WithTerminator,
-//             context: task::WriteBlockContext::External(context),
-//         }),
-//     };
-//     gen_server_pid.push_request(schema.storage_layout().wheel_header_size as u64, task)
-//         .unwrap();
-//     let order = orders_rx.recv().unwrap();
-//     match order {
-//         performer_sklave::Order::TaskDoneStats(
-//             performer_sklave::OrderTaskDoneStats {
-//                 task_done: task::Done {
-//                     task: task::TaskDone {
-//                         block_id,
-//                         kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(ctx), }),
-//                     },
-//                     ..
-//                 },
-//                 ..
-//             },
-//         ) if block_id == block::Id::init() && ctx == context => {
-//             let fctx = "fctx00";
-//             gen_server_pid.device_sync(fctx).unwrap();
-//             let order = orders_rx.recv().unwrap();
-//             match order {
-//                 performer_sklave::Order::DeviceSyncDone(performer_sklave::OrderDeviceSyncDone { flush_context, }) if flush_context == fctx =>
-//                     (),
-//                 other_order =>
-//                     panic!("unexpected order received: {other_order:?}, expected device sync done with {fctx:?} context"),
-//             }
-//         },
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}, expected task done write block {:?} with {context:?} context", block::Id::init()),
-//     }
+    let performer = match orders_rx.recv() {
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+            performer,
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    };
 
-//     let open_status =
-//         GenServerInit::open::<LocalContext, _>(
-//             OpenParams {
-//                 wheel_filename,
-//             },
-//             performer::PerformerBuilderInit::new(
-//                 lru::Cache::new(0),
-//                 None,
-//                 64 * 1024,
-//             ).unwrap(),
-//         )
-//         .unwrap();
-//     let WheelData { sync_gen_server_init: gen_server_init, performer, } = match open_status {
-//         WheelOpenStatus::Success(wheel_data) =>
-//             wheel_data,
-//         WheelOpenStatus::FileNotFound { .. } =>
-//             panic!("file not found: {:?}", wheel_filename),
-//     };
-//     let gen_server = gen_server_init.finish::<LocalContext>();
-//     let gen_server_pid = gen_server.pid();
-
-//     gen_server.run(meister.clone(), thread_pool.clone(), blocks_pool.clone())
-//         .unwrap();
-
-//     let mut schema = performer.decompose();
+    let _schema = performer.decompose();
 
 //     let block_id = block::Id::init();
 //     let expected_offset = schema.storage_layout().wheel_header_size as u64;
@@ -241,9 +264,9 @@ fn create_read_empty() {
 //         .unwrap();
 //     assert_eq!(block_bytes, hello_world_bytes());
 
-//     fs::remove_file(wheel_filename)
-//         .unwrap();
-// }
+    fs::remove_file(wheel_filename)
+        .unwrap();
+}
 
 // #[test]
 // fn create_write_overlap_read_one() {
@@ -670,11 +693,19 @@ fn create_read_empty() {
 //     fs::remove_file(wheel_filename).unwrap();
 // }
 
+#[derive(Debug)]
 enum Order {
     PerformerSklave(performer_sklave::Order<LocalAccessPolicy>),
     Reply(OrderReply),
 }
 
+impl From<performer_sklave::Order<LocalAccessPolicy>> for Order {
+    fn from(order: performer_sklave::Order<LocalAccessPolicy>) -> Order {
+        Order::PerformerSklave(order)
+    }
+}
+
+#[derive(Debug)]
 enum OrderReply {
     InfoCancel(komm::UmschlagAbbrechen<ReplyInfo>),
     Info(komm::Umschlag<Info, ReplyInfo>),
@@ -692,12 +723,19 @@ enum OrderReply {
     IterBlocksNext(komm::Umschlag<IterBlocksItem, ReplyIterBlocksNext>),
 }
 
+#[derive(Debug)]
 struct ReplyInfo;
+#[derive(Debug)]
 struct ReplyFlush;
+#[derive(Debug)]
 struct ReplyWriteBlock;
+#[derive(Debug)]
 struct ReplyReadBlock;
+#[derive(Debug)]
 struct ReplyDeleteBlock;
+#[derive(Debug)]
 struct ReplyIterBlocksInit;
+#[derive(Debug)]
 struct ReplyIterBlocksNext;
 
 impl From<komm::UmschlagAbbrechen<ReplyInfo>> for Order {
@@ -838,4 +876,38 @@ fn hello_world_bytes() -> Bytes {
     let mut block_bytes_mut = BytesMut::new_detached(Vec::new());
     block_bytes_mut.extend("hello, world!".as_bytes().iter().cloned());
     block_bytes_mut.freeze()
+}
+
+fn make_interpreter<P>(
+    wheel_filename: PathBuf,
+    performer_sklave_meister: arbeitssklave::Meister<Welt, Order>,
+    blocks_pool: BytesPool,
+    thread_pool: P,
+)
+    -> interpret::Interpreter<LocalAccessPolicy>
+where P: edeltraud::ThreadPool<Job> + Send + 'static
+{
+    let interpreter_meister = ewig::Freie::new()
+        .versklaven_als(
+            "blockwheel_fs::wheel::interpret::fixed_file".to_string(),
+            move |sklave| {
+                bootstrap(
+                    sklave,
+                    FixedFileInterpreterParams {
+                        wheel_filename,
+                        init_wheel_size_bytes: 256 * 1024,
+                    },
+                    performer_sklave_meister,
+                    performer::PerformerBuilderInit::new(
+                        lru::Cache::new(0),
+                        None,
+                        64 * 1024,
+                    ).unwrap(),
+                    blocks_pool,
+                    thread_pool,
+                )
+            },
+        )
+        .unwrap();
+    interpret::Interpreter { interpreter_meister, }
 }
