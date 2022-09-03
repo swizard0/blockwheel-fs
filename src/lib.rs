@@ -17,7 +17,7 @@ use arbeitssklave::{
 
 pub mod job;
 pub mod block;
-// pub mod stress;
+pub mod stress;
 
 mod wheel;
 mod proto;
@@ -25,8 +25,8 @@ mod storage;
 mod context;
 mod blockwheel_context;
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Debug)]
 pub struct Params {
@@ -159,7 +159,8 @@ impl<A> Freie<A> where A: AccessPolicy {
             )
             .map_err(Error::Interpreter)?;
 
-        let performer_sklave_meister = arbeitssklave::Freie::new()
+        let performer_sklave_meister = self
+            .performer_sklave_freie
             .versklaven(
                 wheel::performer_sklave::Welt {
                     env: wheel::performer_sklave::Env {

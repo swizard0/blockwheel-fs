@@ -114,17 +114,14 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         .versklaven(Welt { ftd_tx, }, &thread_pool)
         .unwrap();
 
-    println!(" ;; asd");
     blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo))
         .map_err(Error::RequestInfo)?;
-    println!(" ;; qwe");
     let info = match ftd_rx.recv() {
         Ok(Order::Info(komm::Umschlag { payload: info, stamp: ReplyInfo, })) =>
             info,
         other_order =>
             return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
     };
-    println!(" ;; zxc");
     log::info!("start | info: {:?}", info);
 
 
@@ -531,12 +528,19 @@ impl edeltraud::Job for Job {
             Job::FtdSklave(arbeitssklave::SklaveJob { mut sklave, mut sklavenwelt, }) => {
                 loop {
                     match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
-                        arbeitssklave::Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, } => {
-                            sklavenwelt = next_sklavenwelt;
-                            for befehl in befehle {
-                                sklavenwelt.ftd_tx.send(befehl).unwrap();
-                            }
-                        },
+                        arbeitssklave::Gehorsam::Machen { mut befehle, } =>
+                            loop {
+                                match befehle.befehl() {
+                                    arbeitssklave::SklavenBefehl::Mehr { befehl, mehr_befehle, } => {
+                                        mehr_befehle.sklavenwelt().ftd_tx.send(befehl).unwrap();
+                                        befehle = mehr_befehle;
+                                    },
+                                    arbeitssklave::SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
+                                        sklavenwelt = next_sklavenwelt;
+                                        break;
+                                    },
+                                }
+                            },
                         arbeitssklave::Gehorsam::Rasten =>
                             break,
                     }

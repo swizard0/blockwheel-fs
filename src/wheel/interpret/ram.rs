@@ -74,9 +74,6 @@ where A: AccessPolicy,
     let WheelData { memory, storage_layout, performer, } =
         create(&params, performer_builder)
         .map_err(Error::WheelCreate)?;
-
-    println!(" ;;; ram: bootstrapping performer");
-
     performer_sklave_meister
         .befehl(
             performer_sklave::Order::Bootstrap(
@@ -87,9 +84,6 @@ where A: AccessPolicy,
             &thread_pool,
         )
         .map_err(Error::Arbeitssklave)?;
-
-    println!(" ;;; ram: performer bootstrapped");
-
     run(sklave, memory, storage_layout, performer_sklave_meister, blocks_pool, thread_pool)
 }
 
@@ -173,9 +167,6 @@ where A: AccessPolicy,
     cursor.set_position(storage_layout.wheel_header_size as u64);
 
     'outer: loop {
-
-        println!(" ;;; interpreter zu_ihren_diensten");
-
         let orders = sklave.zu_ihren_diensten()?;
         for order in orders {
             match order {
