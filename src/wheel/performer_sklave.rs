@@ -119,6 +119,7 @@ where A: AccessPolicy,
       P: edeltraud::ThreadPool<job::Job<A>>,
 {
     let mut incoming_orders = Vec::new();
+    let mut keeped_orders = Vec::new();
 
     loop {
         let mut performer_op = 'op: loop {
@@ -129,6 +130,7 @@ where A: AccessPolicy,
                     other_kont,
             };
 
+            incoming_orders.extend(keeped_orders.drain(..));
             while let Some(incoming_order) = incoming_orders.pop() {
                 match incoming_order {
                     Order::Bootstrap(OrderBootstrap { performer, }) =>
@@ -152,14 +154,16 @@ where A: AccessPolicy,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.incoming_request(request),
                             Kont::Initialize | Kont::Start { .. } =>
-                                panic!("unexpected Order::Request without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                                keeped_orders.push(Order::Request(request)),
                         },
                     Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, }) =>
                         match kont {
                             Kont::PollRequestAndInterpreter { poll, } =>
                                 break 'op poll.next.incoming_task_done_stats(task_done, stats),
-                            Kont::Initialize | Kont::Start { .. } | Kont::PollRequest { .. } =>
+                            Kont::PollRequest { .. } =>
                                 panic!("unexpected Order::TaskDoneStats without poll Kont::PollRequestAndInterpreter"),
+                            Kont::Initialize | Kont::Start { .. } =>
+                                keeped_orders.push(Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, })),
                         },
                     Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
                         output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
@@ -170,7 +174,9 @@ where A: AccessPolicy,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
                             Kont::Initialize | Kont::Start { .. } =>
-                                panic!("unexpected Order::PreparedWriteBlockDone without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                                keeped_orders.push(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
+                                    output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
+                                })),
                         },
                     Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { output: Err(error), }) =>
                         return Err(Error::InterpretBlockPrepareWrite(error)),
@@ -183,7 +189,9 @@ where A: AccessPolicy,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
                             Kont::Initialize | Kont::Start { .. } =>
-                                panic!("unexpected Order::ProcessReadBlockDone without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                                keeped_orders.push(Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
+                                    output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
+                                })),
                         },
                     Order::ProcessReadBlockDone(OrderProcessReadBlockDone { output: Err(error), }) =>
                         return Err(Error::InterpretBlockProcessRead(error)),
@@ -196,7 +204,9 @@ where A: AccessPolicy,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
                             Kont::Initialize | Kont::Start { .. } =>
-                                panic!("unexpected Order::PreparedDeleteBlockDone without poll Kont::PollRequest or Kont::PollRequestAndInterpreter"),
+                                keeped_orders.push(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
+                                    output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
+                                })),
                         },
                     Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone { output: Err(error), }) =>
                         return Err(Error::InterpretBlockPrepareDelete(error)),
