@@ -519,6 +519,8 @@ where A: AccessPolicy,
       J: edeltraud::Job<Output = ()> + From<arbeitssklave::SklaveJob<W, B>>,
       B: From<performer_sklave::Order<A>>,
 {
+    log::debug!("running background interpreter job");
+
     let mut stats = InterpretStats::default();
 
     let mut terminator_block_bytes = blocks_pool.lend();

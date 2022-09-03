@@ -968,12 +968,19 @@ impl edeltraud::Job for Job {
             Job::Sklave(arbeitssklave::SklaveJob { mut sklave, mut sklavenwelt, }) => {
                 loop {
                     match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
-                        arbeitssklave::Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, } => {
-                            sklavenwelt = next_sklavenwelt;
-                            for befehl in befehle {
-                                sklavenwelt.orders_tx.send(befehl).unwrap();
-                            }
-                        },
+                        arbeitssklave::Gehorsam::Machen { mut befehle, } =>
+                            loop {
+                                match befehle.befehl() {
+                                    arbeitssklave::SklavenBefehl::Mehr { befehl, mehr_befehle, } => {
+                                        mehr_befehle.sklavenwelt().orders_tx.send(befehl).unwrap();
+                                        befehle = mehr_befehle;
+                                    },
+                                    arbeitssklave::SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
+                                        sklavenwelt = next_sklavenwelt;
+                                        break;
+                                    },
+                                }
+                            },
                         arbeitssklave::Gehorsam::Rasten =>
                             break,
                     }

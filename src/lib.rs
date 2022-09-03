@@ -165,6 +165,8 @@ impl<A> Freie<A> where A: AccessPolicy {
                     env: wheel::performer_sklave::Env {
                         interpreter,
                         blocks_pool,
+                        incoming_orders: Vec::new(),
+                        delayed_orders: Vec::new(),
                     },
                     kont: wheel::performer_sklave::Kont::Initialize,
                 },

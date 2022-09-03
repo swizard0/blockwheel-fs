@@ -65,6 +65,8 @@ pub struct OrderPreparedDeleteBlockDone<A> where A: AccessPolicy {
 pub struct Env<A> where A: AccessPolicy {
     pub interpreter: interpret::Interpreter<A>,
     pub blocks_pool: BytesPool,
+    pub incoming_orders: Vec<Order<A>>,
+    pub delayed_orders: Vec<Order<A>>,
 }
 
 pub struct Welt<A> where A: AccessPolicy {
@@ -105,6 +107,9 @@ pub fn run_job<A, P>(sklave_job: SklaveJob<A>, thread_pool: &P)
 where A: AccessPolicy,
       P: edeltraud::ThreadPool<job::Job<A>>,
 {
+
+    println!(";; running job");
+
     if let Err(error) = job(sklave_job, thread_pool) {
         log::error!("terminated with an error: {error:?}");
     }
@@ -118,9 +123,6 @@ fn job<A, P>(
 where A: AccessPolicy,
       P: edeltraud::ThreadPool<job::Job<A>>,
 {
-    let mut incoming_orders = Vec::new();
-    let mut keeped_orders = Vec::new();
-
     loop {
         let mut performer_op = 'op: loop {
             let kont = match std::mem::replace(&mut sklavenwelt.kont, Kont::Initialize) {
@@ -130,10 +132,26 @@ where A: AccessPolicy,
                     other_kont,
             };
 
-            incoming_orders.extend(keeped_orders.drain(..));
-            while let Some(incoming_order) = incoming_orders.pop() {
+            println!(" ;;; going loop, #incoming_orders = {}, #delayed_orders = {}",
+                     sklavenwelt.env.incoming_orders.len(),
+                     sklavenwelt.env.delayed_orders.len());
+
+            assert!(sklavenwelt.env.incoming_orders.is_empty());
+            {
+                let env = &mut sklavenwelt.env;
+                let incoming_orders = &mut env.incoming_orders;
+                let delayed_orders = &mut env.delayed_orders;
+                std::mem::swap(incoming_orders, delayed_orders);
+            }
+            while let Some(incoming_order) = sklavenwelt.env.incoming_orders.pop() {
+
+                println!(" ;; incoming order on the fly");
+
                 match incoming_order {
-                    Order::Bootstrap(OrderBootstrap { performer, }) =>
+                    Order::Bootstrap(OrderBootstrap { performer, }) => {
+
+                        println!(" ;;; got bootstrap");
+
                         match kont {
                             Kont::Initialize => {
                                 sklavenwelt.kont = Kont::Start { performer, };
@@ -141,21 +159,29 @@ where A: AccessPolicy,
                             },
                             Kont::Start { .. } | Kont::PollRequestAndInterpreter { .. } | Kont::PollRequest { .. } =>
                                 panic!("unexpected Order::Bootstrap without Kont::Initialize"),
-                        },
+                        }
+                    },
                     Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: rueckkopplung, }) => {
                         if let Err(commit_error) = rueckkopplung.commit(Flushed) {
                             log::warn!("rueckkopplung is gone during Flush query result send: {commit_error:?}");
                         }
                     },
-                    Order::Request(request) =>
+                    Order::Request(request) => {
+
+                        println!(" ;;; got request! => {}", match kont { Kont::Initialize | Kont::Start { .. } => "zcxz", _ => "dsgfsd", });
+                        if let crate::proto::Request::Info(..) = request {
+                            println!("  --- this is info!");
+                        }
+
                         match kont {
                             Kont::PollRequestAndInterpreter { poll, } =>
                                 break 'op poll.next.incoming_request(request),
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.incoming_request(request),
                             Kont::Initialize | Kont::Start { .. } =>
-                                keeped_orders.push(Order::Request(request)),
-                        },
+                                sklavenwelt.env.delayed_orders.push(Order::Request(request)),
+                        }
+                    },
                     Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, }) =>
                         match kont {
                             Kont::PollRequestAndInterpreter { poll, } =>
@@ -163,7 +189,7 @@ where A: AccessPolicy,
                             Kont::PollRequest { .. } =>
                                 panic!("unexpected Order::TaskDoneStats without poll Kont::PollRequestAndInterpreter"),
                             Kont::Initialize | Kont::Start { .. } =>
-                                keeped_orders.push(Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, })),
+                                sklavenwelt.env.delayed_orders.push(Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, })),
                         },
                     Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
                         output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
@@ -174,7 +200,7 @@ where A: AccessPolicy,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
                             Kont::Initialize | Kont::Start { .. } =>
-                                keeped_orders.push(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
+                                sklavenwelt.env.delayed_orders.push(Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
                                     output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
                                 })),
                         },
@@ -189,7 +215,7 @@ where A: AccessPolicy,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
                             Kont::Initialize | Kont::Start { .. } =>
-                                keeped_orders.push(Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
+                                sklavenwelt.env.delayed_orders.push(Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
                                     output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
                                 })),
                         },
@@ -204,7 +230,7 @@ where A: AccessPolicy,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
                             Kont::Initialize | Kont::Start { .. } =>
-                                keeped_orders.push(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
+                                sklavenwelt.env.delayed_orders.push(Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
                                     output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
                                 })),
                         },
@@ -214,13 +240,38 @@ where A: AccessPolicy,
             }
             sklavenwelt.kont = kont;
 
+            println!("  ;; going zu_ihren_diensten, #delayed_orders = {}", sklavenwelt.env.delayed_orders.len());
+
             match sklave.zu_ihren_diensten(sklavenwelt) {
-                Ok(arbeitssklave::Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, }) => {
-                    sklavenwelt = next_sklavenwelt;
-                    incoming_orders.extend(befehle);
+                Ok(arbeitssklave::Gehorsam::Machen { mut befehle, }) =>
+                    loop {
+                        match befehle.befehl() {
+                            arbeitssklave::SklavenBefehl::Mehr { befehl, mut mehr_befehle, } => {
+
+                                println!("   ;;; zu_ihren_diensten: got a befehl");
+
+                                mehr_befehle
+                                    .sklavenwelt_mut()
+                                    .env
+                                    .delayed_orders
+                                    .push(befehl);
+                                befehle = mehr_befehle;
+                            },
+                            arbeitssklave::SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
+
+                                println!("   ;;; zu_ihren_diensten: got no more befehle");
+
+                                sklavenwelt = next_sklavenwelt;
+                                break;
+                            },
+                        }
+                    },
+                Ok(arbeitssklave::Gehorsam::Rasten) => {
+
+                    println!("   ;;; zu_ihren_diensten: rasten");
+
+                    return Ok(());
                 },
-                Ok(arbeitssklave::Gehorsam::Rasten) =>
-                    return Ok(()),
                 Err(error) =>
                     return Err(Error::Arbeitssklave(error)),
             }
@@ -255,6 +306,9 @@ where A: AccessPolicy,
                     ),
                     performer,
                 }) => {
+
+                    println!(" ;;; InfoOp::Success: {info:?}");
+
                     if let Err(commit_error) = rueckkopplung.commit(info) {
                         log::warn!("rueckkopplung is gone during Info query result send: {commit_error:?}");
                     }

@@ -831,6 +831,8 @@ impl<C> Inner<C> where C: Context {
             info.bytes_free -= info.defrag_write_pending_bytes;
         }
 
+        println!(" ;;; performer: prepared {info:?}");
+
         Op::Event(Event {
             op: EventOp::Info(TaskDoneOp { context, op: InfoOp::Success { info, }, }),
             performer: Performer { inner: self, },
