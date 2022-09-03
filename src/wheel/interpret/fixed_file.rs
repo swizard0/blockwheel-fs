@@ -159,6 +159,7 @@ where A: AccessPolicy,
             Err(wheel_open_error) =>
                 return Err(Error::WheelOpen(wheel_open_error).into()),
         };
+
     performer_sklave_meister
         .befehl(
             performer_sklave::Order::Bootstrap(
@@ -169,6 +170,7 @@ where A: AccessPolicy,
             &thread_pool,
         )
         .map_err(Error::Arbeitssklave)?;
+
     run(sklave, wheel_file, storage_layout, performer_sklave_meister, blocks_pool, thread_pool)
 }
 
@@ -530,7 +532,6 @@ where A: AccessPolicy,
     let mut timings = Timings::default();
     'outer: loop {
         let now_loop = Instant::now();
-
         let orders = sklave.zu_ihren_diensten()?;
         timings.event_wait += now_loop.elapsed();
 
