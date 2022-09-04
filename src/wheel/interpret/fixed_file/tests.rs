@@ -965,9 +965,9 @@ impl edeltraud::Job for Job {
 
     fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
         match self {
-            Job::Sklave(arbeitssklave::SklaveJob { mut sklave, mut sklavenwelt, }) => {
+            Job::Sklave(mut sklave_job) => {
                 loop {
-                    match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                    match sklave_job.zu_ihren_diensten().unwrap() {
                         arbeitssklave::Gehorsam::Machen { mut befehle, } =>
                             loop {
                                 match befehle.befehl() {
@@ -975,8 +975,8 @@ impl edeltraud::Job for Job {
                                         mehr_befehle.sklavenwelt().orders_tx.send(befehl).unwrap();
                                         befehle = mehr_befehle;
                                     },
-                                    arbeitssklave::SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
-                                        sklavenwelt = next_sklavenwelt;
+                                    arbeitssklave::SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
+                                        sklave_job = next_sklave_job;
                                         break;
                                     },
                                 }

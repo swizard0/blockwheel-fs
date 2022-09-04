@@ -525,9 +525,9 @@ impl edeltraud::Job for Job {
             // Job::CalcCrc(job) => {
             //     job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
             // },
-            Job::FtdSklave(arbeitssklave::SklaveJob { mut sklave, mut sklavenwelt, }) => {
+            Job::FtdSklave(mut sklave_job) => {
                 loop {
-                    match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                    match sklave_job.zu_ihren_diensten().unwrap() {
                         arbeitssklave::Gehorsam::Machen { mut befehle, } =>
                             loop {
                                 match befehle.befehl() {
@@ -535,8 +535,8 @@ impl edeltraud::Job for Job {
                                         mehr_befehle.sklavenwelt().ftd_tx.send(befehl).unwrap();
                                         befehle = mehr_befehle;
                                     },
-                                    arbeitssklave::SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
-                                        sklavenwelt = next_sklavenwelt;
+                                    arbeitssklave::SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
+                                        sklave_job = next_sklave_job;
                                         break;
                                     },
                                 }
