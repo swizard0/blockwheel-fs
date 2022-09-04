@@ -25,11 +25,13 @@ use crate::{
     Info,
     Freie,
     Params,
+    Meister,
     Flushed,
     Deleted,
     IterBlocks,
     AccessPolicy,
     IterBlocksItem,
+    InterpreterParams,
     RequestReadBlockError,
     RequestWriteBlockError,
     RequestDeleteBlockError,
@@ -43,6 +45,12 @@ pub enum Error {
     BlockwheelFs(BlockwheelFsError),
     UnexpectedFtdOrder(String),
     RequestInfo(arbeitssklave::Error),
+    RequestWriteBlock(arbeitssklave::Error),
+    FtdProcessIsLost,
+    ReadBlock(RequestReadBlockError),
+    WriteBlock(RequestWriteBlockError),
+    DeleteBlock(RequestDeleteBlockError),
+    JobWriteBlockCanceled,
 
     // ReadBlockCrcMismarch {
     //     block_id: block::Id,
@@ -103,7 +111,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     let blocks_pool = BytesPool::new();
 
     let blockwheel_fs_meister = Freie::new()
-        .versklaven(params, blocks_pool.clone(), &edeltraud::ThreadPoolMap::new(thread_pool.clone()))
+        .versklaven(params.clone(), blocks_pool.clone(), &edeltraud::ThreadPoolMap::new(thread_pool.clone()))
         .map_err(Error::BlockwheelFs)?;
 
     let (ftd_tx, ftd_rx) = mpsc::channel();
@@ -114,7 +122,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         .versklaven(Welt { ftd_tx, }, &thread_pool)
         .unwrap();
 
-    blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo))
+    blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &edeltraud::ThreadPoolMap::new(&thread_pool))
         .map_err(Error::RequestInfo)?;
     let info = match ftd_rx.recv() {
         Ok(Order::Info(komm::Umschlag { payload: info, stamp: ReplyInfo, })) =>
@@ -124,130 +132,78 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     };
     log::info!("start | info: {:?}", info);
 
+    let mut active_tasks_counter = Counter::default();
+    let mut actions_counter = 0;
 
-    todo!()
-    // let (done_tx, done_rx) = mpsc::channel(0);
-    // pin_mut!(done_rx);
-    // let mut active_tasks_counter = Counter::default();
-    // let mut actions_counter = 0;
+    loop {
+        if actions_counter >= limits.actions {
+            while active_tasks_counter.sum() > 0 {
+                process(ftd_rx.recv(), blocks, counter, &mut active_tasks_counter)?;
+            }
+            break;
+        }
 
-    // enum TaskDone {
-    //     WriteBlock(BlockTank),
-    //     WriteBlockNoSpace,
-    //     DeleteBlock,
-    //     ReadBlockSuccess,
-    //     ReadBlockNotFound(block::Id),
-    // }
+        let maybe_task_result = if (active_tasks_counter.sum() >= limits.active_tasks) || (blocks.is_empty() && active_tasks_counter.writes > 0) {
+            Some(ftd_rx.recv())
+        } else {
+            match ftd_rx.try_recv() {
+                Ok(order) =>
+                    Some(Ok(order)),
+                Err(mpsc::TryRecvError::Empty) =>
+                    None,
+                Err(mpsc::TryRecvError::Disconnected) =>
+                    Some(Err(mpsc::RecvError)),
+            }
+        };
 
-    // fn spawn_task<T>(
-    //     supervisor_pid: &mut SupervisorPid,
-    //     mut done_tx: mpsc::Sender<Result<TaskDone, Error>>,
-    //     task: T,
-    // )
-    // where T: Future<Output = Result<TaskDone, Error>> + Send + 'static
-    // {
-    //     supervisor_pid.spawn_link_temporary(async move {
-    //         let result = task.await;
-    //         done_tx.send(result).await.ok();
-    //     })
-    // }
+        match maybe_task_result {
+            None =>
+                (),
+            Some(task_result) => {
+                process(task_result, blocks, counter, &mut active_tasks_counter)?;
+                continue;
+            }
+        }
 
-    // fn process(task_done: TaskDone, blocks: &mut Vec<BlockTank>, counter: &mut Counter, active_tasks_counter: &mut Counter) {
-    //     match task_done {
-    //         TaskDone::WriteBlock(block_tank) => {
-    //             blocks.push(block_tank);
-    //             counter.writes += 1;
-    //             active_tasks_counter.writes -= 1;
-    //         },
-    //         TaskDone::WriteBlockNoSpace => {
-    //             counter.writes += 1;
-    //             active_tasks_counter.writes -= 1;
-    //         },
-    //         TaskDone::ReadBlockSuccess => {
-    //             counter.reads += 1;
-    //             active_tasks_counter.reads -= 1;
-    //         }
-    //         TaskDone::ReadBlockNotFound(block_id) => {
-    //             counter.reads += 1;
-    //             active_tasks_counter.reads -= 1;
-    //             assert!(blocks.iter().find(|tank| tank.block_id == block_id).is_none());
-    //         },
-    //         TaskDone::DeleteBlock => {
-    //             counter.deletes += 1;
-    //             active_tasks_counter.deletes -= 1;
-    //         },
-    //     }
-    // }
+        let bytes_used: usize = blocks.iter()
+            .map(|block_tank| block_tank.block_bytes.len())
+            .sum();
+        let wheel_size_bytes = match &params.interpreter {
+            InterpreterParams::FixedFile(p) =>
+                p.init_wheel_size_bytes,
+            InterpreterParams::Ram(p) =>
+                p.init_wheel_size_bytes,
+        };
+        let bytes_free = wheel_size_bytes - bytes_used;
 
-    // let info = pid.info().await
-    //     .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
-    // log::info!("start | info: {:?}", info);
+        println!("wheel_size_bytes: {wheel_size_bytes:?}, bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}");
 
-    // loop {
-    //     if actions_counter >= limits.actions {
-    //         std::mem::drop(done_tx);
+        if blocks.is_empty() || rand::thread_rng().gen_range(0.0f32 .. 1.0) < 0.5 {
+            // write or delete task
+            let write_prob = if bytes_free * 2 >= wheel_size_bytes {
+                1.0
+            } else {
+                (bytes_free * 2) as f64 / wheel_size_bytes as f64
+            };
+            let dice = rand::thread_rng().gen_range(0.0 .. 1.0);
+            if blocks.is_empty() || dice < write_prob {
+                // write task
+                let job = JobWriteBlockArgs {
+                    main: JobWriteBlockArgsMain {
+                        blocks_pool: blocks_pool.clone(),
+                        block_size_bytes: limits.block_size_bytes,
+                        blockwheel_fs_meister: blockwheel_fs_meister.clone(),
+                        ftd_sendegeraet: ftd_sendegeraet.clone(),
+                    },
+                    job_complete: ftd_sendegeraet.rueckkopplung(WriteBlockJob),
+                };
+                edeltraud::job(&thread_pool, job)
+                    .map_err(Error::Edeltraud)?;
+                active_tasks_counter.writes += 1;
+            } else {
+                // delete task
 
-    //         while active_tasks_counter.sum() > 0 {
-    //             process(done_rx.next().await.unwrap()?, blocks, counter, &mut active_tasks_counter);
-    //         }
-    //         break;
-    //     }
-    //     let maybe_task_result = if (active_tasks_counter.sum() >= limits.active_tasks) || (blocks.is_empty() && active_tasks_counter.writes > 0) {
-    //         Some(done_rx.next().await.unwrap())
-    //     } else {
-    //         select! {
-    //             task_result = done_rx.next() =>
-    //                 Some(task_result.unwrap()),
-    //             default =>
-    //                 None,
-    //         }
-    //     };
-    //     match maybe_task_result {
-    //         None =>
-    //             (),
-    //         Some(task_result) => {
-    //             process(task_result?, blocks, counter, &mut active_tasks_counter);
-    //             continue;
-    //         }
-    //     }
-    //     // construct action and run task
-    //     let info = pid.info().await
-    //         .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
-    //     if blocks.is_empty() || rand::thread_rng().gen_range(0.0f32 .. 1.0) < 0.5 {
-    //         // write or delete task
-    //         let write_prob = if info.bytes_free * 2 >= info.wheel_size_bytes {
-    //             1.0
-    //         } else {
-    //             (info.bytes_free * 2) as f64 / info.wheel_size_bytes as f64
-    //         };
-    //         let dice = rand::thread_rng().gen_range(0.0 .. 1.0);
-    //         if blocks.is_empty() || dice < write_prob {
-    //             // write task
-    //             let mut blockwheel_pid = pid.clone();
-    //             let blocks_pool = blocks_pool.clone();
-    //             let block_size_bytes = limits.block_size_bytes;
-    //             let thread_pool = thread_pool.clone();
-    //             spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-    //                 let block_bytes =
-    //                     edeltraud::job_async(
-    //                         &thread_pool,
-    //                         JobGenRandomBlock { blocks_pool, block_size_bytes, },
-    //                     )
-    //                     .map_err(Error::Edeltraud)?
-    //                     .await
-    //                     .map_err(Error::Edeltraud)?;
-    //                 match blockwheel_pid.write_block(block_bytes.clone()).await {
-    //                     Ok(block_id) =>
-    //                         Ok(TaskDone::WriteBlock(BlockTank { block_id, block_bytes, })),
-    //                     Err(super::WriteBlockError::NoSpaceLeft) =>
-    //                         Ok(TaskDone::WriteBlockNoSpace),
-    //                     Err(error) =>
-    //                         Err(Error::WriteBlock(error))
-    //                 }
-    //             });
-    //             active_tasks_counter.writes += 1;
-    //         } else {
-    //             // delete task
+                todo!();
     //             let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
     //             let BlockTank { block_id, .. } = blocks.swap_remove(block_index);
     //             let mut blockwheel_pid = pid.clone();
@@ -256,10 +212,12 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     //                     .map_err(Error::DeleteBlock)?;
     //                 Ok(TaskDone::DeleteBlock)
     //             });
-    //             active_tasks_counter.deletes += 1;
-    //         }
-    //     } else {
-    //         // read task
+                active_tasks_counter.deletes += 1;
+            }
+        } else {
+            // read task
+
+            todo!();
     //         let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
     //         let BlockTank { block_id, block_bytes, } = blocks[block_index].clone();
     //         let mut blockwheel_pid = pid.clone();
@@ -290,10 +248,12 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     //                     Err(Error::ReadBlock(error)),
     //             }
     //         });
-    //         active_tasks_counter.reads += 1;
-    //     }
-    //     actions_counter += 1;
-    // }
+            active_tasks_counter.reads += 1;
+        }
+        actions_counter += 1;
+    }
+
+    todo!()
 
     // assert!(done_rx.next().await.is_none());
 
@@ -355,8 +315,115 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     // assert_eq!(actual_count, iter_blocks.blocks_total_count);
 
     // Ok::<_, Error>(())
+
+    // ---
+
+    // let (done_tx, done_rx) = mpsc::channel(0);
+    // pin_mut!(done_rx);
+
+    // enum TaskDone {
+    //     WriteBlock(BlockTank),
+    //     WriteBlockNoSpace,
+    //     DeleteBlock,
+    //     ReadBlockSuccess,
+    //     ReadBlockNotFound(block::Id),
+    // }
+
+    // fn spawn_task<T>(
+    //     supervisor_pid: &mut SupervisorPid,
+    //     mut done_tx: mpsc::Sender<Result<TaskDone, Error>>,
+    //     task: T,
+    // )
+    // where T: Future<Output = Result<TaskDone, Error>> + Send + 'static
+    // {
+    //     supervisor_pid.spawn_link_temporary(async move {
+    //         let result = task.await;
+    //         done_tx.send(result).await.ok();
+    //     })
+    // }
+
 }
 
+fn process(
+    maybe_recv_order: Result<Order, mpsc::RecvError>,
+    blocks: &mut Vec<BlockTank>,
+    counter: &mut Counter,
+    active_tasks_counter: &mut Counter,
+)
+    -> Result<(), Error>
+{
+    let recv_order = maybe_recv_order
+        .map_err(|mpsc::RecvError| Error::FtdProcessIsLost)?;
+    match recv_order {
+        order @ Order::Info(komm::Umschlag { stamp: ReplyInfo, .. }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        order @ Order::Flush(komm::Umschlag { payload: Flushed, stamp: ReplyFlush, }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        Order::WriteBlock(komm::Umschlag { payload: Ok(block_id), stamp: ReplyWriteBlock { block_bytes, }, }) => {
+            blocks.push(BlockTank { block_id, block_bytes, });
+            counter.writes += 1;
+            active_tasks_counter.writes -= 1;
+            Ok(())
+        },
+        Order::WriteBlock(komm::Umschlag { payload: Err(error), stamp: ReplyWriteBlock { .. }, }) =>
+            Err(Error::WriteBlock(error)),
+        Order::ReadBlock(komm::Umschlag { payload: Ok(bytes), stamp: ReplyReadBlock, }) =>
+            todo!(),
+        Order::ReadBlock(komm::Umschlag { payload: Err(error), stamp: ReplyReadBlock, }) =>
+            Err(Error::ReadBlock(error)),
+        Order::DeleteBlock(komm::Umschlag { payload: Ok(Deleted), stamp: ReplyDeleteBlock, }) =>
+            todo!(),
+        Order::DeleteBlock(komm::Umschlag { payload: Err(error), stamp: ReplyDeleteBlock, }) =>
+            Err(Error::DeleteBlock(error)),
+        order @ Order::IterBlocksInit(komm::Umschlag { stamp: ReplyIterBlocksInit, .. }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        order @ Order::IterBlocksNext(komm::Umschlag { stamp: ReplyIterBlocksNext, .. }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+
+        order @ Order::InfoCancel(komm::UmschlagAbbrechen { stamp: ReplyInfo, }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        order @ Order::FlushCancel(komm::UmschlagAbbrechen { stamp: ReplyFlush, }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        order @ Order::WriteBlockCancel(komm::UmschlagAbbrechen { stamp: ReplyWriteBlock { .. }, }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        order @ Order::ReadBlockCancel(komm::UmschlagAbbrechen { stamp: ReplyReadBlock, }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        order @ Order::DeleteBlockCancel(komm::UmschlagAbbrechen { stamp: ReplyDeleteBlock, }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        order @ Order::IterBlocksInitCancel(komm::UmschlagAbbrechen { stamp: ReplyIterBlocksInit, }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+        order @ Order::IterBlocksNextCancel(komm::UmschlagAbbrechen { stamp: ReplyIterBlocksNext, }) =>
+            Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
+
+        Order::JobWriteBlockCancel(komm::UmschlagAbbrechen { stamp: WriteBlockJob, }) =>
+            Err(Error::JobWriteBlockCanceled),
+        Order::JobWriteBlock(komm::Umschlag { payload: output, stamp: WriteBlockJob, }) =>
+            output,
+
+        // TaskDone::WriteBlock(block_tank) => {
+        //     blocks.push(block_tank);
+        //     counter.writes += 1;
+        //     active_tasks_counter.writes -= 1;
+        // },
+        // TaskDone::WriteBlockNoSpace => {
+        //     counter.writes += 1;
+        //     active_tasks_counter.writes -= 1;
+        // },
+        // TaskDone::ReadBlockSuccess => {
+        //     counter.reads += 1;
+        //     active_tasks_counter.reads -= 1;
+        // }
+        // TaskDone::ReadBlockNotFound(block_id) => {
+        //     counter.reads += 1;
+        //     active_tasks_counter.reads -= 1;
+        //     assert!(blocks.iter().find(|tank| tank.block_id == block_id).is_none());
+        // },
+        // TaskDone::DeleteBlock => {
+        //     counter.deletes += 1;
+        //     active_tasks_counter.deletes -= 1;
+        // },
+    }
+}
 
 #[derive(Debug)]
 enum Order {
@@ -374,20 +441,31 @@ enum Order {
     IterBlocksInit(komm::Umschlag<IterBlocks, ReplyIterBlocksInit>),
     IterBlocksNextCancel(komm::UmschlagAbbrechen<ReplyIterBlocksNext>),
     IterBlocksNext(komm::Umschlag<IterBlocksItem, ReplyIterBlocksNext>),
+
+    JobWriteBlock(komm::Umschlag<Result<(), Error>, WriteBlockJob>),
+    JobWriteBlockCancel(komm::UmschlagAbbrechen<WriteBlockJob>),
 }
 
 #[derive(Debug)]
 struct ReplyInfo;
+
 #[derive(Debug)]
 struct ReplyFlush;
+
 #[derive(Debug)]
-struct ReplyWriteBlock;
+struct ReplyWriteBlock {
+    block_bytes: Bytes,
+}
+
 #[derive(Debug)]
 struct ReplyReadBlock;
+
 #[derive(Debug)]
 struct ReplyDeleteBlock;
+
 #[derive(Debug)]
 struct ReplyIterBlocksInit;
+
 #[derive(Debug)]
 struct ReplyIterBlocksNext;
 
@@ -475,6 +553,18 @@ impl From<komm::Umschlag<IterBlocksItem, ReplyIterBlocksNext>> for Order {
     }
 }
 
+impl From<komm::UmschlagAbbrechen<WriteBlockJob>> for Order {
+    fn from(v: komm::UmschlagAbbrechen<WriteBlockJob>) -> Order {
+        Order::JobWriteBlockCancel(v)
+    }
+}
+
+impl From<komm::Umschlag<Result<(), Error>, WriteBlockJob>> for Order {
+    fn from(v: komm::Umschlag<Result<(), Error>, WriteBlockJob>) -> Order {
+        Order::JobWriteBlock(v)
+    }
+}
+
 struct LocalAccessPolicy;
 
 impl AccessPolicy for LocalAccessPolicy {
@@ -494,14 +584,19 @@ struct Welt {
 
 enum Job {
     BlockwheelFs(job::Job<LocalAccessPolicy>),
-    // GenRandomBlock(JobGenRandomBlock),
-    // CalcCrc(JobCalcCrc),
+    WriteBlock(JobWriteBlockArgs),
     FtdSklave(arbeitssklave::SklaveJob<Welt, Order>),
 }
 
 impl From<job::Job<LocalAccessPolicy>> for Job {
     fn from(job: job::Job<LocalAccessPolicy>) -> Job {
         Job::BlockwheelFs(job)
+    }
+}
+
+impl From<JobWriteBlockArgs> for Job {
+    fn from(args: JobWriteBlockArgs) -> Job {
+        Job::WriteBlock(args)
     }
 }
 
@@ -519,12 +614,8 @@ impl edeltraud::Job for Job {
             Job::BlockwheelFs(job) => {
                 job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
             },
-            // Job::GenRandomBlock(job) => {
-            //     job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
-            // },
-            // Job::CalcCrc(job) => {
-            //     job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
-            // },
+            Job::WriteBlock(args) =>
+                job_write_block(args, thread_pool),
             Job::FtdSklave(mut sklave_job) => {
                 loop {
                     match sklave_job.zu_ihren_diensten().unwrap() {
@@ -550,35 +641,49 @@ impl edeltraud::Job for Job {
     }
 }
 
-// impl From<JobGenRandomBlock> for Job {
-//     fn from(async_job: JobGenRandomBlock) -> Job {
-//         Job::GenRandomBlock(async_job)
-//     }
-// }
+#[derive(Debug)]
+struct WriteBlockJob;
 
-// impl From<JobCalcCrc> for Job {
-//     fn from(async_job: JobCalcCrc) -> Job {
-//         Job::CalcCrc(async_job)
-//     }
-// }
+struct JobWriteBlockArgs {
+    main: JobWriteBlockArgsMain,
+    job_complete: komm::Rueckkopplung<Order, WriteBlockJob>,
+}
 
-// struct JobGenRandomBlock {
-//     blocks_pool: BytesPool,
-//     block_size_bytes: usize,
-// }
+struct JobWriteBlockArgsMain {
+    blocks_pool: BytesPool,
+    block_size_bytes: usize,
+    blockwheel_fs_meister: Meister<LocalAccessPolicy>,
+    ftd_sendegeraet: komm::Sendegeraet<Order>,
+}
 
-// impl edeltraud::Job for JobGenRandomBlock {
-//     type Output = Bytes;
+fn job_write_block<P>(args: JobWriteBlockArgs, thread_pool: &P) where P: edeltraud::ThreadPool<Job> {
+    let output = run_job_write_block(args.main, thread_pool);
+    args.job_complete.commit(output).ok();
+}
 
-//     fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
-//         let JobGenRandomBlock { blocks_pool, block_size_bytes, } = self;
-//         let amount = rand::thread_rng().gen_range(1 .. block_size_bytes);
-//         let mut block = blocks_pool.lend();
-//         block.extend((0 .. amount).map(|_| 0));
-//         rand::thread_rng().fill(&mut block[..]);
-//         block.freeze()
-//     }
-// }
+fn run_job_write_block<P>(args: JobWriteBlockArgsMain, thread_pool: &P) -> Result<(), Error> where P: edeltraud::ThreadPool<Job> {
+    let mut rng = rand::thread_rng();
+    let amount = rng.gen_range(1 .. args.block_size_bytes);
+    let mut block = args.blocks_pool.lend();
+    block.extend((0 .. amount).map(|_| 0));
+    rng.fill(&mut block[..]);
+    let block_bytes = block.freeze();
+    let stamp = ReplyWriteBlock {
+        block_bytes: block_bytes.clone(),
+    };
+    let rueckkopplung = args.ftd_sendegeraet.rueckkopplung(stamp);
+    args.blockwheel_fs_meister
+        .write_block(
+            block_bytes,
+            rueckkopplung,
+            &edeltraud::ThreadPoolMap::new(thread_pool),
+        )
+        .map_err(Error::RequestWriteBlock)?;
+
+
+    todo!()
+}
+
 
 // struct JobCalcCrc {
 //     expected_block_bytes: Bytes,

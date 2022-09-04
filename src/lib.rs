@@ -144,7 +144,7 @@ impl<A> Freie<A> where A: AccessPolicy {
         blocks_pool: BytesPool,
         thread_pool: &P,
     )
-        -> Result<Meister<A, P>, Error>
+        -> Result<Meister<A>, Error>
     where P: edeltraud::ThreadPool<job::Job<A>> + Clone + Send + 'static,
     {
         let performer_sklave_meister =
@@ -177,129 +177,155 @@ impl<A> Freie<A> where A: AccessPolicy {
 
         Ok(Meister {
             performer_sklave_meister,
-            thread_pool: thread_pool.clone(),
         })
     }
 }
 
-pub struct Meister<A, P> where A: AccessPolicy {
+pub struct Meister<A> where A: AccessPolicy {
     performer_sklave_meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
-    thread_pool: P,
 }
 
-impl<A, P> Clone for Meister<A, P> where A: AccessPolicy, P: Clone, {
+impl<A> Clone for Meister<A> where A: AccessPolicy {
     fn clone(&self) -> Self {
         Meister {
             performer_sklave_meister: self.performer_sklave_meister.clone(),
-            thread_pool: self.thread_pool.clone(),
         }
     }
 }
 
-impl<A, P> Meister<A, P>
-where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
-{
-    pub fn info(
+impl<A> Meister<A> where A: AccessPolicy {
+    pub fn info<P>(
         &self,
         rueckkopplung: <blockwheel_context::Context<A> as context::Context>::Info,
+        thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
+    where P: edeltraud::ThreadPool<job::Job<A>>
     {
-        self.order(proto::Request::Info(
-            proto::RequestInfo { context: rueckkopplung, },
-        ))
+        self.order(proto::Request::Info(proto::RequestInfo { context: rueckkopplung, }), thread_pool)
     }
 
-    pub fn flush(
+    pub fn flush<P>(
         &self,
         rueckkopplung: <blockwheel_context::Context<A> as context::Context>::Flush,
+        thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
+    where P: edeltraud::ThreadPool<job::Job<A>>
     {
-        self.order(proto::Request::Flush(
-            proto::RequestFlush { context: rueckkopplung, },
-        ))
+        self.order(proto::Request::Flush(proto::RequestFlush { context: rueckkopplung, }), thread_pool)
     }
 
-    pub fn write_block(
+    pub fn write_block<P>(
         &self,
         block_bytes: Bytes,
         rueckkopplung: <blockwheel_context::Context<A> as context::Context>::WriteBlock,
+        thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
+    where P: edeltraud::ThreadPool<job::Job<A>>
     {
-        self.order(proto::Request::WriteBlock(
-            proto::RequestWriteBlock {
-                block_bytes,
-                context: rueckkopplung,
-            },
-        ))
+        self.order(
+            proto::Request::WriteBlock(
+                proto::RequestWriteBlock {
+                    block_bytes,
+                    context: rueckkopplung,
+                },
+            ),
+            thread_pool,
+        )
     }
 
-    pub fn read_block(
+    pub fn read_block<P>(
         &self,
         block_id: block::Id,
         rueckkopplung: <blockwheel_context::Context<A> as context::Context>::ReadBlock,
+        thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
+    where P: edeltraud::ThreadPool<job::Job<A>>
     {
-        self.order(proto::Request::ReadBlock(
-            proto::RequestReadBlock {
-                block_id,
-                context: rueckkopplung,
-            },
-        ))
+        self.order(
+            proto::Request::ReadBlock(
+                proto::RequestReadBlock {
+                    block_id,
+                    context: rueckkopplung,
+                },
+            ),
+            thread_pool,
+        )
     }
 
-    pub fn delete_block(
+    pub fn delete_block<P>(
         &self,
         block_id: block::Id,
         rueckkopplung: <blockwheel_context::Context<A> as context::Context>::DeleteBlock,
+        thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
+    where P: edeltraud::ThreadPool<job::Job<A>>
     {
-        self.order(proto::Request::DeleteBlock(
-            proto::RequestDeleteBlock {
-                block_id,
-                context: rueckkopplung,
-            },
-        ))
+        self.order(
+            proto::Request::DeleteBlock(
+                proto::RequestDeleteBlock {
+                    block_id,
+                    context: rueckkopplung,
+                },
+            ),
+            thread_pool,
+        )
     }
 
-    pub fn iter_blocks_init(
+    pub fn iter_blocks_init<P>(
         &self,
         rueckkopplung: <blockwheel_context::Context<A> as context::Context>::IterBlocksInit,
+        thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
+    where P: edeltraud::ThreadPool<job::Job<A>>
     {
-        self.order(proto::Request::IterBlocksInit(
-            proto::RequestIterBlocksInit {
-                context: rueckkopplung,
-            },
-        ))
+        self.order(
+            proto::Request::IterBlocksInit(
+                proto::RequestIterBlocksInit {
+                    context: rueckkopplung,
+                },
+            ),
+            thread_pool,
+        )
     }
 
-    pub fn iter_blocks_next(
+    pub fn iter_blocks_next<P>(
         &self,
         iterator_next: IterBlocksIterator,
         rueckkopplung: <blockwheel_context::Context<A> as context::Context>::IterBlocksNext,
+        thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
+    where P: edeltraud::ThreadPool<job::Job<A>>
     {
-        self.order(proto::Request::IterBlocksNext(
-            proto::RequestIterBlocksNext {
-                iterator_next,
-                context: rueckkopplung,
-            },
-        ))
+        self.order(
+            proto::Request::IterBlocksNext(
+                proto::RequestIterBlocksNext {
+                    iterator_next,
+                    context: rueckkopplung,
+                },
+            ),
+            thread_pool,
+        )
     }
 
-    fn order(&self, request: proto::Request<blockwheel_context::Context<A>>) -> Result<(), arbeitssklave::Error> {
+    fn order<P>(
+        &self,
+        request: proto::Request<blockwheel_context::Context<A>>,
+        thread_pool: &P,
+    )
+        -> Result<(), arbeitssklave::Error>
+    where P: edeltraud::ThreadPool<job::Job<A>>
+    {
         self.performer_sklave_meister
             .befehl(
                 wheel::performer_sklave::Order::Request(request),
-                &self.thread_pool,
+                thread_pool,
             )
     }
 }
