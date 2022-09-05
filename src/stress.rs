@@ -89,6 +89,7 @@ pub struct Counter {
     pub deletes: usize,
     pub write_jobs: usize,
     pub verify_jobs: usize,
+    pub no_space_hits: usize
 }
 
 impl Counter {
@@ -106,6 +107,7 @@ impl Counter {
         self.deletes = 0;
         self.write_jobs = 0;
         self.verify_jobs = 0;
+        self.no_space_hits = 0;
     }
 }
 
@@ -366,6 +368,7 @@ where P: edeltraud::ThreadPool<Job>,
             Ok(())
         },
         Order::WriteBlock(komm::Umschlag { payload: Err(RequestWriteBlockError::NoSpaceLeft), stamp: ReplyWriteBlock { .. }, }) => {
+            counter.no_space_hits += 1;
             counter.writes += 1;
             active_tasks_counter.writes -= 1;
             Ok(())

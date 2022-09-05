@@ -700,6 +700,11 @@ impl<C> Inner<C> where C: Context {
         if let Some(space_key) = self.freed_space_key.take() {
             if let Some(defrag) = self.defrag.as_mut() {
                 if let Some(request_write_block) = defrag.queues.pending.pop_at_most(space_key.space_available()) {
+                    log::debug!(
+                        "popped pending process_write_block_request of {} from defrag queue ({} bytes now)",
+                        request_write_block.block_bytes.len(),
+                        defrag.queues.pending.pending_bytes(),
+                    );
 
                     match self.schema.process_write_block_request(&request_write_block.block_bytes, Some(defrag.queues.pending.pending_bytes())) {
                         schema::WriteBlockOp::Perform(write_block_perform) => {
@@ -874,13 +879,15 @@ impl<C> Inner<C> where C: Context {
             },
 
             schema::WriteBlockOp::QueuePendingDefrag { space_required, } => {
-                log::debug!(
-                    "cannot directly allocate {} ({}) bytes in process_write_block_request: moving to pending defrag queue",
-                    request_write_block.block_bytes.len(),
-                    space_required,
-                );
                 if let Some(Defrag { queues: defrag::Queues { pending, .. }, .. }) = self.defrag.as_mut() {
+                    let request_write_block_len = request_write_block.block_bytes.len();
                     pending.push(request_write_block, space_required);
+                    log::debug!(
+                        "cannot directly allocate {} ({}) bytes in process_write_block_request: moving to pending defrag queue ({} bytes already)",
+                        request_write_block_len,
+                        space_required,
+                        pending.pending_bytes(),
+                    );
                     Op::Idle(Performer { inner: self, })
                 } else {
                     Op::Event(Event {
