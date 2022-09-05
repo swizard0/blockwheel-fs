@@ -28,7 +28,7 @@ struct CliArgs {
 }
 
 fn main() {
-    pretty_env_logger::init();
+    pretty_env_logger::init_timed();
     let cli_args = CliArgs::parse();
 
     let params = blockwheel_fs::Params {
@@ -65,7 +65,6 @@ fn main() {
         },
         Err(error) => {
             log::error!("stress task error: {error:?}");
-            log::error!("blocks: {blocks:?}");
         },
     }
 }
