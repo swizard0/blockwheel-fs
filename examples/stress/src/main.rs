@@ -50,8 +50,6 @@ fn main() {
         block_size_bytes: cli_args.work_block_size_bytes - 256,
     };
 
-    std::fs::remove_file(&cli_args.wheel_filename).ok();
-
     let mut blocks = Vec::new();
     let mut counter = blockwheel_fs::stress::Counter::default();
     let stress_result = blockwheel_fs::stress::stress_loop(params, &mut blocks, &mut counter, &limits);
