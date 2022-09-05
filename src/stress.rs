@@ -87,6 +87,8 @@ pub struct Counter {
     pub reads: usize,
     pub writes: usize,
     pub deletes: usize,
+    pub write_jobs: usize,
+    pub verify_jobs: usize,
 }
 
 impl Counter {
@@ -94,10 +96,16 @@ impl Counter {
         self.reads + self.writes + self.deletes
     }
 
+    pub fn sum_total(&self) -> usize {
+        self.sum() + self.write_jobs + self.verify_jobs
+    }
+
     pub fn clear(&mut self) {
         self.reads = 0;
         self.writes = 0;
         self.deletes = 0;
+        self.write_jobs = 0;
+        self.verify_jobs = 0;
     }
 }
 
@@ -140,7 +148,8 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
 
     loop {
         if actions_counter >= limits.actions {
-            while active_tasks_counter.sum() > 0 {
+            while active_tasks_counter.sum_total() > 0 {
+                log::debug!("final flush: {active_tasks_counter:?}");
                 process(ftd_rx.recv(), blocks, counter, &mut active_tasks_counter, &ftd_sendegeraet, &thread_pool)?;
             }
             break;
@@ -203,6 +212,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
                 edeltraud::job(&thread_pool, job)
                     .map_err(Error::Edeltraud)?;
                 active_tasks_counter.writes += 1;
+                active_tasks_counter.write_jobs += 1;
             } else {
                 // delete task
                 log::debug!("new delete_task: bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}, {active_tasks_counter:?}");
@@ -235,7 +245,14 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         actions_counter += 1;
     }
 
-    assert!(matches!(ftd_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    log::info!("before final check: active_tasks_counter = {active_tasks_counter:?}, counter = {counter:?}, actions_counter = {actions_counter}");
+
+    match ftd_rx.try_recv() {
+        Err(mpsc::TryRecvError::Empty) =>
+            (),
+        other_order =>
+            return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
+    }
 
     log::info!("finish | invoking flush; {active_tasks_counter:?}");
 
@@ -363,7 +380,11 @@ where P: edeltraud::ThreadPool<Job>,
                 job_complete: ftd_sendegeraet.rueckkopplung(VerifyBlockJob),
             };
             edeltraud::job(&thread_pool, job)
-                .map_err(Error::Edeltraud)
+                .map_err(Error::Edeltraud)?;
+            counter.reads += 1;
+            active_tasks_counter.reads -= 1;
+            active_tasks_counter.verify_jobs += 1;
+            Ok(())
         },
         Order::ReadBlock(komm::Umschlag { payload: Err(RequestReadBlockError::NotFound), stamp: ReplyReadBlock { block_id, .. }, }) => {
             counter.reads += 1;
@@ -400,13 +421,16 @@ where P: edeltraud::ThreadPool<Job>,
 
         Order::JobWriteBlockCancel(komm::UmschlagAbbrechen { stamp: WriteBlockJob, }) =>
             Err(Error::JobWriteBlockCanceled),
-        Order::JobWriteBlock(komm::Umschlag { payload: output, stamp: WriteBlockJob, }) =>
-            output,
+        Order::JobWriteBlock(komm::Umschlag { payload: output, stamp: WriteBlockJob, }) => {
+            counter.write_jobs += 1;
+            active_tasks_counter.write_jobs -= 1;
+            output
+        },
         Order::JobVerifyBlockCancel(komm::UmschlagAbbrechen { stamp: VerifyBlockJob, }) =>
             Err(Error::JobVerifyBlockCanceled),
         Order::JobVerifyBlock(komm::Umschlag { payload: Ok(()), stamp: VerifyBlockJob, }) => {
-            counter.reads += 1;
-            active_tasks_counter.reads -= 1;
+            counter.verify_jobs += 1;
+            active_tasks_counter.verify_jobs -= 1;
             Ok(())
         },
         Order::JobVerifyBlock(komm::Umschlag { payload: Err(error), stamp: VerifyBlockJob, }) =>
