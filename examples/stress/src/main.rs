@@ -10,9 +10,6 @@ struct CliArgs {
     /// Initial wheel size when creating new file (in bytes)
     #[clap(short = 's', long, default_value = "67108864")]
     init_wheel_size_bytes: usize,
-    /// wheel ero task restart holdon (in seconds)
-    #[clap(long, default_value = "4")]
-    wheel_task_restart_sec: usize,
     /// work io buffer size (in bytes)
     #[clap(long, default_value = "8388608")]
     work_block_size_bytes: usize,
@@ -59,8 +56,13 @@ fn main() {
     let mut counter = blockwheel_fs::stress::Counter::default();
     let stress_result = blockwheel_fs::stress::stress_loop(params, &mut blocks, &mut counter, &limits);
     match stress_result {
-        Ok(()) =>
-            log::info!("stress task done: counters = {counter:?}"),
+        Ok(()) => {
+            log::info!("stress task done: counters = {counter:?}");
+            log::info!(" JOB_BLOCK_PREPARE_WRITE: {}", blockwheel_fs::job::JOB_BLOCK_PREPARE_WRITE.load(std::sync::atomic::Ordering::SeqCst));
+            log::info!(" JOB_BLOCK_PROCESS_READ: {}", blockwheel_fs::job::JOB_BLOCK_PROCESS_READ.load(std::sync::atomic::Ordering::SeqCst));
+            log::info!(" JOB_BLOCK_PREPARE_DELETE: {}", blockwheel_fs::job::JOB_BLOCK_PREPARE_DELETE.load(std::sync::atomic::Ordering::SeqCst));
+            log::info!(" JOB_PERFORMER_SKLAVE: {}", blockwheel_fs::job::JOB_PERFORMER_SKLAVE.load(std::sync::atomic::Ordering::SeqCst));
+        },
         Err(error) => {
             log::error!("stress task error: {error:?}");
             log::error!("blocks: {blocks:?}");
