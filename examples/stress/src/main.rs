@@ -2,12 +2,6 @@ use clap::{
     Parser,
 };
 
-use ero::{
-    supervisor::{
-        SupervisorGenServer,
-    },
-};
-
 #[derive(Parser, Debug)]
 struct CliArgs {
     /// Filename for blockwheel data
