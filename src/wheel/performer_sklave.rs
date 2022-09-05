@@ -127,8 +127,9 @@ where A: AccessPolicy,
 
             {
                 let sklavenwelt = sklave_job.sklavenwelt_mut();
-                assert!(sklavenwelt.env.incoming_orders.is_empty());
-                std::mem::swap(&mut sklavenwelt.env.incoming_orders, &mut sklavenwelt.env.delayed_orders);
+                sklavenwelt.env
+                    .incoming_orders
+                    .extend(sklavenwelt.env.delayed_orders.drain(..));
             }
             while let Some(incoming_order) = sklave_job.sklavenwelt_mut().env.incoming_orders.pop() {
                 match incoming_order {

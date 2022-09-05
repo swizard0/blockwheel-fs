@@ -45,18 +45,20 @@ pub enum Error {
     BlockwheelFs(BlockwheelFsError),
     UnexpectedFtdOrder(String),
     RequestInfo(arbeitssklave::Error),
+    RequestReadBlock(arbeitssklave::Error),
     RequestWriteBlock(arbeitssklave::Error),
+    RequestDeleteBlock(arbeitssklave::Error),
     FtdProcessIsLost,
     ReadBlock(RequestReadBlockError),
     WriteBlock(RequestWriteBlockError),
     DeleteBlock(RequestDeleteBlockError),
     JobWriteBlockCanceled,
-
-    // ReadBlockCrcMismarch {
-    //     block_id: block::Id,
-    //     expected_crc: u64,
-    //     provided_crc: u64,
-    // },
+    JobVerifyBlockCanceled,
+    ReadBlockCrcMismarch {
+        block_id: block::Id,
+        expected_crc: u64,
+        provided_crc: u64,
+    },
     // IterBlocks(IterBlocksError),
     // BlocksCountMismatch {
     //     blocks_count_iter: usize,
@@ -118,7 +120,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     let ftd_sklave_freie = arbeitssklave::Freie::new();
     let ftd_sendegeraet = komm::Sendegeraet::starten(&ftd_sklave_freie, thread_pool.clone())
         .unwrap();
-    let ftd_sklave_meister = ftd_sklave_freie
+    let _ftd_sklave_meister = ftd_sklave_freie
         .versklaven(Welt { ftd_tx, }, &thread_pool)
         .unwrap();
 
@@ -138,7 +140,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     loop {
         if actions_counter >= limits.actions {
             while active_tasks_counter.sum() > 0 {
-                process(ftd_rx.recv(), blocks, counter, &mut active_tasks_counter)?;
+                process(ftd_rx.recv(), blocks, counter, &mut active_tasks_counter, &ftd_sendegeraet, &thread_pool)?;
             }
             break;
         }
@@ -160,7 +162,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             None =>
                 (),
             Some(task_result) => {
-                process(task_result, blocks, counter, &mut active_tasks_counter)?;
+                process(task_result, blocks, counter, &mut active_tasks_counter, &ftd_sendegeraet, &thread_pool)?;
                 continue;
             }
         }
@@ -176,8 +178,6 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         };
         let bytes_free = wheel_size_bytes - bytes_used;
 
-        println!("wheel_size_bytes: {wheel_size_bytes:?}, bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}");
-
         if blocks.is_empty() || rand::thread_rng().gen_range(0.0f32 .. 1.0) < 0.5 {
             // write or delete task
             let write_prob = if bytes_free * 2 >= wheel_size_bytes {
@@ -188,6 +188,8 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             let dice = rand::thread_rng().gen_range(0.0 .. 1.0);
             if blocks.is_empty() || dice < write_prob {
                 // write task
+                log::debug!("new write_task: wheel_size_bytes: {wheel_size_bytes:?}, bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}");
+
                 let job = JobWriteBlockArgs {
                     main: JobWriteBlockArgsMain {
                         blocks_pool: blocks_pool.clone(),
@@ -202,52 +204,31 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
                 active_tasks_counter.writes += 1;
             } else {
                 // delete task
+                log::debug!("new delete_task: wheel_size_bytes: {wheel_size_bytes:?}, bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}");
 
-                todo!();
-    //             let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
-    //             let BlockTank { block_id, .. } = blocks.swap_remove(block_index);
-    //             let mut blockwheel_pid = pid.clone();
-    //             spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-    //                 let Deleted = blockwheel_pid.delete_block(block_id.clone()).await
-    //                     .map_err(Error::DeleteBlock)?;
-    //                 Ok(TaskDone::DeleteBlock)
-    //             });
+                let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
+                let BlockTank { block_id, .. } = blocks.swap_remove(block_index);
+                let rueckkopplung = ftd_sendegeraet.rueckkopplung(ReplyDeleteBlock);
+                blockwheel_fs_meister
+                    .delete_block(block_id, rueckkopplung, &edeltraud::ThreadPoolMap::new(&thread_pool))
+                    .map_err(Error::RequestDeleteBlock)?;
                 active_tasks_counter.deletes += 1;
             }
         } else {
             // read task
+            log::debug!("new read_task: wheel_size_bytes: {wheel_size_bytes:?}, bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}");
 
-            todo!();
-    //         let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
-    //         let BlockTank { block_id, block_bytes, } = blocks[block_index].clone();
-    //         let mut blockwheel_pid = pid.clone();
-    //         let thread_pool = thread_pool.clone();
-    //         spawn_task(&mut supervisor_pid, done_tx.clone(), async move {
-    //             match blockwheel_pid.read_block(block_id.clone()).await {
-    //                 Ok(block_bytes_read) => {
-    //                     let JobCalcCrcOutput { expected_crc, provided_crc, } =
-    //                         edeltraud::job_async(
-    //                             &thread_pool,
-    //                             JobCalcCrc {
-    //                                 expected_block_bytes: block_bytes,
-    //                                 provided_block_bytes: block_bytes_read,
-    //                             },
-    //                         )
-    //                         .map_err(Error::Edeltraud)?
-    //                         .await
-    //                         .map_err(Error::Edeltraud)?;
-    //                     if expected_crc != provided_crc {
-    //                         Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, })
-    //                     } else {
-    //                         Ok(TaskDone::ReadBlockSuccess)
-    //                     }
-    //                 },
-    //                 Err(super::ReadBlockError::NotFound) =>
-    //                     Ok(TaskDone::ReadBlockNotFound(block_id)),
-    //                 Err(error) =>
-    //                     Err(Error::ReadBlock(error)),
-    //             }
-    //         });
+            let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
+            let BlockTank { block_id, block_bytes, } = blocks[block_index].clone();
+            let stamp = ReplyReadBlock { block_id: block_id.clone(), block_bytes, };
+            let rueckkopplung = ftd_sendegeraet.rueckkopplung(stamp);
+            blockwheel_fs_meister
+                .read_block(
+                    block_id,
+                    rueckkopplung,
+                    &edeltraud::ThreadPoolMap::new(&thread_pool),
+                )
+                .map_err(Error::RequestReadBlock)?;
             active_tasks_counter.reads += 1;
         }
         actions_counter += 1;
@@ -313,44 +294,18 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     //     }
     // }
     // assert_eq!(actual_count, iter_blocks.blocks_total_count);
-
-    // Ok::<_, Error>(())
-
-    // ---
-
-    // let (done_tx, done_rx) = mpsc::channel(0);
-    // pin_mut!(done_rx);
-
-    // enum TaskDone {
-    //     WriteBlock(BlockTank),
-    //     WriteBlockNoSpace,
-    //     DeleteBlock,
-    //     ReadBlockSuccess,
-    //     ReadBlockNotFound(block::Id),
-    // }
-
-    // fn spawn_task<T>(
-    //     supervisor_pid: &mut SupervisorPid,
-    //     mut done_tx: mpsc::Sender<Result<TaskDone, Error>>,
-    //     task: T,
-    // )
-    // where T: Future<Output = Result<TaskDone, Error>> + Send + 'static
-    // {
-    //     supervisor_pid.spawn_link_temporary(async move {
-    //         let result = task.await;
-    //         done_tx.send(result).await.ok();
-    //     })
-    // }
-
 }
 
-fn process(
+fn process<P>(
     maybe_recv_order: Result<Order, mpsc::RecvError>,
     blocks: &mut Vec<BlockTank>,
     counter: &mut Counter,
     active_tasks_counter: &mut Counter,
+    ftd_sendegeraet: &komm::Sendegeraet<Order>,
+    thread_pool: &P,
 )
     -> Result<(), Error>
+where P: edeltraud::ThreadPool<Job>,
 {
     let recv_order = maybe_recv_order
         .map_err(|mpsc::RecvError| Error::FtdProcessIsLost)?;
@@ -365,14 +320,34 @@ fn process(
             active_tasks_counter.writes -= 1;
             Ok(())
         },
-        Order::WriteBlock(komm::Umschlag { payload: Err(error), stamp: ReplyWriteBlock { .. }, }) =>
-            Err(Error::WriteBlock(error)),
-        Order::ReadBlock(komm::Umschlag { payload: Ok(bytes), stamp: ReplyReadBlock, }) =>
-            todo!(),
-        Order::ReadBlock(komm::Umschlag { payload: Err(error), stamp: ReplyReadBlock, }) =>
-            Err(Error::ReadBlock(error)),
-        Order::DeleteBlock(komm::Umschlag { payload: Ok(Deleted), stamp: ReplyDeleteBlock, }) =>
-            todo!(),
+        Order::WriteBlock(komm::Umschlag { payload: Err(RequestWriteBlockError::NoSpaceLeft), stamp: ReplyWriteBlock { .. }, }) => {
+            counter.writes += 1;
+            active_tasks_counter.writes -= 1;
+            Ok(())
+        },
+        Order::ReadBlock(komm::Umschlag { payload: Ok(provided_block_bytes), stamp: ReplyReadBlock { block_id, block_bytes, }, }) => {
+            let job = JobVerifyBlockArgs {
+                main: JobVerifyBlockArgsMain {
+                    block_id,
+                    provided_block_bytes,
+                    expected_block_bytes: block_bytes,
+                },
+                job_complete: ftd_sendegeraet.rueckkopplung(VerifyBlockJob),
+            };
+            edeltraud::job(&thread_pool, job)
+                .map_err(Error::Edeltraud)
+        },
+        Order::ReadBlock(komm::Umschlag { payload: Err(RequestReadBlockError::NotFound), stamp: ReplyReadBlock { block_id, .. }, }) => {
+            counter.reads += 1;
+            active_tasks_counter.reads -= 1;
+            assert!(blocks.iter().find(|tank| tank.block_id == block_id).is_none());
+            Ok(())
+        },
+        Order::DeleteBlock(komm::Umschlag { payload: Ok(Deleted), stamp: ReplyDeleteBlock, }) => {
+            counter.deletes += 1;
+            active_tasks_counter.deletes -= 1;
+            Ok(())
+        },
         Order::DeleteBlock(komm::Umschlag { payload: Err(error), stamp: ReplyDeleteBlock, }) =>
             Err(Error::DeleteBlock(error)),
         order @ Order::IterBlocksInit(komm::Umschlag { stamp: ReplyIterBlocksInit, .. }) =>
@@ -386,7 +361,7 @@ fn process(
             Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
         order @ Order::WriteBlockCancel(komm::UmschlagAbbrechen { stamp: ReplyWriteBlock { .. }, }) =>
             Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
-        order @ Order::ReadBlockCancel(komm::UmschlagAbbrechen { stamp: ReplyReadBlock, }) =>
+        order @ Order::ReadBlockCancel(komm::UmschlagAbbrechen { stamp: ReplyReadBlock { .. }, }) =>
             Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
         order @ Order::DeleteBlockCancel(komm::UmschlagAbbrechen { stamp: ReplyDeleteBlock, }) =>
             Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
@@ -399,29 +374,15 @@ fn process(
             Err(Error::JobWriteBlockCanceled),
         Order::JobWriteBlock(komm::Umschlag { payload: output, stamp: WriteBlockJob, }) =>
             output,
-
-        // TaskDone::WriteBlock(block_tank) => {
-        //     blocks.push(block_tank);
-        //     counter.writes += 1;
-        //     active_tasks_counter.writes -= 1;
-        // },
-        // TaskDone::WriteBlockNoSpace => {
-        //     counter.writes += 1;
-        //     active_tasks_counter.writes -= 1;
-        // },
-        // TaskDone::ReadBlockSuccess => {
-        //     counter.reads += 1;
-        //     active_tasks_counter.reads -= 1;
-        // }
-        // TaskDone::ReadBlockNotFound(block_id) => {
-        //     counter.reads += 1;
-        //     active_tasks_counter.reads -= 1;
-        //     assert!(blocks.iter().find(|tank| tank.block_id == block_id).is_none());
-        // },
-        // TaskDone::DeleteBlock => {
-        //     counter.deletes += 1;
-        //     active_tasks_counter.deletes -= 1;
-        // },
+        Order::JobVerifyBlockCancel(komm::UmschlagAbbrechen { stamp: VerifyBlockJob, }) =>
+            Err(Error::JobVerifyBlockCanceled),
+        Order::JobVerifyBlock(komm::Umschlag { payload: Ok(()), stamp: VerifyBlockJob, }) => {
+            counter.reads += 1;
+            active_tasks_counter.reads -= 1;
+            Ok(())
+        },
+        Order::JobVerifyBlock(komm::Umschlag { payload: Err(error), stamp: VerifyBlockJob, }) =>
+            Err(error),
     }
 }
 
@@ -444,6 +405,8 @@ enum Order {
 
     JobWriteBlock(komm::Umschlag<Result<(), Error>, WriteBlockJob>),
     JobWriteBlockCancel(komm::UmschlagAbbrechen<WriteBlockJob>),
+    JobVerifyBlock(komm::Umschlag<Result<(), Error>, VerifyBlockJob>),
+    JobVerifyBlockCancel(komm::UmschlagAbbrechen<VerifyBlockJob>),
 }
 
 #[derive(Debug)]
@@ -458,7 +421,10 @@ struct ReplyWriteBlock {
 }
 
 #[derive(Debug)]
-struct ReplyReadBlock;
+struct ReplyReadBlock {
+    block_id: block::Id,
+    block_bytes: Bytes,
+}
 
 #[derive(Debug)]
 struct ReplyDeleteBlock;
@@ -565,6 +531,18 @@ impl From<komm::Umschlag<Result<(), Error>, WriteBlockJob>> for Order {
     }
 }
 
+impl From<komm::UmschlagAbbrechen<VerifyBlockJob>> for Order {
+    fn from(v: komm::UmschlagAbbrechen<VerifyBlockJob>) -> Order {
+        Order::JobVerifyBlockCancel(v)
+    }
+}
+
+impl From<komm::Umschlag<Result<(), Error>, VerifyBlockJob>> for Order {
+    fn from(v: komm::Umschlag<Result<(), Error>, VerifyBlockJob>) -> Order {
+        Order::JobVerifyBlock(v)
+    }
+}
+
 struct LocalAccessPolicy;
 
 impl AccessPolicy for LocalAccessPolicy {
@@ -585,6 +563,7 @@ struct Welt {
 enum Job {
     BlockwheelFs(job::Job<LocalAccessPolicy>),
     WriteBlock(JobWriteBlockArgs),
+    VerifyBlock(JobVerifyBlockArgs),
     FtdSklave(arbeitssklave::SklaveJob<Welt, Order>),
 }
 
@@ -597,6 +576,12 @@ impl From<job::Job<LocalAccessPolicy>> for Job {
 impl From<JobWriteBlockArgs> for Job {
     fn from(args: JobWriteBlockArgs) -> Job {
         Job::WriteBlock(args)
+    }
+}
+
+impl From<JobVerifyBlockArgs> for Job {
+    fn from(args: JobVerifyBlockArgs) -> Job {
+        Job::VerifyBlock(args)
     }
 }
 
@@ -616,6 +601,8 @@ impl edeltraud::Job for Job {
             },
             Job::WriteBlock(args) =>
                 job_write_block(args, thread_pool),
+            Job::VerifyBlock(args) =>
+                job_verify_block(args),
             Job::FtdSklave(mut sklave_job) => {
                 loop {
                     match sklave_job.zu_ihren_diensten().unwrap() {
@@ -678,30 +665,34 @@ fn run_job_write_block<P>(args: JobWriteBlockArgsMain, thread_pool: &P) -> Resul
             rueckkopplung,
             &edeltraud::ThreadPoolMap::new(thread_pool),
         )
-        .map_err(Error::RequestWriteBlock)?;
-
-
-    todo!()
+        .map_err(Error::RequestWriteBlock)
 }
 
+#[derive(Debug)]
+struct VerifyBlockJob;
 
-// struct JobCalcCrc {
-//     expected_block_bytes: Bytes,
-//     provided_block_bytes: Bytes,
-// }
+struct JobVerifyBlockArgs {
+    main: JobVerifyBlockArgsMain,
+    job_complete: komm::Rueckkopplung<Order, VerifyBlockJob>,
+}
 
-// struct JobCalcCrcOutput {
-//     expected_crc: u64,
-//     provided_crc: u64,
-// }
+struct JobVerifyBlockArgsMain {
+    block_id: block::Id,
+    provided_block_bytes: Bytes,
+    expected_block_bytes: Bytes,
+}
 
-// impl edeltraud::Job for JobCalcCrc {
-//     type Output = JobCalcCrcOutput;
+fn job_verify_block(args: JobVerifyBlockArgs) {
+    let output = run_job_verify_block(args.main);
+    args.job_complete.commit(output).ok();
+}
 
-//     fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
-//         let JobCalcCrc { expected_block_bytes, provided_block_bytes, } = self;
-//         let expected_crc = block::crc(&expected_block_bytes);
-//         let provided_crc = block::crc(&provided_block_bytes);
-//         JobCalcCrcOutput { expected_crc, provided_crc, }
-//     }
-// }
+fn run_job_verify_block(args: JobVerifyBlockArgsMain) -> Result<(), Error> {
+    let expected_crc = block::crc(&args.expected_block_bytes);
+    let provided_crc = block::crc(&args.provided_block_bytes);
+    if expected_crc != provided_crc {
+        Err(Error::ReadBlockCrcMismarch { block_id: args.block_id, expected_crc, provided_crc, })
+    } else {
+        Ok(())
+    }
+}
