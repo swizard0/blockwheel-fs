@@ -145,7 +145,7 @@ pub fn bootstrap<A, W, B, P, J>(
     -> Result<(), InterpretError>
 where A: AccessPolicy,
       P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job<Output = ()> + From<arbeitssklave::SklaveJob<W, B>>,
+      J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, B>>,
       B: From<performer_sklave::Order<A>>,
 {
     let WheelData { wheel_file, storage_layout, performer, } =
@@ -516,7 +516,7 @@ pub fn run<A, W, B, P, J>(
     -> Result<(), InterpretError>
 where A: AccessPolicy,
       P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job<Output = ()> + From<arbeitssklave::SklaveJob<W, B>>,
+      J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, B>>,
       B: From<performer_sklave::Order<A>>,
 {
     log::debug!("running background interpreter job");

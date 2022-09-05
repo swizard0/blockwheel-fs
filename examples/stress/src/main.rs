@@ -36,8 +36,7 @@ struct CliArgs {
     stress_actions_count: usize,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     pretty_env_logger::init();
     let cli_args = CliArgs::parse();
 
@@ -60,29 +59,17 @@ async fn main() {
         block_size_bytes: cli_args.work_block_size_bytes - 256,
     };
 
-    log::debug!("creating supervisor");
-    let supervisor_gen_server = SupervisorGenServer::new();
-    let mut supervisor_pid = supervisor_gen_server.pid();
-
-    log::debug!("creating blockwheel_fs gen_server");
-    let blockwheel_fs_gen_server = blockwheel_fs::GenServer::new();
-    let _blockwheel_fs_pid = blockwheel_fs_gen_server.pid();
-
     std::fs::remove_file(&cli_args.wheel_filename).ok();
 
-    supervisor_pid.spawn_link_permanent(async move {
-        let mut blocks = Vec::new();
-        let mut counter = blockwheel_fs::stress::Counter::default();
-        let stress_task = blockwheel_fs::stress::stress_loop(params, &mut blocks, &mut counter, &limits);
-        match stress_task.await {
-            Ok(()) =>
-                log::info!("stress task done: counters = {counter:?}"),
-            Err(error) => {
-                log::error!("stress task error: {error:?}");
-                log::error!("blocks: {blocks:?}");
-            },
-        }
-    });
-
-    supervisor_gen_server.run().await;
+    let mut blocks = Vec::new();
+    let mut counter = blockwheel_fs::stress::Counter::default();
+    let stress_result = blockwheel_fs::stress::stress_loop(params, &mut blocks, &mut counter, &limits);
+    match stress_result {
+        Ok(()) =>
+            log::info!("stress task done: counters = {counter:?}"),
+        Err(error) => {
+            log::error!("stress task error: {error:?}");
+            log::error!("blocks: {blocks:?}");
+        },
+    }
 }

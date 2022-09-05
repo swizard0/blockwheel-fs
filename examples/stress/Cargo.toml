@@ -6,14 +6,12 @@ description = "Stress test utility for ero-blockwheel library."
 edition = "2021"
 
 [dependencies]
-ero = { git = "https://github.com/swizard0/ero.git" }
 blockwheel-fs = { path = "../.." }
 
 log = "^0.4"
 pretty_env_logger = "^0.4"
 
 clap = { version = "^3.0", features = ["cargo", "derive"] }
-tokio = { version = "^1", features = ["full"] }
 
 [profile.release]
 debug = true

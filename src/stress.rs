@@ -620,9 +620,7 @@ impl From<arbeitssklave::SklaveJob<Welt, Order>> for Job {
 }
 
 impl edeltraud::Job for Job {
-    type Output = ();
-
-    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+    fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
         match self {
             Job::BlockwheelFs(job) => {
                 job.run(&edeltraud::ThreadPoolMap::new(thread_pool));

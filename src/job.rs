@@ -52,9 +52,7 @@ pub static JOB_BLOCK_PREPARE_DELETE: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_PERFORMER_SKLAVE: AtomicUsize = AtomicUsize::new(0);
 
 impl<A> edeltraud::Job for Job<A> where A: AccessPolicy {
-    type Output = ();
-
-    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+    fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
         match self {
             Job::BlockPrepareWrite(args) => {
                 JOB_BLOCK_PREPARE_WRITE.fetch_add(1, Ordering::Relaxed);
