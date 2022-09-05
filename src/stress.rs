@@ -45,9 +45,12 @@ pub enum Error {
     BlockwheelFs(BlockwheelFsError),
     UnexpectedFtdOrder(String),
     RequestInfo(arbeitssklave::Error),
+    RequestFlush(arbeitssklave::Error),
     RequestReadBlock(arbeitssklave::Error),
     RequestWriteBlock(arbeitssklave::Error),
     RequestDeleteBlock(arbeitssklave::Error),
+    RequestIterBlocksInit(arbeitssklave::Error),
+    RequestIterBlocksNext(arbeitssklave::Error),
     FtdProcessIsLost,
     ReadBlock(RequestReadBlockError),
     WriteBlock(RequestWriteBlockError),
@@ -59,19 +62,17 @@ pub enum Error {
         expected_crc: u64,
         provided_crc: u64,
     },
-    // IterBlocks(IterBlocksError),
-    // BlocksCountMismatch {
-    //     blocks_count_iter: usize,
-    //     blocks_count_info: usize,
-    // },
-    // BlocksSizeMismatch {
-    //     blocks_size_iter: usize,
-    //     blocks_size_info: usize,
-    // },
-    // IterBlocksRxDropped,
-    // IterBlocksUnexpectedBlockReceived {
-    //     block_id: block::Id,
-    // },
+    BlocksCountMismatch {
+        blocks_count_iter: usize,
+        blocks_count_info: usize,
+    },
+    BlocksSizeMismatch {
+        blocks_size_iter: usize,
+        blocks_size_info: usize,
+    },
+    IterBlocksUnexpectedBlockReceived {
+        block_id: block::Id,
+    },
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -234,66 +235,93 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         actions_counter += 1;
     }
 
-    todo!()
+    assert!(matches!(ftd_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
 
-    // assert!(done_rx.next().await.is_none());
+    log::info!("finish | invoking flush");
 
-    // log::info!("finish | invoking flush");
+    blockwheel_fs_meister.flush(ftd_sendegeraet.rueckkopplung(ReplyFlush), &edeltraud::ThreadPoolMap::new(&thread_pool))
+        .map_err(Error::RequestFlush)?;
+    match ftd_rx.recv() {
+        Ok(Order::Flush(komm::Umschlag { payload: Flushed, stamp: ReplyFlush, })) =>
+            (),
+        other_order =>
+            return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
+    }
 
-    // let Flushed = pid.flush().await
-    //     .map_err(|ero::NoProcError| Error::WheelGoneDuringFlush)?;
-    // let info = pid.info().await
-    //     .map_err(|ero::NoProcError| Error::WheelGoneDuringInfo)?;
+    blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &edeltraud::ThreadPoolMap::new(&thread_pool))
+        .map_err(Error::RequestInfo)?;
+    let info = match ftd_rx.recv() {
+        Ok(Order::Info(komm::Umschlag { payload: info, stamp: ReplyInfo, })) =>
+            info,
+        other_order =>
+            return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
+    };
+    log::info!("finish | flushed: {:?}", info);
 
-    // log::info!("finish | flushed: {:?}", info);
+    // backwards check with iterator
+    blockwheel_fs_meister.iter_blocks_init(ftd_sendegeraet.rueckkopplung(ReplyIterBlocksInit), &edeltraud::ThreadPoolMap::new(&thread_pool))
+        .map_err(Error::RequestIterBlocksInit)?;
+    let iter_blocks = match ftd_rx.recv() {
+        Ok(Order::IterBlocksInit(komm::Umschlag { payload: iter_blocks, stamp: ReplyIterBlocksInit, })) =>
+            iter_blocks,
+        other_order =>
+            return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
+    };
+    if iter_blocks.blocks_total_count != info.blocks_count {
+        return Err(Error::BlocksCountMismatch {
+            blocks_count_iter: iter_blocks.blocks_total_count,
+            blocks_count_info: info.blocks_count,
+        });
+    }
+    if iter_blocks.blocks_total_size != info.data_bytes_used {
+        return Err(Error::BlocksSizeMismatch {
+            blocks_size_iter: iter_blocks.blocks_total_size,
+            blocks_size_info: info.data_bytes_used,
+        });
+    }
 
-    // // backwards check with iterator
-    // let mut iter_blocks = pid.iter_blocks().await
-    //     .map_err(Error::IterBlocks)?;
-    // if iter_blocks.blocks_total_count != info.blocks_count {
-    //     return Err(Error::BlocksCountMismatch {
-    //         blocks_count_iter: iter_blocks.blocks_total_count,
-    //         blocks_count_info: info.blocks_count,
-    //     });
-    // }
-    // if iter_blocks.blocks_total_size != info.data_bytes_used {
-    //     return Err(Error::BlocksSizeMismatch {
-    //         blocks_size_iter: iter_blocks.blocks_total_size,
-    //         blocks_size_info: info.data_bytes_used,
-    //     });
-    // }
-    // let mut actual_count = 0;
-    // loop {
-    //     match iter_blocks.blocks_rx.next().await {
-    //         None =>
-    //             return Err(Error::IterBlocksRxDropped),
-    //         Some(IterBlocksItem::Block { block_id, block_bytes, }) =>
-    //             match blocks.iter().find(|tank| tank.block_id == block_id) {
-    //                 None =>
-    //                     return Err(Error::IterBlocksUnexpectedBlockReceived { block_id, }),
-    //                 Some(tank) => {
-    //                     let JobCalcCrcOutput { expected_crc, provided_crc, } =
-    //                         edeltraud::job_async(
-    //                             &thread_pool,
-    //                             JobCalcCrc {
-    //                                 expected_block_bytes: tank.block_bytes.clone(),
-    //                                 provided_block_bytes: block_bytes,
-    //                             },
-    //                         )
-    //                         .map_err(Error::Edeltraud)?
-    //                         .await
-    //                         .map_err(Error::Edeltraud)?;
-    //                     if expected_crc != provided_crc {
-    //                         return Err(Error::ReadBlockCrcMismarch { block_id, expected_crc, provided_crc, });
-    //                     }
-    //                     actual_count += 1;
-    //                 },
-    //             },
-    //         Some(IterBlocksItem::NoMoreBlocks) =>
-    //             break,
-    //     }
-    // }
-    // assert_eq!(actual_count, iter_blocks.blocks_total_count);
+    let mut actual_count = 0;
+    let mut current_iterator_next = iter_blocks.iterator_next;
+    loop {
+        blockwheel_fs_meister
+            .iter_blocks_next(
+                current_iterator_next,
+                ftd_sendegeraet.rueckkopplung(ReplyIterBlocksNext),
+                &edeltraud::ThreadPoolMap::new(&thread_pool),
+            )
+            .map_err(Error::RequestIterBlocksNext)?;
+        let iter_blocks_item = match ftd_rx.recv() {
+            Ok(Order::IterBlocksNext(komm::Umschlag { payload: iter_blocks_item, stamp: ReplyIterBlocksNext, })) =>
+                iter_blocks_item,
+            other_order =>
+                return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
+        };
+
+        match iter_blocks_item {
+            IterBlocksItem::Block { block_id, block_bytes, iterator_next, } =>
+                match blocks.iter().find(|tank| tank.block_id == block_id) {
+                    None =>
+                        return Err(Error::IterBlocksUnexpectedBlockReceived { block_id, }),
+                    Some(tank) => {
+                        run_job_verify_block(
+                            JobVerifyBlockArgsMain {
+                                block_id,
+                                provided_block_bytes: block_bytes,
+                                expected_block_bytes: tank.block_bytes.clone(),
+                            },
+                        )?;
+                        actual_count += 1;
+                        current_iterator_next = iterator_next;
+                    },
+                },
+            IterBlocksItem::NoMoreBlocks =>
+                break,
+        }
+    }
+
+    assert_eq!(actual_count, iter_blocks.blocks_total_count);
+
+    Ok(())
 }
 
 fn process<P>(
