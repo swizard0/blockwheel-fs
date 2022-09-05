@@ -189,7 +189,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             let dice = rand::thread_rng().gen_range(0.0 .. 1.0);
             if blocks.is_empty() || dice < write_prob {
                 // write task
-                log::debug!("new write_task: wheel_size_bytes: {wheel_size_bytes:?}, bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}");
+                log::debug!("new write_task: bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}, {active_tasks_counter:?}");
 
                 let job = JobWriteBlockArgs {
                     main: JobWriteBlockArgsMain {
@@ -205,7 +205,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
                 active_tasks_counter.writes += 1;
             } else {
                 // delete task
-                log::debug!("new delete_task: wheel_size_bytes: {wheel_size_bytes:?}, bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}");
+                log::debug!("new delete_task: bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}, {active_tasks_counter:?}");
 
                 let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
                 let BlockTank { block_id, .. } = blocks.swap_remove(block_index);
@@ -217,7 +217,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             }
         } else {
             // read task
-            log::debug!("new read_task: wheel_size_bytes: {wheel_size_bytes:?}, bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}");
+            log::debug!("new read_task: bytes_used: {bytes_used:?}, bytes_free: {bytes_free:?}, {active_tasks_counter:?}");
 
             let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
             let BlockTank { block_id, block_bytes, } = blocks[block_index].clone();
@@ -237,7 +237,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
 
     assert!(matches!(ftd_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
 
-    log::info!("finish | invoking flush");
+    log::info!("finish | invoking flush; {active_tasks_counter:?}");
 
     blockwheel_fs_meister.flush(ftd_sendegeraet.rueckkopplung(ReplyFlush), &edeltraud::ThreadPoolMap::new(&thread_pool))
         .map_err(Error::RequestFlush)?;
