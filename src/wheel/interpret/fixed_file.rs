@@ -135,7 +135,7 @@ pub enum WheelOpenError {
 }
 
 pub fn bootstrap<A, W, B, P, J>(
-    sklave: &mut ewig::Sklave<Order<A>, InterpretError>,
+    sklave: &ewig::Sklave<Order<A>, InterpretError>,
     params: FixedFileInterpreterParams,
     performer_sklave_meister: arbeitssklave::Meister<W, B>,
     performer_builder: performer::PerformerBuilderInit<Context<A>>,
@@ -506,7 +506,7 @@ struct Timings {
 }
 
 pub fn run<A, W, B, P, J>(
-    sklave: &mut ewig::Sklave<Order<A>, InterpretError>,
+    sklave: &ewig::Sklave<Order<A>, InterpretError>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
     performer_sklave_meister: arbeitssklave::Meister<W, B>,
