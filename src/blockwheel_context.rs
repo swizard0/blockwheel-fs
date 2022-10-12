@@ -18,6 +18,12 @@ pub struct Context<A> {
     _marker: PhantomData<A>,
 }
 
+impl<A> Default for Context<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<A> Context<A> {
     pub fn new() -> Self {
         Self { _marker: PhantomData, }

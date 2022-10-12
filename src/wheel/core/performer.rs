@@ -222,7 +222,7 @@ impl<C> DefragConfig<C> {
 
 #[derive(Debug)]
 pub enum BuilderError {
-    StorageLayoutCalculate(storage::LayoutError),
+    StorageLayoutCalculate(storage::LayoutSerializeError),
 }
 
 pub struct PerformerBuilderInit<C> where C: Context {
@@ -648,7 +648,7 @@ impl<C> Inner<C> where C: Context {
                     match read_block.context {
                         task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(context)) => {
                             self.done_task = DoneTask::DeleteBlockRegular {
-                                block_id: block_id.clone(),
+                                block_id,
                                 block_entry,
                                 freed_space_key,
                             };
@@ -678,7 +678,7 @@ impl<C> Inner<C> where C: Context {
                     match delete_block.context {
                         task::DeleteBlockContext::External(context) => {
                             self.done_task = DoneTask::DeleteBlockRegular {
-                                block_id: block_id.clone(),
+                                block_id,
                                 block_entry,
                                 freed_space_key,
                             };
@@ -1362,7 +1362,7 @@ impl<C> Inner<C> where C: Context {
                 match &mut task_kind {
                     task::TaskKind::WriteBlock(task::WriteBlock { commit, .. }) |
                     task::TaskKind::DeleteBlock(task::DeleteBlock { commit, .. }) =>
-                        if self.schema.is_last_block(&lens.block_id()) {
+                        if self.schema.is_last_block(lens.block_id()) {
                             *commit = task::Commit::WithTerminator;
                         },
                     task::TaskKind::ReadBlock(..) =>
@@ -1418,7 +1418,8 @@ impl<C> Defrag<C> {
     }
 
     fn is_active(&self, block_id: &block::Id, defrag_id: usize) -> bool {
-        match self.in_action.get(&block_id) {
+        #[allow(clippy::match_like_matches_macro)]
+        match self.in_action.get(block_id) {
             Some(&serial) if serial == defrag_id =>
                 true,
             _ =>

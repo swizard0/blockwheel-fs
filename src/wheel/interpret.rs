@@ -235,7 +235,7 @@ fn run_block_prepare_write_job(
         .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
 
     let commit_tag = storage::CommitTag {
-        block_id: block_id,
+        block_id,
         crc: block::crc(&block_bytes),
         ..Default::default()
     };

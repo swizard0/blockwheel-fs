@@ -4,19 +4,27 @@ use std::{
     },
 };
 
-use o1::set::Ref;
+use o1::{
+    set::{
+        Ref,
+    },
+};
 
-use super::{
+use crate::{
     block,
-    Task,
-    TaskKind,
-    WriteBlock,
-    ReadBlock,
-    DeleteBlock,
-    Flush,
-    Context,
-    super::{
-        BlockGet,
+    wheel::{
+        core::{
+            task::{
+                Task,
+                TaskKind,
+                WriteBlock,
+                ReadBlock,
+                DeleteBlock,
+                Flush,
+                Context,
+            },
+            BlockGet,
+        },
     },
 };
 
@@ -37,16 +45,16 @@ impl<C> Queue<C> where C: Context {
         }
     }
 
-    pub fn focus_block_id<'q>(&'q mut self, block_id: block::Id) -> BlockLens<'q, C> {
+    pub fn focus_block_id(&mut self, block_id: block::Id) -> BlockLens<'_, C> {
         BlockLens { queue: self, block_id, }
     }
 
-    pub fn next_trigger<'q, 'a, B>(
-        &'q mut self,
+    pub fn next_trigger<B>(
+        &mut self,
         mut current_offset: u64,
         mut block_get: B,
     )
-        -> Option<(u64, BlockLens<'q, C>)>
+        -> Option<(u64, BlockLens<'_, C>)>
     where B: BlockGet
     {
         let mut rewind_performed = false;
@@ -60,8 +68,8 @@ impl<C> Queue<C> where C: Context {
 
         loop {
             let mut outcome = Outcome::Rewind;
-            let mut candidates = self.triggers.range(current_offset ..);
-            while let Some((&offset, block_id)) = candidates.next() {
+            let candidates = self.triggers.range(current_offset ..);
+            for (&offset, block_id) in candidates {
                 self.remove_buf.push(offset);
                 if let Some(block_entry) = block_get.by_id(block_id) {
                     outcome = if offset == block_entry.offset {
@@ -133,13 +141,13 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
         &self.block_id
     }
 
-    pub fn finish<'a, B>(&mut self, mut block_get: B) where B: BlockGet {
+    pub fn finish<B>(&mut self, mut block_get: B) where B: BlockGet {
         let block_entry = block_get.by_id(&self.block_id).unwrap();
         assert_eq!(block_entry.tasks_head.queue_state, QueueState::Granted);
         block_entry.tasks_head.queue_state = QueueState::Vacant;
     }
 
-    pub fn enqueue<'a, B>(self, mut block_get: B) where B: BlockGet {
+    pub fn enqueue<B>(self, mut block_get: B) where B: BlockGet {
         if let Some(block_entry) = block_get.by_id(&self.block_id) {
             if (block_entry.tasks_head.queue_state == QueueState::Vacant) && !block_entry.tasks_head.is_empty() {
                 let prev = self.queue.triggers.insert(block_entry.offset, self.block_id.clone());
@@ -155,29 +163,29 @@ impl<'q, C> BlockLens<'q, C> where C: Context {
         }
     }
 
-    pub fn push_task<'a, B>(&mut self, task: Task<C>, mut block_get: B) where B: BlockGet {
+    pub fn push_task<B>(&mut self, task: Task<C>, mut block_get: B) where B: BlockGet {
         assert_eq!(task.block_id, self.block_id);
         if let Some(block_entry) = block_get.by_id(&self.block_id) {
             self.queue.tasks.push(&mut block_entry.tasks_head, task);
         }
     }
 
-    pub fn pop_task<'a, B>(&mut self, mut block_get: B) -> Option<TaskKind<C>> where B: BlockGet {
+    pub fn pop_task<B>(&mut self, mut block_get: B) -> Option<TaskKind<C>> where B: BlockGet {
         let block_entry = block_get.by_id(&self.block_id)?;
         self.queue.tasks.pop(&mut block_entry.tasks_head)
     }
 
-    pub fn pop_write_task<'a, B>(&mut self, mut block_get: B) -> Option<WriteBlock<C::WriteBlock>> where B: BlockGet {
+    pub fn pop_write_task<B>(&mut self, mut block_get: B) -> Option<WriteBlock<C::WriteBlock>> where B: BlockGet {
         let block_entry = block_get.by_id(&self.block_id)?;
         self.queue.tasks.pop_write(&mut block_entry.tasks_head)
     }
 
-    pub fn pop_read_task<'a, B>(&mut self, mut block_get: B) -> Option<ReadBlock<C>> where B: BlockGet {
+    pub fn pop_read_task<B>(&mut self, mut block_get: B) -> Option<ReadBlock<C>> where B: BlockGet {
         let block_entry = block_get.by_id(&self.block_id)?;
         self.queue.tasks.pop_read(&mut block_entry.tasks_head)
     }
 
-    pub fn pop_delete_task<'a, B>(&mut self, mut block_get: B) -> Option<DeleteBlock<C::DeleteBlock>> where B: BlockGet {
+    pub fn pop_delete_task<B>(&mut self, mut block_get: B) -> Option<DeleteBlock<C::DeleteBlock>> where B: BlockGet {
         let block_entry = block_get.by_id(&self.block_id)?;
         self.queue.tasks.pop_delete(&mut block_entry.tasks_head)
     }

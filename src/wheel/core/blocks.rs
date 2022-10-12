@@ -4,11 +4,15 @@ use std::{
     },
 };
 
-use super::{
+use crate::{
     block,
-    BlockEntry,
-    LeftEnvirons,
-    RightEnvirons,
+    wheel::{
+        core::{
+            BlockEntry,
+            LeftEnvirons,
+            RightEnvirons,
+        },
+    },
 };
 
 #[derive(Debug)]
@@ -52,11 +56,7 @@ impl Index {
     }
 
     pub fn with_mut<F, T>(&mut self, block_id: &block::Id, action: F) -> Option<T> where F: FnOnce(&mut BlockEntry) -> T {
-        if let Some(value) = self.get_mut(block_id) {
-            Some(action(value))
-        } else {
-            None
-        }
+        self.get_mut(block_id).map(action)
      }
 
     pub fn update_env_left(&mut self, block_id: &block::Id, env: LeftEnvirons) {

@@ -1,11 +1,13 @@
-use serde_derive::{
+use serde::{
     Serialize,
     Deserialize,
 };
 
-use bincode::Options;
+use bincode::{
+    Options,
+};
 
-use super::{
+use crate::{
     block,
 };
 
@@ -50,7 +52,7 @@ impl Default for BlockHeader {
 
 pub const TOMBSTONE_TAG_MAGIC: u64 = 0xce1063910922bdd5;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct TombstoneTag {
     pub magic: u64,
 }
@@ -65,7 +67,7 @@ impl Default for TombstoneTag {
 
 pub const COMMIT_TAG_MAGIC: u64 = 0xdb68d2d17dfe9811;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct CommitTag {
     pub magic: u64,
     pub block_id: block::Id,
@@ -84,7 +86,7 @@ impl Default for CommitTag {
 
 pub const TERMINATOR_TAG_MAGIC: u64 = 0x375d8f85e8daab4a;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct TerminatorTag {
     pub magic: u64,
 }
@@ -97,7 +99,7 @@ impl Default for TerminatorTag {
     }
 }
 
-#[derive(Clone, PartialEq, Default, Debug)]
+#[derive(Clone, PartialEq, Eq, Default, Debug)]
 pub struct Layout {
     pub wheel_header_size: usize,
     pub block_header_size: usize,
@@ -106,38 +108,38 @@ pub struct Layout {
 }
 
 #[derive(Debug)]
-pub enum LayoutError {
-    WheelHeaderSerialize(bincode::Error),
-    BlockHeaderSerialize(bincode::Error),
-    CommitTagSerialize(bincode::Error),
-    TerminatorTagSerialize(bincode::Error),
+pub enum LayoutSerializeError {
+    WheelHeader(bincode::Error),
+    BlockHeader(bincode::Error),
+    CommitTag(bincode::Error),
+    TerminatorTag(bincode::Error),
 }
 
 impl Layout {
-    pub fn calculate(mut work_block: &mut Vec<u8>) -> Result<Layout, LayoutError> {
+    pub fn calculate(mut work_block: &mut Vec<u8>) -> Result<Layout, LayoutSerializeError> {
         let mut cursor = work_block.len();
 
         bincode_options()
             .serialize_into(&mut work_block, &WheelHeader::default())
-            .map_err(LayoutError::WheelHeaderSerialize)?;
+            .map_err(LayoutSerializeError::WheelHeader)?;
         let wheel_header_size = work_block.len() - cursor;
         cursor = work_block.len();
 
         bincode_options()
             .serialize_into(&mut work_block, &BlockHeader::default())
-            .map_err(LayoutError::BlockHeaderSerialize)?;
+            .map_err(LayoutSerializeError::BlockHeader)?;
         let block_header_size = work_block.len() - cursor;
         cursor = work_block.len();
 
         bincode_options()
             .serialize_into(&mut work_block, &CommitTag::default())
-            .map_err(LayoutError::CommitTagSerialize)?;
+            .map_err(LayoutSerializeError::CommitTag)?;
         let commit_tag_size = work_block.len() - cursor;
         cursor = work_block.len();
 
         bincode_options()
             .serialize_into(&mut work_block, &TerminatorTag::default())
-            .map_err(LayoutError::TerminatorTagSerialize)?;
+            .map_err(LayoutSerializeError::TerminatorTag)?;
         let terminator_tag_size = work_block.len() - cursor;
 
         work_block.clear();

@@ -26,6 +26,7 @@ pub struct Task<C> where C: Context {
     pub kind: TaskKind<C>,
 }
 
+#[allow(clippy::enum_variant_names)]
 pub enum TaskKind<C> where C: Context {
     WriteBlock(WriteBlock<C::WriteBlock>),
     ReadBlock(ReadBlock<C>),
@@ -282,6 +283,7 @@ pub struct TaskDone<C> where C: Context {
     pub kind: TaskDoneKind<C>,
 }
 
+#[allow(clippy::enum_variant_names)]
 pub enum TaskDoneKind<C> where C: Context {
     WriteBlock(TaskDoneWriteBlock<C::WriteBlock>),
     ReadBlock(TaskDoneReadBlock<C>),

@@ -1,21 +1,29 @@
 use o1::{
-    set::Set,
-    forest::Forest1,
+    set::{
+        Set,
+    },
+    forest::{
+        Forest1,
+    },
 };
 
-use crate::wheel::core::{
-    task::{
-        queue::{
-            TasksHead,
-            PendingReadContextBag,
+use crate::{
+    wheel::{
+        core::{
+            task::{
+                queue::{
+                    TasksHead,
+                    PendingReadContextBag,
+                },
+                Task,
+                TaskKind,
+                WriteBlock,
+                ReadBlock,
+                DeleteBlock,
+                Flush,
+                Context,
+            },
         },
-        Task,
-        TaskKind,
-        WriteBlock,
-        ReadBlock,
-        DeleteBlock,
-        Flush,
-        Context,
     },
 };
 
@@ -40,7 +48,7 @@ impl<C> Tasks<C> where C: Context {
         match task.kind {
             TaskKind::WriteBlock(write_block) => {
                 if let Some(prev_task_ref) = &tasks_head.head_write {
-                    let prev_write_task = self.tasks_write.remove(prev_task_ref.clone()).unwrap();
+                    let prev_write_task = self.tasks_write.remove(*prev_task_ref).unwrap();
                     panic!(
                         "pushing write task for {:?} but previous write task {:?} exists",
                         write_block,

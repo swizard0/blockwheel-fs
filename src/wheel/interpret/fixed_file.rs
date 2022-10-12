@@ -19,8 +19,10 @@ use bincode::{
     Options,
 };
 
-use alloc_pool::bytes::{
-    BytesPool,
+use alloc_pool::{
+    bytes::{
+        BytesPool,
+    },
 };
 
 use arbeitssklave::{

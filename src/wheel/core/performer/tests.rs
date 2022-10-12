@@ -179,6 +179,7 @@ struct ExpectTask {
 }
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 enum ExpectTaskKind {
     WriteBlock(ExpectTaskWriteBlock),
     ReadBlock(ExpectTaskReadBlock),

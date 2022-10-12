@@ -1,26 +1,31 @@
-use super::{
-    task,
-    proto,
+use crate::{
     block,
-    storage,
-    with_defrag_config,
-    hello_world_bytes,
-    hello_world_write_req,
-    interpret,
-    ScriptOp,
-    ExpectOp,
-    DoOp,
-    ExpectTask,
-    ExpectTaskKind,
-    ExpectTaskWriteBlock,
-    ExpectTaskReadBlock,
-    ExpectTaskDeleteBlock,
-    DefragConfig,
-};
-
-use crate::wheel::core::{
-    SpaceKey,
-    DefragGaps,
+    proto,
+    wheel::{
+        core::{
+            task,
+            storage,
+            performer::{
+                tests::{
+                    with_defrag_config,
+                    hello_world_bytes,
+                    hello_world_write_req,
+                    interpret,
+                    ScriptOp,
+                    ExpectOp,
+                    DoOp,
+                    ExpectTask,
+                    ExpectTaskKind,
+                    ExpectTaskWriteBlock,
+                    ExpectTaskReadBlock,
+                    ExpectTaskDeleteBlock,
+                    DefragConfig,
+                },
+            },
+            SpaceKey,
+            DefragGaps,
+        },
+    },
 };
 
 #[test]

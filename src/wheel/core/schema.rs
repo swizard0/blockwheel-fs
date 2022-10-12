@@ -43,13 +43,13 @@ pub struct WriteBlockPerform {
     pub right_space_key: Option<SpaceKey>,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum DefragOp {
     None,
     Queue { defrag_gaps: DefragGaps, moving_block_id: block::Id, },
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct WriteBlockTaskOp {
     pub block_id: block::Id,
     pub block_offset: u64,
@@ -166,7 +166,7 @@ impl Schema {
             // after:  ^| R | ... | A | ... |$
             Ok(gaps::Allocated::Success { space_available, between: gaps::GapBetween::StartAndBlock { right_block, }, }) => {
                 let block_offset = self.storage_layout.wheel_header_size as u64;
-                let right_block_id = right_block.block_id.clone();
+                let right_block_id = right_block.block_id;
 
                 let space_left = space_available - space_required;
                 let (self_env, right_env) = if space_left > 0 {
@@ -217,8 +217,8 @@ impl Schema {
                 let block_offset = left_block.block_entry.offset
                     + self.storage_layout.data_size_block_min() as u64
                     + left_block.block_entry.header.block_size as u64;
-                let left_block_id = left_block.block_id.clone();
-                let right_block_id = right_block.block_id.clone();
+                let left_block_id = left_block.block_id;
+                let right_block_id = right_block.block_id;
 
                 let space_left = space_available - space_required;
                 let (self_env, left_env, right_env) = if space_left > 0 {
@@ -272,7 +272,7 @@ impl Schema {
                 let block_offset = left_block.block_entry.offset
                     + self.storage_layout.data_size_block_min() as u64
                     + left_block.block_entry.header.block_size as u64;
-                let left_block_id = left_block.block_id.clone();
+                let left_block_id = left_block.block_id;
 
                 let space_left = space_available - space_required;
                 let self_env = if space_left > 0 {
@@ -394,7 +394,7 @@ impl Schema {
     }
 
     pub fn process_delete_block_request(&mut self, block_id: &block::Id) -> DeleteBlockOp {
-        match self.blocks_index.get(&block_id) {
+        match self.blocks_index.get(block_id) {
             Some(..) =>
                 DeleteBlockOp::Perform(DeleteBlockPerform),
             None =>
@@ -432,13 +432,14 @@ impl Schema {
             },
 
             Environs { left: LeftEnvirons::Start, right: RightEnvirons::Space { space_key, }, } =>
-                match self.gaps_index.remove(&space_key) {
+                match self.gaps_index.remove(space_key) {
                     value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::StartAndBlock { .. }) =>
                         unreachable!("delete inconsistent environs Start/Space with right space = {:?}", value),
                     // before: ^| R | ... | A | ... |$
                     // after:  ^| ........| A | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -456,6 +457,7 @@ impl Schema {
                     // after:  ^| ....... |$
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block);
                         assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
                         let space_available = block_entry.header.block_size
@@ -474,7 +476,7 @@ impl Schema {
                 let space_available = block_entry.header.block_size
                     + self.storage_layout.data_size_block_min();
                 let space_key = self.gaps_index.insert(space_available, gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), });
-                self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key, });
+                self.blocks_index.update_env_left(block_id, LeftEnvirons::Space { space_key, });
                 assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
                 defrag_op = self.make_defrag_op(space_key, block_id.clone());
                 space_key
@@ -484,13 +486,14 @@ impl Schema {
                 left: LeftEnvirons::Space { space_key, },
                 right: RightEnvirons::End,
             } =>
-                match self.gaps_index.remove(&space_key) {
+                match self.gaps_index.remove(space_key) {
                     value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::BlockAndEnd { .. }) =>
                         unreachable!("delete inconsistent environs Space/End with left space = {:?}", value),
                     // before: ^| ... | A | ... | R |$
                     // after:  ^| ... | A | ....... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -506,6 +509,7 @@ impl Schema {
                     // after:  ^| ....... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -518,7 +522,7 @@ impl Schema {
                 left: LeftEnvirons::Space { space_key: space_key_left, },
                 right: RightEnvirons::Space { space_key: space_key_right, },
             } =>
-                match (self.gaps_index.remove(&space_key_left), self.gaps_index.remove(&space_key_right)) {
+                match (self.gaps_index.remove(space_key_left), self.gaps_index.remove(space_key_right)) {
                     (lvalue @ None, rvalue) | (lvalue, rvalue @ None) |
                     (lvalue @ Some(gaps::GapBetween::StartAndEnd), rvalue) |
                     (lvalue, rvalue @ Some(gaps::GapBetween::StartAndEnd)) |
@@ -532,8 +536,10 @@ impl Schema {
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -548,8 +554,10 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -570,8 +578,10 @@ impl Schema {
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -591,8 +601,10 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -616,13 +628,14 @@ impl Schema {
                 left: LeftEnvirons::Space { space_key, },
                 right: RightEnvirons::Block { block_id, },
             } =>
-                match self.gaps_index.remove(&space_key) {
+                match self.gaps_index.remove(space_key) {
                     value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::BlockAndEnd { .. }) =>
                         unreachable!("delete inconsistent environs Space/Block with left space = {:?}", value),
                     // before: ^| ... | A | ... | R || B | ... |$
                     // after:  ^| ... | A | .........| B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -635,7 +648,7 @@ impl Schema {
                             },
                         );
                         self.blocks_index.update_env_right(&left_block, RightEnvirons::Space { space_key, });
-                        self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key, });
+                        self.blocks_index.update_env_left(block_id, LeftEnvirons::Space { space_key, });
                         defrag_op = self.make_defrag_op(space_key, block_id.clone());
                         space_key
                     },
@@ -643,6 +656,7 @@ impl Schema {
                     // after:  ^| ........ | B | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -651,7 +665,7 @@ impl Schema {
                             space_available,
                             gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), },
                         );
-                        self.blocks_index.update_env_left(&block_id, LeftEnvirons::Space { space_key, });
+                        self.blocks_index.update_env_left(block_id, LeftEnvirons::Space { space_key, });
                         defrag_op = self.make_defrag_op(space_key, block_id.clone());
                         space_key
                     },
@@ -669,7 +683,7 @@ impl Schema {
                     space_available,
                     gaps::GapBetween::BlockAndEnd { left_block: block_id.clone(), },
                 );
-                self.blocks_index.update_env_right(&block_id, RightEnvirons::Space { space_key, });
+                self.blocks_index.update_env_right(block_id, RightEnvirons::Space { space_key, });
                 space_key
             },
 
@@ -677,13 +691,14 @@ impl Schema {
                 left: LeftEnvirons::Block { block_id, },
                 right: RightEnvirons::Space { space_key, },
             } =>
-                match self.gaps_index.remove(&space_key) {
+                match self.gaps_index.remove(space_key) {
                     value @ None | value @ Some(gaps::GapBetween::StartAndEnd) | value @ Some(gaps::GapBetween::StartAndBlock { .. }) =>
                         unreachable!("delete inconsistent environs Block/Space with right space = {:?}", value),
                     // before: ^| ... | A || R | ... | B | ... |$
                     // after:  ^| ... | A | ........ | B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -695,7 +710,7 @@ impl Schema {
                                 right_block: right_block.clone(),
                             },
                         );
-                        self.blocks_index.update_env_right(&block_id, RightEnvirons::Space { space_key, });
+                        self.blocks_index.update_env_right(block_id, RightEnvirons::Space { space_key, });
                         self.blocks_index.update_env_left(&right_block, LeftEnvirons::Space { space_key, });
                         defrag_op = self.make_defrag_op(space_key, right_block.clone());
                         space_key
@@ -704,6 +719,7 @@ impl Schema {
                     // after:  ^| ... | A | ........ |$
                     Some(gaps::GapBetween::BlockAndEnd { left_block, }) => {
                         assert_eq!(left_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block);
                         let space_available = block_entry.header.block_size
                             + self.storage_layout.data_size_block_min()
@@ -712,7 +728,7 @@ impl Schema {
                             space_available,
                             gaps::GapBetween::BlockAndEnd { left_block: block_id.clone(), },
                         );
-                        self.blocks_index.update_env_right(&block_id, RightEnvirons::Space { space_key, });
+                        self.blocks_index.update_env_right(block_id, RightEnvirons::Space { space_key, });
                         space_key
                     },
                 },
@@ -732,8 +748,8 @@ impl Schema {
                         right_block: block_id_right.clone(),
                     },
                 );
-                self.blocks_index.update_env_right(&block_id_left, RightEnvirons::Space { space_key, });
-                self.blocks_index.update_env_left(&block_id_right, LeftEnvirons::Space { space_key, });
+                self.blocks_index.update_env_right(block_id_left, RightEnvirons::Space { space_key, });
+                self.blocks_index.update_env_left(block_id_right, LeftEnvirons::Space { space_key, });
                 defrag_op = self.make_defrag_op(space_key, block_id_right.clone());
                 space_key
             },
@@ -775,6 +791,7 @@ impl Schema {
                     // after:  ^| R | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -791,6 +808,7 @@ impl Schema {
                     // after:  ^| ... | A | R | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -827,8 +845,10 @@ impl Schema {
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
                         let moved_space_key = self.gaps_index.insert(
                             space_key_left.space_available() + space_key_right.space_available(),
@@ -848,8 +868,10 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
                         let moved_space_key = self.gaps_index.insert(
                             space_key_left.space_available() + space_key_right.space_available(),
@@ -871,8 +893,10 @@ impl Schema {
                         Some(gaps::GapBetween::BlockAndEnd { left_block: left_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
                         let moved_space_key = self.gaps_index.insert(
                             space_key_left.space_available() + space_key_right.space_available(),
@@ -898,8 +922,10 @@ impl Schema {
                         Some(gaps::GapBetween::TwoBlocks { left_block: left_block_right, right_block: right_block_right, }),
                     ) => {
                         assert_eq!(right_block_left, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block_left);
                         assert_eq!(left_block_right, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
                         let moved_space_key = self.gaps_index.insert(
                             space_key_left.space_available() + space_key_right.space_available(),
@@ -933,6 +959,7 @@ impl Schema {
                     // after:  ^| R | ... | B | ... |$
                     Some(gaps::GapBetween::StartAndBlock { right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -951,6 +978,7 @@ impl Schema {
                     // after:  ^| ... | A | R | ... | B | ... |$
                     Some(gaps::GapBetween::TwoBlocks { left_block, right_block, }) => {
                         assert_eq!(right_block, removed_block_id);
+                        #[allow(clippy::drop_non_drop)]
                         drop(right_block);
                         let moved_space_key = self.gaps_index.insert(
                             space_key.space_available(),
@@ -986,7 +1014,7 @@ impl Schema {
         })
     }
 
-    pub fn block_get<'a>(&'a mut self) -> BlockGet<'a> {
+    pub fn block_get(&mut self) -> BlockGet<'_> {
         BlockGet { blocks_index: &mut self.blocks_index, }
     }
 

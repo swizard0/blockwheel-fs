@@ -4,11 +4,15 @@ use std::{
     },
 };
 
-use super::{
+use crate::{
     block,
-    SpaceKey,
-    BlockInfo,
-    BlockEntry,
+    wheel::{
+        core::{
+            SpaceKey,
+            BlockInfo,
+            BlockEntry,
+        },
+    },
 };
 
 #[derive(Debug)]
@@ -24,7 +28,7 @@ struct Gap {
     between: GapBetween<block::Id>,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum GapBetween<B> {
     StartAndBlock {
         right_block: B,
@@ -48,7 +52,7 @@ pub enum Allocated<'a> {
     PendingDefragmentation,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Error {
     NoSpaceLeft,
 }
@@ -91,72 +95,70 @@ impl Index {
         }
 
         let mut maybe_result = None;
-        let mut candidates = self.gaps.range(SpaceKey { space_available: space_required, serial: 0, } ..);
-        while let Some(candidate) = candidates.next() {
-            match candidate {
-                (key, Gap { between, }) => {
-                    self.remove_buf.push(*key);
-                    match between {
-                        GapBetween::StartAndEnd => {
-                            maybe_result = Some(Allocated::Success {
-                                space_available: key.space_available,
-                                between: GapBetween::StartAndEnd,
-                            });
-                            assert!(key.space_available <= self.space_total);
-                            self.space_total -= key.space_available;
-                            break;
+        let candidates = self.gaps.range(SpaceKey { space_available: space_required, serial: 0, } ..);
+        #[allow(clippy::never_loop)]
+        for candidate in candidates {
+            let (key, Gap { between, }) = candidate;
+            self.remove_buf.push(*key);
+            match between {
+                GapBetween::StartAndEnd => {
+                    maybe_result = Some(Allocated::Success {
+                        space_available: key.space_available,
+                        between: GapBetween::StartAndEnd,
+                    });
+                    assert!(key.space_available <= self.space_total);
+                    self.space_total -= key.space_available;
+                    break;
+                },
+                GapBetween::StartAndBlock { right_block, } => {
+                    let block_entry = block_get(right_block).unwrap();
+                    maybe_result = Some(Allocated::Success {
+                        space_available: key.space_available,
+                        between: GapBetween::StartAndBlock {
+                            right_block: BlockInfo {
+                                block_id: right_block.clone(),
+                                block_entry,
+                            },
                         },
-                        GapBetween::StartAndBlock { right_block, } => {
-                            let block_entry = block_get(right_block).unwrap();
-                            maybe_result = Some(Allocated::Success {
-                                space_available: key.space_available,
-                                between: GapBetween::StartAndBlock {
-                                    right_block: BlockInfo {
-                                        block_id: right_block.clone(),
-                                        block_entry,
-                                    },
-                                },
-                            });
-                            assert!(key.space_available <= self.space_total);
-                            self.space_total -= key.space_available;
-                            break;
+                    });
+                    assert!(key.space_available <= self.space_total);
+                    self.space_total -= key.space_available;
+                    break;
+                },
+                GapBetween::TwoBlocks { left_block, right_block, } => {
+                    let left_block_entry = block_get(left_block).unwrap();
+                    let right_block_entry = block_get(right_block).unwrap();
+                    maybe_result = Some(Allocated::Success {
+                        space_available: key.space_available,
+                        between: GapBetween::TwoBlocks {
+                            left_block: BlockInfo {
+                                block_id: left_block.clone(),
+                                block_entry: left_block_entry,
+                            },
+                            right_block: BlockInfo {
+                                block_id: right_block.clone(),
+                                block_entry: right_block_entry,
+                            },
                         },
-                        GapBetween::TwoBlocks { left_block, right_block, } => {
-                            let left_block_entry = block_get(left_block).unwrap();
-                            let right_block_entry = block_get(right_block).unwrap();
-                            maybe_result = Some(Allocated::Success {
-                                space_available: key.space_available,
-                                between: GapBetween::TwoBlocks {
-                                    left_block: BlockInfo {
-                                        block_id: left_block.clone(),
-                                        block_entry: left_block_entry,
-                                    },
-                                    right_block: BlockInfo {
-                                        block_id: right_block.clone(),
-                                        block_entry: right_block_entry,
-                                    },
-                                },
-                            });
-                            assert!(key.space_available <= self.space_total);
-                            self.space_total -= key.space_available;
-                            break;
+                    });
+                    assert!(key.space_available <= self.space_total);
+                    self.space_total -= key.space_available;
+                    break;
+                },
+                GapBetween::BlockAndEnd { left_block, } => {
+                    let block_entry = block_get(left_block).unwrap();
+                    maybe_result = Some(Allocated::Success {
+                        space_available: key.space_available,
+                        between: GapBetween::BlockAndEnd {
+                            left_block: BlockInfo {
+                                block_id: left_block.clone(),
+                                block_entry,
+                            },
                         },
-                        GapBetween::BlockAndEnd { left_block, } => {
-                            let block_entry = block_get(left_block).unwrap();
-                            maybe_result = Some(Allocated::Success {
-                                space_available: key.space_available,
-                                between: GapBetween::BlockAndEnd {
-                                    left_block: BlockInfo {
-                                        block_id: left_block.clone(),
-                                        block_entry,
-                                    },
-                                },
-                            });
-                            assert!(key.space_available <= self.space_total);
-                            self.space_total -= key.space_available;
-                            break;
-                        },
-                    }
+                    });
+                    assert!(key.space_available <= self.space_total);
+                    self.space_total -= key.space_available;
+                    break;
                 },
             }
         }
@@ -188,6 +190,7 @@ impl Index {
     }
 
     pub fn is_last(&self, key: &SpaceKey) -> bool {
+        #[allow(clippy::match_like_matches_macro)]
         if let Some(Gap { between: GapBetween::BlockAndEnd { .. }, }) = self.gaps.get(key) {
             true
         } else {
@@ -235,7 +238,7 @@ mod tests {
                         block_entry: &BlockEntry {
                             offset: 0,
                             header: storage::BlockHeader {
-                                block_id: block_a_id.clone(),
+                                block_id: block_a_id,
                                 block_size: 4,
                                 ..Default::default()
                             },
@@ -252,7 +255,7 @@ mod tests {
                         block_entry: &BlockEntry {
                             offset: 8,
                             header: storage::BlockHeader {
-                                block_id: block_b_id.clone(),
+                                block_id: block_b_id,
                                 block_size: 0,
                                 ..Default::default()
                             },
@@ -283,7 +286,7 @@ mod tests {
                         block_entry: &BlockEntry {
                             offset: 8,
                             header: storage::BlockHeader {
-                                block_id: block_b_id.clone(),
+                                block_id: block_b_id,
                                 block_size: 0,
                                 ..Default::default()
                             },
@@ -334,7 +337,7 @@ mod tests {
                         block_entry: &BlockEntry {
                             offset: 0,
                             header: storage::BlockHeader {
-                                block_id: block_a_id.clone(),
+                                block_id: block_a_id,
                                 block_size: 4,
                                 ..Default::default()
                             },
@@ -376,7 +379,7 @@ mod tests {
                         block_entry: &BlockEntry {
                             offset: 8,
                             header: storage::BlockHeader {
-                                block_id: block_b_id.clone(),
+                                block_id: block_b_id,
                                 block_size: 0,
                                 ..Default::default()
                             },

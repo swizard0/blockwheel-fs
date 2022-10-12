@@ -5,7 +5,11 @@ use std::{
     },
 };
 
-use alloc_pool::bytes::Bytes;
+use alloc_pool::{
+    bytes::{
+        Bytes,
+    },
+};
 
 use crate::{
     block,
