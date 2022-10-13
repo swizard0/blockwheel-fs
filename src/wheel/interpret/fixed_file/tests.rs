@@ -159,7 +159,7 @@ fn create_read_one() {
     }
     match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
-            payload: Ok(block_id),
+            inhalt: Ok(block_id),
             stamp: ReplyWriteBlock,
         }))) if block_id == block::Id::init() =>
             (),
@@ -182,7 +182,7 @@ fn create_read_one() {
             panic!("unexpected order received: {other_order:?}"),
     }
     match orders_rx.recv() {
-        Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { payload: Flushed, stamp: ReplyFlush, }))) =>
+        Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { inhalt: Flushed, stamp: ReplyFlush, }))) =>
             (),
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -249,7 +249,7 @@ fn create_read_one() {
     };
     let block_bytes = match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::ReadBlock(komm::Umschlag {
-            payload: Ok(block_bytes),
+            inhalt: Ok(block_bytes),
             stamp: ReplyReadBlock,
         }))) =>
             block_bytes,
@@ -345,7 +345,7 @@ fn create_write_overlap_read_one() {
     }
     match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
-            payload: Ok(block_id),
+            inhalt: Ok(block_id),
             stamp: ReplyWriteBlock,
         }))) if block_id == block::Id::init() =>
             (),
@@ -397,7 +397,7 @@ fn create_write_overlap_read_one() {
     }
     match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
-            payload: Ok(block_id),
+            inhalt: Ok(block_id),
             stamp: ReplyWriteBlock,
         }))) if block_id == block::Id::init().next() =>
             (),
@@ -421,7 +421,7 @@ fn create_write_overlap_read_one() {
             panic!("unexpected order received: {other_order:?}"),
     }
     match orders_rx.recv() {
-        Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { payload: Flushed, stamp: ReplyFlush, }))) =>
+        Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { inhalt: Flushed, stamp: ReplyFlush, }))) =>
             (),
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -499,7 +499,7 @@ fn create_write_overlap_read_one() {
     };
     let block_bytes = match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::ReadBlock(komm::Umschlag {
-            payload: Ok(block_bytes),
+            inhalt: Ok(block_bytes),
             stamp: ReplyReadBlock,
         }))) =>
             block_bytes,
@@ -596,7 +596,7 @@ fn create_write_delete_read_one() {
     };
     match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
-            payload: Ok(block_id),
+            inhalt: Ok(block_id),
             stamp: ReplyWriteBlock,
         }))) if block_id == block::Id::init() =>
             (),
@@ -645,7 +645,7 @@ fn create_write_delete_read_one() {
     }
     match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
-            payload: Ok(block_id),
+            inhalt: Ok(block_id),
             stamp: ReplyWriteBlock,
         }))) if block_id == block::Id::init().next() =>
             (),
@@ -694,7 +694,7 @@ fn create_write_delete_read_one() {
     }
     match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::DeleteBlock(komm::Umschlag {
-            payload: Ok(Deleted),
+            inhalt: Ok(Deleted),
             stamp: ReplyDeleteBlock,
         }))) if block_id == block::Id::init() =>
             (),
@@ -718,7 +718,7 @@ fn create_write_delete_read_one() {
             panic!("unexpected order received: {other_order:?}"),
     }
     match orders_rx.recv() {
-        Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { payload: Flushed, stamp: ReplyFlush, }))) =>
+        Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { inhalt: Flushed, stamp: ReplyFlush, }))) =>
             (),
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -798,7 +798,7 @@ fn create_write_delete_read_one() {
     };
     let block_bytes = match orders_rx.recv() {
         Ok(Order::Reply(OrderReply::ReadBlock(komm::Umschlag {
-            payload: Ok(block_bytes),
+            inhalt: Ok(block_bytes),
             stamp: ReplyReadBlock,
         }))) =>
             block_bytes,

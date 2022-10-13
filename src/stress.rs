@@ -138,7 +138,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &edeltraud::ThreadPoolMap::new(&thread_pool))
         .map_err(Error::RequestInfo)?;
     let info = match ftd_rx.recv() {
-        Ok(Order::Info(komm::Umschlag { payload: info, stamp: ReplyInfo, })) =>
+        Ok(Order::Info(komm::Umschlag { inhalt: info, stamp: ReplyInfo, })) =>
             info,
         other_order =>
             return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
@@ -261,7 +261,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     blockwheel_fs_meister.flush(ftd_sendegeraet.rueckkopplung(ReplyFlush), &edeltraud::ThreadPoolMap::new(&thread_pool))
         .map_err(Error::RequestFlush)?;
     match ftd_rx.recv() {
-        Ok(Order::Flush(komm::Umschlag { payload: Flushed, stamp: ReplyFlush, })) =>
+        Ok(Order::Flush(komm::Umschlag { inhalt: Flushed, stamp: ReplyFlush, })) =>
             (),
         other_order =>
             return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
@@ -270,7 +270,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &edeltraud::ThreadPoolMap::new(&thread_pool))
         .map_err(Error::RequestInfo)?;
     let info = match ftd_rx.recv() {
-        Ok(Order::Info(komm::Umschlag { payload: info, stamp: ReplyInfo, })) =>
+        Ok(Order::Info(komm::Umschlag { inhalt: info, stamp: ReplyInfo, })) =>
             info,
         other_order =>
             return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
@@ -281,7 +281,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     blockwheel_fs_meister.iter_blocks_init(ftd_sendegeraet.rueckkopplung(ReplyIterBlocksInit), &edeltraud::ThreadPoolMap::new(&thread_pool))
         .map_err(Error::RequestIterBlocksInit)?;
     let iter_blocks = match ftd_rx.recv() {
-        Ok(Order::IterBlocksInit(komm::Umschlag { payload: iter_blocks, stamp: ReplyIterBlocksInit, })) =>
+        Ok(Order::IterBlocksInit(komm::Umschlag { inhalt: iter_blocks, stamp: ReplyIterBlocksInit, })) =>
             iter_blocks,
         other_order =>
             return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
@@ -310,7 +310,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             )
             .map_err(Error::RequestIterBlocksNext)?;
         let iter_blocks_item = match ftd_rx.recv() {
-            Ok(Order::IterBlocksNext(komm::Umschlag { payload: iter_blocks_item, stamp: ReplyIterBlocksNext, })) =>
+            Ok(Order::IterBlocksNext(komm::Umschlag { inhalt: iter_blocks_item, stamp: ReplyIterBlocksNext, })) =>
                 iter_blocks_item,
             other_order =>
                 return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
@@ -359,21 +359,21 @@ where P: edeltraud::ThreadPool<Job>,
     match recv_order {
         order @ Order::Info(komm::Umschlag { stamp: ReplyInfo, .. }) =>
             Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
-        order @ Order::Flush(komm::Umschlag { payload: Flushed, stamp: ReplyFlush, }) =>
+        order @ Order::Flush(komm::Umschlag { inhalt: Flushed, stamp: ReplyFlush, }) =>
             Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
-        Order::WriteBlock(komm::Umschlag { payload: Ok(block_id), stamp: ReplyWriteBlock { block_bytes, }, }) => {
+        Order::WriteBlock(komm::Umschlag { inhalt: Ok(block_id), stamp: ReplyWriteBlock { block_bytes, }, }) => {
             blocks.push(BlockTank { block_id, block_bytes, });
             counter.writes += 1;
             active_tasks_counter.writes -= 1;
             Ok(())
         },
-        Order::WriteBlock(komm::Umschlag { payload: Err(RequestWriteBlockError::NoSpaceLeft), stamp: ReplyWriteBlock { .. }, }) => {
+        Order::WriteBlock(komm::Umschlag { inhalt: Err(RequestWriteBlockError::NoSpaceLeft), stamp: ReplyWriteBlock { .. }, }) => {
             counter.no_space_hits += 1;
             counter.writes += 1;
             active_tasks_counter.writes -= 1;
             Ok(())
         },
-        Order::ReadBlock(komm::Umschlag { payload: Ok(provided_block_bytes), stamp: ReplyReadBlock { block_id, block_bytes, }, }) => {
+        Order::ReadBlock(komm::Umschlag { inhalt: Ok(provided_block_bytes), stamp: ReplyReadBlock { block_id, block_bytes, }, }) => {
             let job = JobVerifyBlockArgs {
                 main: JobVerifyBlockArgsMain {
                     block_id,
@@ -389,18 +389,18 @@ where P: edeltraud::ThreadPool<Job>,
             active_tasks_counter.verify_jobs += 1;
             Ok(())
         },
-        Order::ReadBlock(komm::Umschlag { payload: Err(RequestReadBlockError::NotFound), stamp: ReplyReadBlock { block_id, .. }, }) => {
+        Order::ReadBlock(komm::Umschlag { inhalt: Err(RequestReadBlockError::NotFound), stamp: ReplyReadBlock { block_id, .. }, }) => {
             counter.reads += 1;
             active_tasks_counter.reads -= 1;
             assert!(blocks.iter().find(|tank| tank.block_id == block_id).is_none());
             Ok(())
         },
-        Order::DeleteBlock(komm::Umschlag { payload: Ok(Deleted), stamp: ReplyDeleteBlock, }) => {
+        Order::DeleteBlock(komm::Umschlag { inhalt: Ok(Deleted), stamp: ReplyDeleteBlock, }) => {
             counter.deletes += 1;
             active_tasks_counter.deletes -= 1;
             Ok(())
         },
-        Order::DeleteBlock(komm::Umschlag { payload: Err(error), stamp: ReplyDeleteBlock, }) =>
+        Order::DeleteBlock(komm::Umschlag { inhalt: Err(error), stamp: ReplyDeleteBlock, }) =>
             Err(Error::DeleteBlock(error)),
         order @ Order::IterBlocksInit(komm::Umschlag { stamp: ReplyIterBlocksInit, .. }) =>
             Err(Error::UnexpectedFtdOrder(format!("{order:?}"))),
@@ -424,19 +424,19 @@ where P: edeltraud::ThreadPool<Job>,
 
         Order::JobWriteBlockCancel(komm::UmschlagAbbrechen { stamp: WriteBlockJob, }) =>
             Err(Error::JobWriteBlockCanceled),
-        Order::JobWriteBlock(komm::Umschlag { payload: output, stamp: WriteBlockJob, }) => {
+        Order::JobWriteBlock(komm::Umschlag { inhalt: output, stamp: WriteBlockJob, }) => {
             counter.write_jobs += 1;
             active_tasks_counter.write_jobs -= 1;
             output
         },
         Order::JobVerifyBlockCancel(komm::UmschlagAbbrechen { stamp: VerifyBlockJob, }) =>
             Err(Error::JobVerifyBlockCanceled),
-        Order::JobVerifyBlock(komm::Umschlag { payload: Ok(()), stamp: VerifyBlockJob, }) => {
+        Order::JobVerifyBlock(komm::Umschlag { inhalt: Ok(()), stamp: VerifyBlockJob, }) => {
             counter.verify_jobs += 1;
             active_tasks_counter.verify_jobs -= 1;
             Ok(())
         },
-        Order::JobVerifyBlock(komm::Umschlag { payload: Err(error), stamp: VerifyBlockJob, }) =>
+        Order::JobVerifyBlock(komm::Umschlag { inhalt: Err(error), stamp: VerifyBlockJob, }) =>
             Err(error),
     }
 }
