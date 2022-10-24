@@ -8,40 +8,40 @@ use std::{
 };
 
 use crate::{
-    AccessPolicy,
+    EchoPolicy,
     wheel::{
         interpret,
         performer_sklave,
     },
 };
 
-pub enum Job<A> where A: AccessPolicy {
-    BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs<A>),
-    BlockProcessRead(interpret::BlockProcessReadJobArgs<A>),
-    BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs<A>),
-    PerformerSklave(performer_sklave::SklaveJob<A>),
+pub enum Job<E> where E: EchoPolicy {
+    BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs<E>),
+    BlockProcessRead(interpret::BlockProcessReadJobArgs<E>),
+    BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs<E>),
+    PerformerSklave(performer_sklave::SklaveJob<E>),
 }
 
-impl<A> From<interpret::BlockPrepareWriteJobArgs<A>> for Job<A> where A: AccessPolicy {
-    fn from(job_args: interpret::BlockPrepareWriteJobArgs<A>) -> Job<A> {
+impl<E> From<interpret::BlockPrepareWriteJobArgs<E>> for Job<E> where E: EchoPolicy {
+    fn from(job_args: interpret::BlockPrepareWriteJobArgs<E>) -> Job<E> {
         Job::BlockPrepareWrite(job_args)
     }
 }
 
-impl<A> From<interpret::BlockProcessReadJobArgs<A>> for Job<A> where A: AccessPolicy {
-    fn from(job_args: interpret::BlockProcessReadJobArgs<A>) -> Job<A> {
+impl<E> From<interpret::BlockProcessReadJobArgs<E>> for Job<E> where E: EchoPolicy {
+    fn from(job_args: interpret::BlockProcessReadJobArgs<E>) -> Job<E> {
         Job::BlockProcessRead(job_args)
     }
 }
 
-impl<A> From<interpret::BlockPrepareDeleteJobArgs<A>> for Job<A> where A: AccessPolicy {
-    fn from(job_args: interpret::BlockPrepareDeleteJobArgs<A>) -> Job<A> {
+impl<E> From<interpret::BlockPrepareDeleteJobArgs<E>> for Job<E> where E: EchoPolicy {
+    fn from(job_args: interpret::BlockPrepareDeleteJobArgs<E>) -> Job<E> {
         Job::BlockPrepareDelete(job_args)
     }
 }
 
-impl<A> From<performer_sklave::SklaveJob<A>> for Job<A> where A: AccessPolicy {
-    fn from(sklave_job: performer_sklave::SklaveJob<A>) -> Job<A> {
+impl<E> From<performer_sklave::SklaveJob<E>> for Job<E> where E: EchoPolicy {
+    fn from(sklave_job: performer_sklave::SklaveJob<E>) -> Job<E> {
         Job::PerformerSklave(sklave_job)
     }
 }
@@ -51,7 +51,7 @@ pub static JOB_BLOCK_PROCESS_READ: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_BLOCK_PREPARE_DELETE: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_PERFORMER_SKLAVE: AtomicUsize = AtomicUsize::new(0);
 
-impl<A> edeltraud::Job for Job<A> where A: AccessPolicy {
+impl<E> edeltraud::Job for Job<E> where E: EchoPolicy {
     fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
         match self {
             Job::BlockPrepareWrite(args) => {

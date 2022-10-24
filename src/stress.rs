@@ -29,7 +29,7 @@ use crate::{
     Flushed,
     Deleted,
     IterBlocks,
-    AccessPolicy,
+    EchoPolicy,
     IterBlocksItem,
     InterpreterParams,
     RequestReadBlockError,
@@ -598,17 +598,16 @@ impl From<komm::Umschlag<Result<(), Error>, VerifyBlockJob>> for Order {
     }
 }
 
-struct LocalAccessPolicy;
+struct LocalEchoPolicy;
 
-impl AccessPolicy for LocalAccessPolicy {
-    type Order = Order;
-    type Info = ReplyInfo;
-    type Flush = ReplyFlush;
-    type WriteBlock = ReplyWriteBlock;
-    type ReadBlock = ReplyReadBlock;
-    type DeleteBlock = ReplyDeleteBlock;
-    type IterBlocksInit = ReplyIterBlocksInit;
-    type IterBlocksNext = ReplyIterBlocksNext;
+impl EchoPolicy for LocalEchoPolicy {
+    type Info = komm::Rueckkopplung<Order, ReplyInfo>;
+    type Flush = komm::Rueckkopplung<Order, ReplyFlush>;
+    type WriteBlock = komm::Rueckkopplung<Order, ReplyWriteBlock>;
+    type ReadBlock = komm::Rueckkopplung<Order, ReplyReadBlock>;
+    type DeleteBlock = komm::Rueckkopplung<Order, ReplyDeleteBlock>;
+    type IterBlocksInit = komm::Rueckkopplung<Order, ReplyIterBlocksInit>;
+    type IterBlocksNext = komm::Rueckkopplung<Order, ReplyIterBlocksNext>;
 }
 
 struct Welt {
@@ -616,14 +615,14 @@ struct Welt {
 }
 
 enum Job {
-    BlockwheelFs(job::Job<LocalAccessPolicy>),
+    BlockwheelFs(job::Job<LocalEchoPolicy>),
     WriteBlock(JobWriteBlockArgs),
     VerifyBlock(JobVerifyBlockArgs),
     FtdSklave(arbeitssklave::SklaveJob<Welt, Order>),
 }
 
-impl From<job::Job<LocalAccessPolicy>> for Job {
-    fn from(job: job::Job<LocalAccessPolicy>) -> Job {
+impl From<job::Job<LocalEchoPolicy>> for Job {
+    fn from(job: job::Job<LocalEchoPolicy>) -> Job {
         Job::BlockwheelFs(job)
     }
 }
@@ -692,7 +691,7 @@ struct JobWriteBlockArgs {
 struct JobWriteBlockArgsMain {
     blocks_pool: BytesPool,
     block_size_bytes: usize,
-    blockwheel_fs_meister: Meister<LocalAccessPolicy>,
+    blockwheel_fs_meister: Meister<LocalEchoPolicy>,
     ftd_sendegeraet: komm::Sendegeraet<Order>,
 }
 

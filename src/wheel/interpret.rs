@@ -31,21 +31,21 @@ use crate::{
         },
     },
     Params,
-    AccessPolicy,
+    EchoPolicy,
     InterpreterParams,
 };
 
 pub mod ram;
 pub mod fixed_file;
 
-pub struct Request<A> where A: AccessPolicy {
+pub struct Request<E> where E: EchoPolicy {
     offset: u64,
-    task: task::Task<Context<A>>,
+    task: task::Task<Context<E>>,
 }
 
-pub enum Order<A> where A: AccessPolicy {
-    Request(Request<A>),
-    DeviceSync { flush_context: <Context<A> as context::Context>::Flush, },
+pub enum Order<E> where E: EchoPolicy {
+    Request(Request<E>),
+    DeviceSync { flush_context: <Context<E> as context::Context>::Flush, },
 }
 
 #[derive(Debug)]
@@ -74,19 +74,19 @@ impl From<ram::Error> for Error {
     }
 }
 
-pub struct Interpreter<A> where A: AccessPolicy {
-    interpreter_meister: ewig::Meister<Order<A>, Error>
+pub struct Interpreter<E> where E: EchoPolicy {
+    interpreter_meister: ewig::Meister<Order<E>, Error>
 }
 
-impl<A> Interpreter<A> where A: AccessPolicy {
+impl<E> Interpreter<E> where E: EchoPolicy {
     pub fn starten<P>(
         params: Params,
-        performer_sklave_meister: performer_sklave::Meister<A>,
+        performer_sklave_meister: performer_sklave::Meister<E>,
         blocks_pool: BytesPool,
         thread_pool: &P
     )
         -> Result<Self, Error>
-    where P: edeltraud::ThreadPool<job::Job<A>> + Clone + Send + 'static,
+    where P: edeltraud::ThreadPool<job::Job<E>> + Clone + Send + 'static,
     {
         let performer_builder =
             performer::PerformerBuilderInit::new(
@@ -140,12 +140,12 @@ impl<A> Interpreter<A> where A: AccessPolicy {
         }
     }
 
-    pub fn push_task(&self, offset: u64, task: task::Task<Context<A>>) -> Result<(), Error> {
+    pub fn push_task(&self, offset: u64, task: task::Task<Context<E>>) -> Result<(), Error> {
         self.interpreter_meister
             .befehl(Order::Request(Request { offset, task, }))
     }
 
-    pub fn device_sync(&self, flush_context: <Context<A> as context::Context>::Flush) -> Result<(), Error> {
+    pub fn device_sync(&self, flush_context: <Context<E> as context::Context>::Flush) -> Result<(), Error> {
         self.interpreter_meister
             .befehl(Order::DeviceSync { flush_context, })
     }
@@ -162,18 +162,18 @@ pub fn block_append_terminator(block_bytes: &mut BytesMut) -> Result<(), AppendT
         .map_err(AppendTerminatorError::TerminatorTagSerialize)
 }
 
-pub struct BlockPrepareWriteJobArgs<A> where A: AccessPolicy {
+pub struct BlockPrepareWriteJobArgs<E> where E: EchoPolicy {
     pub block_id: block::Id,
     pub block_bytes: Bytes,
     pub blocks_pool: BytesPool,
-    pub context: performer_sklave::WriteBlockContext<A>,
-    pub meister: performer_sklave::Meister<A>,
+    pub context: performer_sklave::WriteBlockContext<E>,
+    pub meister: performer_sklave::Meister<E>,
 }
 
-pub struct BlockPrepareWriteJobDone<A> where A: AccessPolicy {
+pub struct BlockPrepareWriteJobDone<E> where E: EchoPolicy {
     pub block_id: block::Id,
     pub write_block_bytes: task::WriteBlockBytes,
-    pub context: performer_sklave::WriteBlockContext<A>,
+    pub context: performer_sklave::WriteBlockContext<E>,
 }
 
 #[derive(Debug)]
@@ -182,20 +182,20 @@ pub enum BlockPrepareWriteJobError {
     CommitTagSerialize(bincode::Error),
 }
 
-pub type BlockPrepareWriteJobOutput<A> = Result<BlockPrepareWriteJobDone<A>, BlockPrepareWriteJobError>;
+pub type BlockPrepareWriteJobOutput<E> = Result<BlockPrepareWriteJobDone<E>, BlockPrepareWriteJobError>;
 
-pub fn block_prepare_write_job<A, P>(
+pub fn block_prepare_write_job<E, P>(
     BlockPrepareWriteJobArgs {
         block_id,
         block_bytes,
         blocks_pool,
         context,
         meister,
-    }: BlockPrepareWriteJobArgs<A>,
+    }: BlockPrepareWriteJobArgs<E>,
     thread_pool: &P,
 )
-where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+where E: EchoPolicy,
+      P: edeltraud::ThreadPool<job::Job<E>>,
 {
     let output = run_block_prepare_write_job(block_id.clone(), block_bytes, blocks_pool)
         .map(|RunBlockPrepareWriteJobDone { write_block_bytes, }| {
@@ -255,17 +255,17 @@ fn run_block_prepare_write_job(
     })
 }
 
-pub struct BlockPrepareDeleteJobArgs<A> where A: AccessPolicy {
+pub struct BlockPrepareDeleteJobArgs<E> where E: EchoPolicy {
     pub block_id: block::Id,
     pub blocks_pool: BytesPool,
-    pub context: performer_sklave::DeleteBlockContext<A>,
-    pub meister: performer_sklave::Meister<A>,
+    pub context: performer_sklave::DeleteBlockContext<E>,
+    pub meister: performer_sklave::Meister<E>,
 }
 
-pub struct BlockPrepareDeleteJobDone<A> where A: AccessPolicy {
+pub struct BlockPrepareDeleteJobDone<E> where E: EchoPolicy {
     pub block_id: block::Id,
     pub delete_block_bytes: BytesMut,
-    pub context: performer_sklave::DeleteBlockContext<A>,
+    pub context: performer_sklave::DeleteBlockContext<E>,
 }
 
 #[derive(Debug)]
@@ -273,19 +273,19 @@ pub enum BlockPrepareDeleteJobError {
     TombstoneTagSerialize(bincode::Error),
 }
 
-pub type BlockPrepareDeleteJobOutput<A> = Result<BlockPrepareDeleteJobDone<A>, BlockPrepareDeleteJobError>;
+pub type BlockPrepareDeleteJobOutput<E> = Result<BlockPrepareDeleteJobDone<E>, BlockPrepareDeleteJobError>;
 
-pub fn block_prepare_delete_job<A, P>(
+pub fn block_prepare_delete_job<E, P>(
     BlockPrepareDeleteJobArgs {
         block_id,
         blocks_pool,
         context,
         meister,
-    }: BlockPrepareDeleteJobArgs<A>,
+    }: BlockPrepareDeleteJobArgs<E>,
     thread_pool: &P,
 )
-where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+where E: EchoPolicy,
+      P: edeltraud::ThreadPool<job::Job<E>>,
 {
     let output = run_block_prepare_delete_job(blocks_pool)
         .map(|RunBlockPrepareDeleteJobDone { delete_block_bytes, }| {
@@ -322,12 +322,12 @@ fn run_block_prepare_delete_job(
     Ok(RunBlockPrepareDeleteJobDone { delete_block_bytes, })
 }
 
-pub struct BlockProcessReadJobArgs<A> where A: AccessPolicy {
+pub struct BlockProcessReadJobArgs<E> where E: EchoPolicy {
     pub storage_layout: storage::Layout,
     pub block_header: storage::BlockHeader,
     pub block_bytes: Bytes,
     pub pending_contexts: task::queue::PendingReadContextBag,
-    pub meister: performer_sklave::Meister<A>,
+    pub meister: performer_sklave::Meister<E>,
 }
 
 pub struct BlockProcessReadJobDone {
@@ -366,18 +366,18 @@ pub enum CorruptedDataError {
 
 pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
-pub fn block_process_read_job<A, P>(
+pub fn block_process_read_job<E, P>(
     BlockProcessReadJobArgs {
         storage_layout,
         block_header,
         block_bytes,
         pending_contexts,
         meister,
-    }: BlockProcessReadJobArgs<A>,
+    }: BlockProcessReadJobArgs<E>,
     thread_pool: &P,
 )
-where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+where E: EchoPolicy,
+      P: edeltraud::ThreadPool<job::Job<E>>,
 {
     let output = run_block_process_read_job(storage_layout, block_header, block_bytes)
         .map(|RunBlockProcessReadJobDone { block_id, block_bytes, }| {

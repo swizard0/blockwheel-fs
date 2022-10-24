@@ -4,6 +4,12 @@ use alloc_pool::{
     },
 };
 
+use arbeitssklave::{
+    komm::{
+        Echo,
+    },
+};
+
 use crate::{
     job,
     proto,
@@ -20,77 +26,77 @@ use crate::{
     },
     Flushed,
     Deleted,
-    AccessPolicy,
+    EchoPolicy,
     InterpretStats,
     RequestWriteBlockError,
     RequestReadBlockError,
     RequestDeleteBlockError,
 };
 
-pub enum Order<A> where A: AccessPolicy {
-    Bootstrap(OrderBootstrap<A>),
-    Request(proto::Request<Context<A>>),
-    TaskDoneStats(OrderTaskDoneStats<A>),
-    DeviceSyncDone(OrderDeviceSyncDone<A>),
-    PreparedWriteBlockDone(OrderPreparedWriteBlockDone<A>),
+pub enum Order<E> where E: EchoPolicy {
+    Bootstrap(OrderBootstrap<E>),
+    Request(proto::Request<Context<E>>),
+    TaskDoneStats(OrderTaskDoneStats<E>),
+    DeviceSyncDone(OrderDeviceSyncDone<E>),
+    PreparedWriteBlockDone(OrderPreparedWriteBlockDone<E>),
     ProcessReadBlockDone(OrderProcessReadBlockDone),
-    PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone<A>),
+    PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone<E>),
 }
 
-pub struct OrderBootstrap<A> where A: AccessPolicy {
-    pub performer: performer::Performer<Context<A>>,
+pub struct OrderBootstrap<E> where E: EchoPolicy {
+    pub performer: performer::Performer<Context<E>>,
 }
 
-pub struct OrderTaskDoneStats<A> where A: AccessPolicy {
-    pub task_done: task::Done<Context<A>>,
+pub struct OrderTaskDoneStats<E> where E: EchoPolicy {
+    pub task_done: task::Done<Context<E>>,
     pub stats: InterpretStats,
 }
 
-pub struct OrderDeviceSyncDone<A> where A: AccessPolicy {
-    pub flush_context: <Context<A> as context::Context>::Flush,
+pub struct OrderDeviceSyncDone<E> where E: EchoPolicy {
+    pub flush_context: <Context<E> as context::Context>::Flush,
 }
 
-pub struct OrderPreparedWriteBlockDone<A> where A: AccessPolicy {
-    pub output: interpret::BlockPrepareWriteJobOutput<A>,
+pub struct OrderPreparedWriteBlockDone<E> where E: EchoPolicy {
+    pub output: interpret::BlockPrepareWriteJobOutput<E>,
 }
 
 pub struct OrderProcessReadBlockDone {
     pub output: interpret::BlockProcessReadJobOutput,
 }
 
-pub struct OrderPreparedDeleteBlockDone<A> where A: AccessPolicy {
-    pub output: interpret::BlockPrepareDeleteJobOutput<A>,
+pub struct OrderPreparedDeleteBlockDone<E> where E: EchoPolicy {
+    pub output: interpret::BlockPrepareDeleteJobOutput<E>,
 }
 
-pub struct Env<A> where A: AccessPolicy {
-    pub interpreter: interpret::Interpreter<A>,
+pub struct Env<E> where E: EchoPolicy {
+    pub interpreter: interpret::Interpreter<E>,
     pub blocks_pool: BytesPool,
-    pub incoming_orders: Vec<Order<A>>,
-    pub delayed_orders: Vec<Order<A>>,
+    pub incoming_orders: Vec<Order<E>>,
+    pub delayed_orders: Vec<Order<E>>,
 }
 
-pub struct Welt<A> where A: AccessPolicy {
-    pub env: Env<A>,
-    pub kont: Kont<A>,
+pub struct Welt<E> where E: EchoPolicy {
+    pub env: Env<E>,
+    pub kont: Kont<E>,
 }
 
-pub enum Kont<A> where A: AccessPolicy {
+pub enum Kont<E> where E: EchoPolicy {
     Initialize,
     Start {
-        performer: performer::Performer<Context<A>>,
+        performer: performer::Performer<Context<E>>,
     },
     PollRequestAndInterpreter {
-        poll: performer::PollRequestAndInterpreter<Context<A>>,
+        poll: performer::PollRequestAndInterpreter<Context<E>>,
     },
     PollRequest {
-        poll: performer::PollRequest<Context<A>>,
+        poll: performer::PollRequest<Context<E>>,
     },
 }
 
-pub type Meister<A> = arbeitssklave::Meister<Welt<A>, Order<A>>;
-pub type SklaveJob<A> = arbeitssklave::SklaveJob<Welt<A>, Order<A>>;
-pub type WriteBlockContext<A> = task::WriteBlockContext<<Context<A> as context::Context>::WriteBlock>;
-pub type DeleteBlockContext<A> = task::DeleteBlockContext<<Context<A> as context::Context>::DeleteBlock>;
+pub type Meister<E> = arbeitssklave::Meister<Welt<E>, Order<E>>;
+pub type SklaveJob<E> = arbeitssklave::SklaveJob<Welt<E>, Order<E>>;
+pub type WriteBlockContext<E> = task::WriteBlockContext<<Context<E> as context::Context>::WriteBlock>;
+pub type DeleteBlockContext<E> = task::DeleteBlockContext<<Context<E> as context::Context>::DeleteBlock>;
 
 #[derive(Debug)]
 pub enum Error {
@@ -103,18 +109,18 @@ pub enum Error {
     InterpretBlockProcessRead(interpret::BlockProcessReadJobError),
 }
 
-pub fn run_job<A, P>(sklave_job: SklaveJob<A>, thread_pool: &P)
-where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+pub fn run_job<E, P>(sklave_job: SklaveJob<E>, thread_pool: &P)
+where E: EchoPolicy,
+      P: edeltraud::ThreadPool<job::Job<E>>,
 {
     if let Err(error) = job(sklave_job, thread_pool) {
         log::error!("terminated with an error: {error:?}");
     }
 }
 
-fn job<A, P>(mut sklave_job: SklaveJob<A>, thread_pool: &P) -> Result<(), Error>
-where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+fn job<E, P>(mut sklave_job: SklaveJob<E>, thread_pool: &P) -> Result<(), Error>
+where P: edeltraud::ThreadPool<job::Job<E>>,
+      E: EchoPolicy,
 {
     loop {
         let mut performer_op = 'op: loop {
@@ -145,9 +151,9 @@ where A: AccessPolicy,
                                 panic!("unexpected Order::Bootstrap without Kont::Initialize"),
                         }
                     },
-                    Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: rueckkopplung, }) => {
-                        if let Err(commit_error) = rueckkopplung.commit(Flushed) {
-                            log::warn!("rueckkopplung is gone during Flush query result send: {commit_error:?}");
+                    Order::DeviceSyncDone(OrderDeviceSyncDone { flush_context: echo, }) => {
+                        if let Err(commit_error) = echo.commit_echo(Flushed) {
+                            log::warn!("echo is gone during Flush query result send: {commit_error:?}");
                         }
                     },
                     Order::Request(request) =>
@@ -273,94 +279,94 @@ where A: AccessPolicy,
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::Info(
-                        performer::TaskDoneOp { context: rueckkopplung, op: performer::InfoOp::Success { info, }, },
+                        performer::TaskDoneOp { context: echo, op: performer::InfoOp::Success { info, }, },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(info) {
-                        log::warn!("rueckkopplung is gone during Info query result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(info) {
+                        log::warn!("echo is gone during Info query result send: {commit_error:?}");
                     }
                     performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::Flush(
-                        performer::TaskDoneOp { context: rueckkopplung, op: performer::FlushOp::Flushed, },
+                        performer::TaskDoneOp { context: echo, op: performer::FlushOp::Flushed, },
                     ),
                     performer,
                 }) => {
-                    sklave_job.sklavenwelt().env.interpreter.device_sync(rueckkopplung)
+                    sklave_job.sklavenwelt().env.interpreter.device_sync(echo)
                         .map_err(Error::InterpretDeviceSync)?;
                     performer.next()
                 },
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::WriteBlock(
-                        performer::TaskDoneOp { context: rueckkopplung, op: performer::WriteBlockOp::NoSpaceLeft, },
+                        performer::TaskDoneOp { context: echo, op: performer::WriteBlockOp::NoSpaceLeft, },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(Err(RequestWriteBlockError::NoSpaceLeft)) {
-                        log::warn!("rueckkopplung is gone during WriteBlock result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(Err(RequestWriteBlockError::NoSpaceLeft)) {
+                        log::warn!("echo is gone during WriteBlock result send: {commit_error:?}");
                     }
                     performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::WriteBlock(
-                        performer::TaskDoneOp { context: rueckkopplung, op: performer::WriteBlockOp::Done { block_id, }, },
+                        performer::TaskDoneOp { context: echo, op: performer::WriteBlockOp::Done { block_id, }, },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(Ok(block_id)) {
-                        log::warn!("rueckkopplung is gone during WriteBlock result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(Ok(block_id)) {
+                        log::warn!("echo is gone during WriteBlock result send: {commit_error:?}");
                     }
                     performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::ReadBlock(
-                        performer::TaskDoneOp { context: rueckkopplung, op: performer::ReadBlockOp::NotFound, },
+                        performer::TaskDoneOp { context: echo, op: performer::ReadBlockOp::NotFound, },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(Err(RequestReadBlockError::NotFound)) {
-                        log::warn!("rueckkopplung is gone during ReadBlock result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(Err(RequestReadBlockError::NotFound)) {
+                        log::warn!("echo is gone during ReadBlock result send: {commit_error:?}");
                     }
                     performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::ReadBlock(
-                        performer::TaskDoneOp { context: rueckkopplung, op: performer::ReadBlockOp::Done { block_bytes, }, },
+                        performer::TaskDoneOp { context: echo, op: performer::ReadBlockOp::Done { block_bytes, }, },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(Ok(block_bytes)) {
-                        log::warn!("rueckkopplung is gone during ReadBlock result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(Ok(block_bytes)) {
+                        log::warn!("echo is gone during ReadBlock result send: {commit_error:?}");
                     }
                     performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::DeleteBlock(
-                        performer::TaskDoneOp { context: rueckkopplung, op: performer::DeleteBlockOp::NotFound, },
+                        performer::TaskDoneOp { context: echo, op: performer::DeleteBlockOp::NotFound, },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(Err(RequestDeleteBlockError::NotFound)) {
-                        log::warn!("rueckkopplung is gone during DeleteBlock result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(Err(RequestDeleteBlockError::NotFound)) {
+                        log::warn!("echo is gone during DeleteBlock result send: {commit_error:?}");
                     }
                     performer.next()
                 },
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::DeleteBlock(
-                        performer::TaskDoneOp { context: rueckkopplung, op: performer::DeleteBlockOp::Done { .. }, },
+                        performer::TaskDoneOp { context: echo, op: performer::DeleteBlockOp::Done { .. }, },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(Ok(Deleted)) {
-                        log::warn!("rueckkopplung is gone during DeleteBlock result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(Ok(Deleted)) {
+                        log::warn!("echo is gone during DeleteBlock result send: {commit_error:?}");
                     }
                     performer.next()
                 },
@@ -369,13 +375,13 @@ where A: AccessPolicy,
                     op: performer::EventOp::IterBlocksInit(
                         performer::IterBlocksInitOp {
                             iter_blocks,
-                            iter_blocks_init_context: rueckkopplung,
+                            iter_blocks_init_context: echo,
                         },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(iter_blocks) {
-                        log::warn!("rueckkopplung is gone during IterBlocksInit result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(iter_blocks) {
+                        log::warn!("echo is gone during IterBlocksInit result send: {commit_error:?}");
                     }
                     performer.next()
                 },
@@ -384,13 +390,13 @@ where A: AccessPolicy,
                     op: performer::EventOp::IterBlocksNext(
                         performer::IterBlocksNextOp {
                             item,
-                            iter_blocks_next_context: rueckkopplung,
+                            iter_blocks_next_context: echo,
                         },
                     ),
                     performer,
                 }) => {
-                    if let Err(commit_error) = rueckkopplung.commit(item) {
-                        log::warn!("rueckkopplung is gone during IterBlocksNext result send: {commit_error:?}");
+                    if let Err(commit_error) = echo.commit_echo(item) {
+                        log::warn!("echo is gone during IterBlocksNext result send: {commit_error:?}");
                     }
                     performer.next()
                 },
@@ -471,7 +477,7 @@ where A: AccessPolicy,
 
 use std::fmt;
 
-impl<A> fmt::Debug for Order<A> where A: AccessPolicy {
+impl<E> fmt::Debug for Order<E> where E: EchoPolicy {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Order::Bootstrap(..) =>

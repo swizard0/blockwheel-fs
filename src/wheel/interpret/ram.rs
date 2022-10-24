@@ -36,7 +36,7 @@ use crate::{
             block_append_terminator,
         },
     },
-    AccessPolicy,
+    EchoPolicy,
     InterpretStats,
     RamInterpreterParams,
 };
@@ -59,17 +59,17 @@ pub enum WheelCreateError {
     TerminatorTagSerialize(bincode::Error),
 }
 
-pub fn bootstrap<A, P>(
-    sklave: &ewig::Sklave<Order<A>, InterpretError>,
+pub fn bootstrap<E, P>(
+    sklave: &ewig::Sklave<Order<E>, InterpretError>,
     params: RamInterpreterParams,
-    performer_sklave_meister: performer_sklave::Meister<A>,
-    performer_builder: performer::PerformerBuilderInit<Context<A>>,
+    performer_sklave_meister: performer_sklave::Meister<E>,
+    performer_builder: performer::PerformerBuilderInit<Context<E>>,
     blocks_pool: BytesPool,
     thread_pool: P,
 )
     -> Result<(), InterpretError>
-where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+where E: EchoPolicy,
+      P: edeltraud::ThreadPool<job::Job<E>>,
 {
     let WheelData { memory, storage_layout, performer, } =
         create(&params, performer_builder)
@@ -87,12 +87,12 @@ where A: AccessPolicy,
     run(sklave, memory, storage_layout, performer_sklave_meister, blocks_pool, thread_pool)
 }
 
-fn create<A>(
+fn create<E>(
     params: &RamInterpreterParams,
-    performer_builder: performer::PerformerBuilderInit<Context<A>>,
+    performer_builder: performer::PerformerBuilderInit<Context<E>>,
 )
-    -> Result<WheelData<A>, WheelCreateError>
-where A: AccessPolicy,
+    -> Result<WheelData<E>, WheelCreateError>
+where E: EchoPolicy,
 {
     log::debug!("creating new ram file of {:?} bytes", params.init_wheel_size_bytes);
 
@@ -137,23 +137,23 @@ where A: AccessPolicy,
     })
 }
 
-struct WheelData<A> where A: AccessPolicy {
+struct WheelData<E> where E: EchoPolicy {
     memory: Vec<u8>,
     storage_layout: storage::Layout,
-    performer: performer::Performer<Context<A>>,
+    performer: performer::Performer<Context<E>>,
 }
 
-pub fn run<A, P>(
-    sklave: &ewig::Sklave<Order<A>, InterpretError>,
+pub fn run<E, P>(
+    sklave: &ewig::Sklave<Order<E>, InterpretError>,
     memory: Vec<u8>,
     storage_layout: storage::Layout,
-    performer_sklave_meister: performer_sklave::Meister<A>,
+    performer_sklave_meister: performer_sklave::Meister<E>,
     blocks_pool: BytesPool,
     thread_pool: P,
 )
     -> Result<(), InterpretError>
-where A: AccessPolicy,
-      P: edeltraud::ThreadPool<job::Job<A>>,
+where E: EchoPolicy,
+      P: edeltraud::ThreadPool<job::Job<E>>,
 {
     log::debug!("running background interpreter job");
 

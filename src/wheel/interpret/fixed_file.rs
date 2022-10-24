@@ -49,7 +49,7 @@ use crate::{
             block_append_terminator,
         },
     },
-    AccessPolicy,
+    EchoPolicy,
     InterpretStats,
     FixedFileInterpreterParams,
 };
@@ -136,19 +136,19 @@ pub enum WheelOpenError {
     BlockSeekEnd(io::Error),
 }
 
-pub fn bootstrap<A, W, B, P, J>(
-    sklave: &ewig::Sklave<Order<A>, InterpretError>,
+pub fn bootstrap<E, W, B, P, J>(
+    sklave: &ewig::Sklave<Order<E>, InterpretError>,
     params: FixedFileInterpreterParams,
     performer_sklave_meister: arbeitssklave::Meister<W, B>,
-    performer_builder: performer::PerformerBuilderInit<Context<A>>,
+    performer_builder: performer::PerformerBuilderInit<Context<E>>,
     blocks_pool: BytesPool,
     thread_pool: P,
 )
     -> Result<(), InterpretError>
-where A: AccessPolicy,
+where E: EchoPolicy,
       P: edeltraud::ThreadPool<J>,
       J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, B>>,
-      B: From<performer_sklave::Order<A>>,
+      B: From<performer_sklave::Order<E>>,
 {
     let WheelData { wheel_file, storage_layout, performer, } =
         match open(&params, performer_builder) {
@@ -176,19 +176,19 @@ where A: AccessPolicy,
     run(sklave, wheel_file, storage_layout, performer_sklave_meister, blocks_pool, thread_pool)
 }
 
-enum WheelOpenStatus<A> where A: AccessPolicy {
-    Success(WheelData<A>),
+enum WheelOpenStatus<E> where E: EchoPolicy {
+    Success(WheelData<E>),
     FileNotFound {
-        performer_builder: performer::PerformerBuilderInit<Context<A>>,
+        performer_builder: performer::PerformerBuilderInit<Context<E>>,
     },
 }
 
-fn open<A>(
+fn open<E>(
     params: &FixedFileInterpreterParams,
-    mut performer_builder: performer::PerformerBuilderInit<Context<A>>,
+    mut performer_builder: performer::PerformerBuilderInit<Context<E>>,
 )
-    -> Result<WheelOpenStatus<A>, WheelOpenError>
-where A: AccessPolicy,
+    -> Result<WheelOpenStatus<E>, WheelOpenError>
+where E: EchoPolicy,
 {
     log::debug!("opening existing wheel file [ {:?} ]", params.wheel_filename);
 
@@ -338,12 +338,12 @@ where A: AccessPolicy,
     }))
 }
 
-fn create<A>(
+fn create<E>(
     params: &FixedFileInterpreterParams,
-    mut performer_builder: performer::PerformerBuilderInit<Context<A>>,
+    mut performer_builder: performer::PerformerBuilderInit<Context<E>>,
 )
-    -> Result<WheelData<A>, WheelCreateError>
-where A: AccessPolicy,
+    -> Result<WheelData<E>, WheelCreateError>
+where E: EchoPolicy,
 {
     log::debug!("creating new wheel file [ {:?} ]", params.wheel_filename);
 
@@ -416,10 +416,10 @@ where A: AccessPolicy,
     })
 }
 
-struct WheelData<A> where A: AccessPolicy {
+struct WheelData<E> where E: EchoPolicy {
     wheel_file: fs::File,
     storage_layout: storage::Layout,
-    performer: performer::Performer<Context<A>>,
+    performer: performer::Performer<Context<E>>,
 }
 
 enum ReadBlockStatus {
@@ -507,8 +507,8 @@ struct Timings {
     total: Duration,
 }
 
-pub fn run<A, W, B, P, J>(
-    sklave: &ewig::Sklave<Order<A>, InterpretError>,
+pub fn run<E, W, B, P, J>(
+    sklave: &ewig::Sklave<Order<E>, InterpretError>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
     performer_sklave_meister: arbeitssklave::Meister<W, B>,
@@ -516,10 +516,10 @@ pub fn run<A, W, B, P, J>(
     thread_pool: P,
 )
     -> Result<(), InterpretError>
-where A: AccessPolicy,
+where E: EchoPolicy,
       P: edeltraud::ThreadPool<J>,
       J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, B>>,
-      B: From<performer_sklave::Order<A>>,
+      B: From<performer_sklave::Order<E>>,
 {
     log::debug!("running background interpreter job");
 

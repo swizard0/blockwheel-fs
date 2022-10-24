@@ -40,7 +40,7 @@ use crate::{
         },
         performer_sklave,
     },
-    AccessPolicy,
+    EchoPolicy,
     FixedFileInterpreterParams,
     Info,
     Deleted,
@@ -56,7 +56,7 @@ use crate::{
 fn create_read_empty() {
     let wheel_filename = "/tmp/blockwheel_create_read_empty";
     let _wheel_data =
-        create::<LocalAccessPolicy>(
+        create::<LocalEchoPolicy>(
             &FixedFileInterpreterParams {
                 wheel_filename: wheel_filename.into(),
                 init_wheel_size_bytes: 256 * 1024,
@@ -69,7 +69,7 @@ fn create_read_empty() {
         )
         .unwrap();
     let _wheel_open_status =
-        open::<LocalAccessPolicy>(
+        open::<LocalEchoPolicy>(
             &FixedFileInterpreterParams {
                 wheel_filename: wheel_filename.into(),
                 init_wheel_size_bytes: 256 * 1024,
@@ -819,12 +819,12 @@ fn create_write_delete_read_one() {
 
 #[derive(Debug)]
 enum Order {
-    PerformerSklave(performer_sklave::Order<LocalAccessPolicy>),
+    PerformerSklave(performer_sklave::Order<LocalEchoPolicy>),
     Reply(OrderReply),
 }
 
-impl From<performer_sklave::Order<LocalAccessPolicy>> for Order {
-    fn from(order: performer_sklave::Order<LocalAccessPolicy>) -> Order {
+impl From<performer_sklave::Order<LocalEchoPolicy>> for Order {
+    fn from(order: performer_sklave::Order<LocalEchoPolicy>) -> Order {
         Order::PerformerSklave(order)
     }
 }
@@ -988,17 +988,16 @@ impl edeltraud::Job for Job {
     }
 }
 
-struct LocalAccessPolicy;
+struct LocalEchoPolicy;
 
-impl AccessPolicy for LocalAccessPolicy {
-    type Order = Order;
-    type Info = ReplyInfo;
-    type Flush = ReplyFlush;
-    type WriteBlock = ReplyWriteBlock;
-    type ReadBlock = ReplyReadBlock;
-    type DeleteBlock = ReplyDeleteBlock;
-    type IterBlocksInit = ReplyIterBlocksInit;
-    type IterBlocksNext = ReplyIterBlocksNext;
+impl EchoPolicy for LocalEchoPolicy {
+    type Info = komm::Rueckkopplung<Order, ReplyInfo>;
+    type Flush = komm::Rueckkopplung<Order, ReplyFlush>;
+    type WriteBlock = komm::Rueckkopplung<Order, ReplyWriteBlock>;
+    type ReadBlock = komm::Rueckkopplung<Order, ReplyReadBlock>;
+    type DeleteBlock = komm::Rueckkopplung<Order, ReplyDeleteBlock>;
+    type IterBlocksInit = komm::Rueckkopplung<Order, ReplyIterBlocksInit>;
+    type IterBlocksNext = komm::Rueckkopplung<Order, ReplyIterBlocksNext>;
 }
 
 fn hello_world_bytes() -> Bytes {
@@ -1013,7 +1012,7 @@ fn make_interpreter<P>(
     blocks_pool: BytesPool,
     thread_pool: P,
 )
-    -> interpret::Interpreter<LocalAccessPolicy>
+    -> interpret::Interpreter<LocalEchoPolicy>
 where P: edeltraud::ThreadPool<Job> + Send + 'static
 {
     let interpreter_meister = ewig::Freie::new()

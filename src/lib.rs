@@ -6,9 +6,11 @@ use std::{
     },
 };
 
-use alloc_pool::bytes::{
-    Bytes,
-    BytesPool,
+use alloc_pool::{
+    bytes::{
+        Bytes,
+        BytesPool,
+    }
 };
 
 use arbeitssklave::{
@@ -93,31 +95,16 @@ pub enum Error {
     Arbeitssklave(arbeitssklave::Error),
 }
 
-pub trait AccessPolicy: Send + 'static
-where Self::Order: From<komm::UmschlagAbbrechen<Self::Info>>,
-      Self::Order: From<komm::Umschlag<Info, Self::Info>>,
-      Self::Order: From<komm::UmschlagAbbrechen<Self::Flush>>,
-      Self::Order: From<komm::Umschlag<Flushed, Self::Flush>>,
-      Self::Order: From<komm::UmschlagAbbrechen<Self::WriteBlock>>,
-      Self::Order: From<komm::Umschlag<Result<block::Id, RequestWriteBlockError>, Self::WriteBlock>>,
-      Self::Order: From<komm::UmschlagAbbrechen<Self::ReadBlock>>,
-      Self::Order: From<komm::Umschlag<Result<Bytes, RequestReadBlockError>, Self::ReadBlock>>,
-      Self::Order: From<komm::UmschlagAbbrechen<Self::DeleteBlock>>,
-      Self::Order: From<komm::Umschlag<Result<Deleted, RequestDeleteBlockError>, Self::DeleteBlock>>,
-      Self::Order: From<komm::UmschlagAbbrechen<Self::IterBlocksInit>>,
-      Self::Order: From<komm::Umschlag<IterBlocks, Self::IterBlocksInit>>,
-      Self::Order: From<komm::UmschlagAbbrechen<Self::IterBlocksNext>>,
-      Self::Order: From<komm::Umschlag<IterBlocksItem, Self::IterBlocksNext>>,
-      Self::Order: Send + 'static,
-      Self::Info: Send + 'static,
-      Self::Flush: Send + 'static,
-      Self::WriteBlock: Send + 'static,
-      Self::ReadBlock: Send + 'static,
-      Self::DeleteBlock: Send + 'static,
-      Self::IterBlocksInit: Send + 'static,
-      Self::IterBlocksNext: Send + 'static,
+pub trait EchoPolicy
+where Self: Send + 'static,
+      Self::Info: komm::Echo<Info> + Send + 'static,
+      Self::Flush: komm::Echo<Flushed> + Send + 'static,
+      Self::WriteBlock: komm::Echo<Result<block::Id, RequestWriteBlockError>> + Send + 'static,
+      Self::ReadBlock: komm::Echo<Result<Bytes, RequestReadBlockError>> + Send + 'static,
+      Self::DeleteBlock: komm::Echo<Result<Deleted, RequestDeleteBlockError>> + Send + 'static,
+      Self::IterBlocksInit: komm::Echo<IterBlocks> + Send + 'static,
+      Self::IterBlocksNext: komm::Echo<IterBlocksItem> + Send + 'static,
 {
-    type Order;
     type Info;
     type Flush;
     type WriteBlock;
@@ -127,17 +114,17 @@ where Self::Order: From<komm::UmschlagAbbrechen<Self::Info>>,
     type IterBlocksNext;
 }
 
-pub struct Freie<A> where A: AccessPolicy {
-    performer_sklave_freie: arbeitssklave::Freie<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
+pub struct Freie<E> where E: EchoPolicy {
+    performer_sklave_freie: arbeitssklave::Freie<wheel::performer_sklave::Welt<E>, wheel::performer_sklave::Order<E>>,
 }
 
-impl<A> Default for Freie<A> where A: AccessPolicy {
+impl<E> Default for Freie<E> where E: EchoPolicy {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<A> Freie<A> where A: AccessPolicy {
+impl<E> Freie<E> where E: EchoPolicy {
     pub fn new() -> Self {
         Self {
             performer_sklave_freie: arbeitssklave::Freie::new(),
@@ -150,8 +137,8 @@ impl<A> Freie<A> where A: AccessPolicy {
         blocks_pool: BytesPool,
         thread_pool: &P,
     )
-        -> Result<Meister<A>, Error>
-    where P: edeltraud::ThreadPool<job::Job<A>> + Clone + Send + 'static,
+        -> Result<Meister<E>, Error>
+    where P: edeltraud::ThreadPool<job::Job<E>> + Clone + Send + 'static,
     {
         let performer_sklave_meister =
             self.performer_sklave_freie.meister();
@@ -187,11 +174,11 @@ impl<A> Freie<A> where A: AccessPolicy {
     }
 }
 
-pub struct Meister<A> where A: AccessPolicy {
-    performer_sklave_meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<A>, wheel::performer_sklave::Order<A>>,
+pub struct Meister<E> where E: EchoPolicy {
+    performer_sklave_meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<E>, wheel::performer_sklave::Order<E>>,
 }
 
-impl<A> Clone for Meister<A> where A: AccessPolicy {
+impl<E> Clone for Meister<E> where E: EchoPolicy {
     fn clone(&self) -> Self {
         Meister {
             performer_sklave_meister: self.performer_sklave_meister.clone(),
@@ -199,43 +186,43 @@ impl<A> Clone for Meister<A> where A: AccessPolicy {
     }
 }
 
-impl<A> Meister<A> where A: AccessPolicy {
+impl<E> Meister<E> where E: EchoPolicy {
     pub fn info<P>(
         &self,
-        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::Info,
+        echo: <blockwheel_context::Context<E> as context::Context>::Info,
         thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<A>>
+    where P: edeltraud::ThreadPool<job::Job<E>>
     {
-        self.order(proto::Request::Info(proto::RequestInfo { context: rueckkopplung, }), thread_pool)
+        self.order(proto::Request::Info(proto::RequestInfo { context: echo, }), thread_pool)
     }
 
     pub fn flush<P>(
         &self,
-        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::Flush,
+        echo: <blockwheel_context::Context<E> as context::Context>::Flush,
         thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<A>>
+    where P: edeltraud::ThreadPool<job::Job<E>>
     {
-        self.order(proto::Request::Flush(proto::RequestFlush { context: rueckkopplung, }), thread_pool)
+        self.order(proto::Request::Flush(proto::RequestFlush { context: echo, }), thread_pool)
     }
 
     pub fn write_block<P>(
         &self,
         block_bytes: Bytes,
-        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::WriteBlock,
+        echo: <blockwheel_context::Context<E> as context::Context>::WriteBlock,
         thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<A>>
+    where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
             proto::Request::WriteBlock(
                 proto::RequestWriteBlock {
                     block_bytes,
-                    context: rueckkopplung,
+                    context: echo,
                 },
             ),
             thread_pool,
@@ -245,17 +232,17 @@ impl<A> Meister<A> where A: AccessPolicy {
     pub fn read_block<P>(
         &self,
         block_id: block::Id,
-        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::ReadBlock,
+        echo: <blockwheel_context::Context<E> as context::Context>::ReadBlock,
         thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<A>>
+    where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
             proto::Request::ReadBlock(
                 proto::RequestReadBlock {
                     block_id,
-                    context: rueckkopplung,
+                    context: echo,
                 },
             ),
             thread_pool,
@@ -265,17 +252,17 @@ impl<A> Meister<A> where A: AccessPolicy {
     pub fn delete_block<P>(
         &self,
         block_id: block::Id,
-        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::DeleteBlock,
+        echo: <blockwheel_context::Context<E> as context::Context>::DeleteBlock,
         thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<A>>
+    where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
             proto::Request::DeleteBlock(
                 proto::RequestDeleteBlock {
                     block_id,
-                    context: rueckkopplung,
+                    context: echo,
                 },
             ),
             thread_pool,
@@ -284,16 +271,16 @@ impl<A> Meister<A> where A: AccessPolicy {
 
     pub fn iter_blocks_init<P>(
         &self,
-        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::IterBlocksInit,
+        echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksInit,
         thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<A>>
+    where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
             proto::Request::IterBlocksInit(
                 proto::RequestIterBlocksInit {
-                    context: rueckkopplung,
+                    context: echo,
                 },
             ),
             thread_pool,
@@ -303,17 +290,17 @@ impl<A> Meister<A> where A: AccessPolicy {
     pub fn iter_blocks_next<P>(
         &self,
         iterator_next: IterBlocksIterator,
-        rueckkopplung: <blockwheel_context::Context<A> as context::Context>::IterBlocksNext,
+        echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksNext,
         thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<A>>
+    where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
             proto::Request::IterBlocksNext(
                 proto::RequestIterBlocksNext {
                     iterator_next,
-                    context: rueckkopplung,
+                    context: echo,
                 },
             ),
             thread_pool,
@@ -322,11 +309,11 @@ impl<A> Meister<A> where A: AccessPolicy {
 
     fn order<P>(
         &self,
-        request: proto::Request<blockwheel_context::Context<A>>,
+        request: proto::Request<blockwheel_context::Context<E>>,
         thread_pool: &P,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<A>>
+    where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.performer_sklave_meister
             .befehl(

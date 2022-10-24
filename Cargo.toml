@@ -1,6 +1,6 @@
 [package]
 name = "blockwheel-fs"
-version = "0.21.9"
+version = "0.22.0"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Persistent binary blocks with rotating wheel like access."
 edition = "2021"

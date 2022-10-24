@@ -4,38 +4,34 @@ use std::{
     },
 };
 
-use arbeitssklave::{
-    komm,
-};
-
 use crate::{
     context,
-    AccessPolicy,
+    EchoPolicy,
 };
 
 #[derive(Debug)]
-pub struct Context<A> {
-    _marker: PhantomData<A>,
+pub struct Context<E> {
+    _marker: PhantomData<E>,
 }
 
-impl<A> Default for Context<A> {
+impl<E> Default for Context<E> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<A> Context<A> {
+impl<E> Context<E> {
     pub fn new() -> Self {
         Self { _marker: PhantomData, }
     }
 }
 
-impl<A> context::Context for Context<A> where A: AccessPolicy {
-    type Info = komm::Rueckkopplung<A::Order, A::Info>;
-    type Flush = komm::Rueckkopplung<A::Order, A::Flush>;
-    type WriteBlock = komm::Rueckkopplung<A::Order, A::WriteBlock>;
-    type ReadBlock = komm::Rueckkopplung<A::Order, A::ReadBlock>;
-    type DeleteBlock = komm::Rueckkopplung<A::Order, A::DeleteBlock>;
-    type IterBlocksInit = komm::Rueckkopplung<A::Order, A::IterBlocksInit>;
-    type IterBlocksNext = komm::Rueckkopplung<A::Order, A::IterBlocksNext>;
+impl<E> context::Context for Context<E> where E: EchoPolicy {
+    type Info = E::Info;
+    type Flush = E::Flush;
+    type WriteBlock = E::WriteBlock;
+    type ReadBlock = E::ReadBlock;
+    type DeleteBlock = E::DeleteBlock;
+    type IterBlocksInit = E::IterBlocksInit;
+    type IterBlocksNext = E::IterBlocksNext;
 }
