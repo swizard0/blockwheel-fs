@@ -131,20 +131,18 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                     other_kont,
             };
 
-            {
-                let sklavenwelt = sklave_job.sklavenwelt_mut();
-                sklavenwelt.env
-                    .incoming_orders
-                    .extend(sklavenwelt.env.delayed_orders.drain(..));
-            }
-            while let Some(incoming_order) = sklave_job.sklavenwelt_mut().env.incoming_orders.pop() {
+            let sklavenwelt = sklave_job.sklavenwelt_mut();
+            sklavenwelt.env
+                .incoming_orders
+                .append(&mut sklavenwelt.env.delayed_orders);
+            while let Some(incoming_order) = sklavenwelt.env.incoming_orders.pop() {
                 match incoming_order {
                     Order::Bootstrap(OrderBootstrap { performer, }) => {
                         match kont {
                             Kont::Initialize => {
-                                sklave_job.sklavenwelt_mut().kont = Kont::Start { performer, };
-                                let env = &mut sklave_job.sklavenwelt_mut().env;
-                                env.delayed_orders.extend(env.incoming_orders.drain(..));
+                                sklavenwelt.kont = Kont::Start { performer, };
+                                let env = &mut sklavenwelt.env;
+                                env.delayed_orders.append(&mut env.incoming_orders);
                                 continue 'op;
                             },
                             Kont::Start { .. } | Kont::PollRequestAndInterpreter { .. } | Kont::PollRequest { .. } =>
@@ -163,7 +161,7 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.incoming_request(request),
                             Kont::Initialize | Kont::Start { .. } =>
-                                sklave_job.sklavenwelt_mut().env.delayed_orders.push(Order::Request(request)),
+                                sklavenwelt.env.delayed_orders.push(Order::Request(request)),
                         },
                     Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, }) =>
                         match kont {
@@ -172,7 +170,7 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                             Kont::PollRequest { .. } =>
                                 panic!("unexpected Order::TaskDoneStats without poll Kont::PollRequestAndInterpreter"),
                             Kont::Initialize | Kont::Start { .. } =>
-                                sklave_job.sklavenwelt_mut().env.delayed_orders.push(Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, })),
+                                sklavenwelt.env.delayed_orders.push(Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, })),
                         },
                     Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
                         output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
@@ -183,7 +181,7 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.prepared_write_block_done(block_id, write_block_bytes, context),
                             Kont::Initialize | Kont::Start { .. } =>
-                                sklave_job.sklavenwelt_mut().env.delayed_orders.push(
+                                sklavenwelt.env.delayed_orders.push(
                                     Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
                                         output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
                                     }),
@@ -200,7 +198,7 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.process_read_block_done(block_id, block_bytes, pending_contexts),
                             Kont::Initialize | Kont::Start { .. } =>
-                                sklave_job.sklavenwelt_mut().env.delayed_orders.push(
+                                sklavenwelt.env.delayed_orders.push(
                                     Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
                                         output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
                                     }),
@@ -217,7 +215,7 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                             Kont::PollRequest { poll, } =>
                                 break 'op poll.next.prepared_delete_block_done(block_id, delete_block_bytes, context),
                             Kont::Initialize | Kont::Start { .. } =>
-                                sklave_job.sklavenwelt_mut().env.delayed_orders.push(
+                                sklavenwelt.env.delayed_orders.push(
                                     Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
                                         output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
                                     }),
@@ -227,7 +225,8 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                         return Err(Error::InterpretBlockPrepareDelete(error)),
                 }
             }
-            sklave_job.sklavenwelt_mut().kont = kont;
+
+            sklavenwelt.kont = kont;
 
             match sklave_job.zu_ihren_diensten() {
                 Ok(arbeitssklave::Gehorsam::Machen { mut befehle, }) =>

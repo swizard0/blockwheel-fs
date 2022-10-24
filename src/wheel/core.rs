@@ -86,6 +86,7 @@ pub trait BlockGet {
     fn by_id<'s>(&'s mut self, block_id: &block::Id) -> Option<&'s mut BlockEntry>;
 
     fn with_mut<F, T>(&mut self, block_id: &block::Id, action: F) -> Option<T> where F: FnOnce(&mut BlockEntry) -> T {
+        #[allow(clippy::manual_map)]
         if let Some(value) = self.by_id(block_id) {
             Some(action(value))
         } else {

@@ -344,6 +344,7 @@ pub enum BlockProcessReadJobError {
 }
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum CorruptedDataError {
     BlockIdMismatch {
         block_id_expected: block::Id,
