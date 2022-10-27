@@ -1,6 +1,7 @@
 use std::{
     sync::{
         mpsc,
+        Mutex,
     },
 };
 
@@ -132,7 +133,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     let ftd_sendegeraet = komm::Sendegeraet::starten(&ftd_sklave_freie, thread_pool.clone())
         .unwrap();
     let _ftd_sklave_meister = ftd_sklave_freie
-        .versklaven(Welt { ftd_tx, }, &thread_pool)
+        .versklaven(Welt { ftd_tx: Mutex::new(ftd_tx), }, &thread_pool)
         .unwrap();
 
     blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &edeltraud::ThreadPoolMap::new(&thread_pool))
@@ -611,7 +612,7 @@ impl EchoPolicy for LocalEchoPolicy {
 }
 
 struct Welt {
-    ftd_tx: mpsc::Sender<Order>,
+    ftd_tx: Mutex<mpsc::Sender<Order>>,
 }
 
 enum Job {
@@ -662,8 +663,9 @@ impl edeltraud::Job for Job {
                             loop {
                                 match befehle.befehl() {
                                     arbeitssklave::SklavenBefehl::Mehr { befehl, mehr_befehle, } => {
-                                        mehr_befehle.sklavenwelt().ftd_tx.send(befehl).unwrap();
                                         befehle = mehr_befehle;
+                                        let tx_lock = befehle.sklavenwelt().ftd_tx.lock().unwrap();
+                                        tx_lock.send(befehl).unwrap();
                                     },
                                     arbeitssklave::SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
                                         sklave_job = next_sklave_job;

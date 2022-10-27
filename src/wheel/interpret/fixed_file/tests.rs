@@ -2,6 +2,7 @@ use std::{
     fs,
     sync::{
         mpsc,
+        Mutex,
     },
     path::{
         PathBuf,
@@ -99,7 +100,7 @@ fn create_read_one() {
         )
         .unwrap();
     let performer_sklave_meister = performer_sklave_freie
-        .versklaven(Welt { orders_tx, }, &thread_pool).unwrap();
+        .versklaven(Welt { orders_tx: Mutex::new(orders_tx), }, &thread_pool).unwrap();
 
     let blocks_pool = BytesPool::new();
     let wheel_filename = "/tmp/blockwheel_create_read_one";
@@ -130,7 +131,7 @@ fn create_read_one() {
     let task = task::Task {
         block_id,
         kind: task::TaskKind::WriteBlock(task::WriteBlock {
-            write_block_bytes: write_block_bytes.clone(),
+            write_block_bytes,
             commit: task::Commit::WithTerminator,
             context: task::WriteBlockContext::External(sendegeraet.rueckkopplung(ReplyWriteBlock)),
         }),
@@ -191,9 +192,9 @@ fn create_read_one() {
     drop(interpreter);
     let interpreter = make_interpreter(
         wheel_filename.into(),
-        performer_sklave_meister.clone(),
-        blocks_pool.clone(),
-        thread_pool.clone(),
+        performer_sklave_meister,
+        blocks_pool,
+        thread_pool,
     );
     let performer = match orders_rx.recv() {
         Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
@@ -259,7 +260,7 @@ fn create_read_one() {
     let interpret::RunBlockProcessReadJobDone { block_bytes, .. } =
         interpret::run_block_process_read_job(
             schema.storage_layout().clone(),
-            block_header.clone(),
+            block_header,
             block_bytes,
         )
         .unwrap();
@@ -283,7 +284,7 @@ fn create_write_overlap_read_one() {
         )
         .unwrap();
     let performer_sklave_meister = performer_sklave_freie
-        .versklaven(Welt { orders_tx, }, &thread_pool).unwrap();
+        .versklaven(Welt { orders_tx: Mutex::new(orders_tx), }, &thread_pool).unwrap();
 
     let blocks_pool = BytesPool::new();
     let wheel_filename = "/tmp/create_write_overlap_read_one";
@@ -316,7 +317,7 @@ fn create_write_overlap_read_one() {
     let task = task::Task {
         block_id,
         kind: task::TaskKind::WriteBlock(task::WriteBlock {
-            write_block_bytes: write_block_bytes.clone(),
+            write_block_bytes,
             commit: task::Commit::WithTerminator,
             context: task::WriteBlockContext::External(sendegeraet.rueckkopplung(ReplyWriteBlock)),
         }),
@@ -431,9 +432,9 @@ fn create_write_overlap_read_one() {
     drop(interpreter);
     let interpreter = make_interpreter(
         wheel_filename.into(),
-        performer_sklave_meister.clone(),
-        blocks_pool.clone(),
-        thread_pool.clone(),
+        performer_sklave_meister,
+        blocks_pool,
+        thread_pool,
     );
     let performer = match orders_rx.recv() {
         Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
@@ -509,7 +510,7 @@ fn create_write_overlap_read_one() {
     let interpret::RunBlockProcessReadJobDone { block_bytes, .. } =
         interpret::run_block_process_read_job(
             schema.storage_layout().clone(),
-            block_header.clone(),
+            block_header,
             block_bytes,
         )
         .unwrap();
@@ -532,7 +533,7 @@ fn create_write_delete_read_one() {
         )
         .unwrap();
     let performer_sklave_meister = performer_sklave_freie
-        .versklaven(Welt { orders_tx, }, &thread_pool).unwrap();
+        .versklaven(Welt { orders_tx: Mutex::new(orders_tx), }, &thread_pool).unwrap();
 
     let blocks_pool = BytesPool::new();
     let wheel_filename = "/tmp/create_write_delete_read_one";
@@ -728,9 +729,9 @@ fn create_write_delete_read_one() {
     drop(interpreter);
     let interpreter = make_interpreter(
         wheel_filename.into(),
-        performer_sklave_meister.clone(),
-        blocks_pool.clone(),
-        thread_pool.clone(),
+        performer_sklave_meister,
+        blocks_pool,
+        thread_pool,
     );
     let performer = match orders_rx.recv() {
         Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
@@ -808,7 +809,7 @@ fn create_write_delete_read_one() {
     let interpret::RunBlockProcessReadJobDone { block_bytes, .. } =
         interpret::run_block_process_read_job(
             schema.storage_layout().clone(),
-            block_header.clone(),
+            block_header,
             block_bytes,
         )
         .unwrap();
@@ -818,6 +819,7 @@ fn create_write_delete_read_one() {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum Order {
     PerformerSklave(performer_sklave::Order<LocalEchoPolicy>),
     Reply(OrderReply),
@@ -947,7 +949,7 @@ impl From<komm::Umschlag<IterBlocksItem, ReplyIterBlocksNext>> for Order {
 }
 
 struct Welt {
-    orders_tx: mpsc::Sender<Order>,
+    orders_tx: Mutex<mpsc::Sender<Order>>,
 }
 
 enum Job {
@@ -964,14 +966,16 @@ impl edeltraud::Job for Job {
     fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
         match self {
             Job::Sklave(mut sklave_job) => {
+                #[allow(clippy::while_let_loop)]
                 loop {
                     match sklave_job.zu_ihren_diensten().unwrap() {
                         arbeitssklave::Gehorsam::Machen { mut befehle, } =>
                             loop {
                                 match befehle.befehl() {
                                     arbeitssklave::SklavenBefehl::Mehr { befehl, mehr_befehle, } => {
-                                        mehr_befehle.sklavenwelt().orders_tx.send(befehl).unwrap();
                                         befehle = mehr_befehle;
+                                        let tx_lock = befehle.sklavenwelt().orders_tx.lock().unwrap();
+                                        tx_lock.send(befehl).unwrap();
                                     },
                                     arbeitssklave::SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
                                         sklave_job = next_sklave_job;
