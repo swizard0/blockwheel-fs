@@ -1,13 +1,14 @@
-use bincode::{
-    Options,
-};
-
 use alloc_pool::{
     bytes::{
         Bytes,
         BytesMut,
         BytesPool,
     },
+};
+
+use alloc_pool_pack::{
+    ReadFromBytes,
+    WriteToBytesMut,
 };
 
 use arbeitssklave::{
@@ -151,15 +152,9 @@ impl<E> Interpreter<E> where E: EchoPolicy {
     }
 }
 
-#[derive(Debug)]
-pub enum AppendTerminatorError {
-    TerminatorTagSerialize(bincode::Error),
-}
-
-pub fn block_append_terminator(block_bytes: &mut BytesMut) -> Result<(), AppendTerminatorError> {
-    storage::bincode_options()
-        .serialize_into(&mut ***block_bytes, &storage::TerminatorTag::default())
-        .map_err(AppendTerminatorError::TerminatorTagSerialize)
+pub fn block_append_terminator(block_bytes: &mut BytesMut) {
+    storage::TerminatorTag::default()
+        .write_to_bytes_mut(block_bytes);
 }
 
 pub struct BlockPrepareWriteJobArgs<E> where E: EchoPolicy {
@@ -178,8 +173,7 @@ pub struct BlockPrepareWriteJobDone<E> where E: EchoPolicy {
 
 #[derive(Debug)]
 pub enum BlockPrepareWriteJobError {
-    BlockHeaderSerialize(bincode::Error),
-    CommitTagSerialize(bincode::Error),
+    BlockSizeInto(std::num::TryFromIntError),
 }
 
 pub type BlockPrepareWriteJobOutput<E> = Result<BlockPrepareWriteJobDone<E>, BlockPrepareWriteJobError>;
@@ -197,7 +191,12 @@ pub fn block_prepare_write_job<E, P>(
 where E: EchoPolicy,
       P: edeltraud::ThreadPool<job::Job<E>>,
 {
-    let output = run_block_prepare_write_job(block_id.clone(), block_bytes, blocks_pool)
+    let output =
+        run_block_prepare_write_job(
+            block_id.clone(),
+            block_bytes,
+            blocks_pool,
+        )
         .map(|RunBlockPrepareWriteJobDone { write_block_bytes, }| {
             BlockPrepareWriteJobDone {
                 block_id,
@@ -226,30 +225,25 @@ fn run_block_prepare_write_job(
 {
     let block_header = storage::BlockHeader {
         block_id: block_id.clone(),
-        block_size: block_bytes.len(),
+        block_size: block_bytes.len().try_into()
+            .map_err(BlockPrepareWriteJobError::BlockSizeInto)?,
         ..Default::default()
     };
-    let mut block_header_bytes = blocks_pool.lend();
-    storage::bincode_options()
-        .serialize_into(&mut **block_header_bytes, &block_header)
-        .map_err(BlockPrepareWriteJobError::BlockHeaderSerialize)?;
+    let block_header_bytes = alloc_pool_pack::write(&blocks_pool, &block_header);
 
     let commit_tag = storage::CommitTag {
         block_id,
         crc: block::crc(&block_bytes),
         ..Default::default()
     };
-    let mut commit_tag_bytes = blocks_pool.lend();
-    storage::bincode_options()
-        .serialize_into(&mut **commit_tag_bytes, &commit_tag)
-        .map_err(BlockPrepareWriteJobError::CommitTagSerialize)?;
+    let commit_tag_bytes = alloc_pool_pack::write(&blocks_pool, &commit_tag);
 
     Ok(RunBlockPrepareWriteJobDone {
         write_block_bytes: task::WriteBlockBytes::Composite(
             task::WriteBlockBytesComposite {
-                block_header: block_header_bytes.freeze(),
+                block_header: block_header_bytes,
                 block_bytes,
-                commit_tag: commit_tag_bytes.freeze(),
+                commit_tag: commit_tag_bytes,
             },
         ),
     })
@@ -270,7 +264,6 @@ pub struct BlockPrepareDeleteJobDone<E> where E: EchoPolicy {
 
 #[derive(Debug)]
 pub enum BlockPrepareDeleteJobError {
-    TombstoneTagSerialize(bincode::Error),
 }
 
 pub type BlockPrepareDeleteJobOutput<E> = Result<BlockPrepareDeleteJobDone<E>, BlockPrepareDeleteJobError>;
@@ -313,11 +306,8 @@ fn run_block_prepare_delete_job(
     -> Result<RunBlockPrepareDeleteJobDone, BlockPrepareDeleteJobError>
 {
     let mut delete_block_bytes = blocks_pool.lend();
-
-    let tombstone_tag = storage::TombstoneTag::default();
-    storage::bincode_options()
-        .serialize_into(&mut **delete_block_bytes, &tombstone_tag)
-        .map_err(BlockPrepareDeleteJobError::TombstoneTagSerialize)?;
+    storage::TombstoneTag::default()
+        .write_to_bytes_mut(&mut delete_block_bytes);
 
     Ok(RunBlockPrepareDeleteJobDone { delete_block_bytes, })
 }
@@ -338,8 +328,8 @@ pub struct BlockProcessReadJobDone {
 
 #[derive(Debug)]
 pub enum BlockProcessReadJobError {
-    BlockHeaderDeserialize(bincode::Error),
-    CommitTagDeserialize(bincode::Error),
+    BlockHeaderDeserialize(storage::ReadBlockHeaderError),
+    CommitTagDeserialize(storage::ReadCommitTagError),
     CorruptedData(CorruptedDataError),
 }
 
@@ -352,8 +342,8 @@ pub enum CorruptedDataError {
     },
     BlockSizeMismatch {
         block_id: block::Id,
-        block_size_expected: usize,
-        block_size_actual: usize,
+        block_size_expected: u64,
+        block_size_actual: u64,
     },
     CommitTagBlockIdMismatch {
         block_id_expected: block::Id,
@@ -362,6 +352,9 @@ pub enum CorruptedDataError {
     CommitTagCrcMismatch {
         crc_expected: u64,
         crc_actual: u64,
+    },
+    TrailingGarbageAfterCommitTagFor {
+        block_id: block::Id,
     },
 }
 
@@ -380,7 +373,12 @@ pub fn block_process_read_job<E, P>(
 where E: EchoPolicy,
       P: edeltraud::ThreadPool<job::Job<E>>,
 {
-    let output = run_block_process_read_job(storage_layout, block_header, block_bytes)
+    let output =
+        run_block_process_read_job(
+            storage_layout,
+            block_header,
+            block_bytes,
+        )
         .map(|RunBlockProcessReadJobDone { block_id, block_bytes, }| {
             BlockProcessReadJobDone {
                 block_id,
@@ -408,11 +406,10 @@ fn run_block_process_read_job(
 )
     -> Result<RunBlockProcessReadJobDone, BlockProcessReadJobError>
 {
-    let block_buffer_start = storage_layout.block_header_size;
-    let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
+    // let block_buffer_start = storage_layout.block_header_size;
+    // let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
 
-    let storage_block_header: storage::BlockHeader = storage::bincode_options()
-        .deserialize_from(&block_bytes[.. block_buffer_start])
+    let (storage_block_header, after_block_header_bytes) = storage::BlockHeader::read_from_bytes(block_bytes)
         .map_err(BlockProcessReadJobError::BlockHeaderDeserialize)?;
     if storage_block_header.block_id != block_header.block_id {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::BlockIdMismatch {
@@ -420,7 +417,6 @@ fn run_block_process_read_job(
             block_id_actual: storage_block_header.block_id,
         }));
     }
-
     if storage_block_header.block_size != block_header.block_size {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::BlockSizeMismatch {
             block_id: block_header.block_id,
@@ -428,8 +424,9 @@ fn run_block_process_read_job(
             block_size_actual: storage_block_header.block_size,
         }));
     }
-    let commit_tag: storage::CommitTag = storage::bincode_options()
-        .deserialize_from(&block_bytes[block_buffer_end ..])
+
+    let commit_tag_bytes = after_block_header_bytes.subrange(storage_block_header.block_size as usize ..);
+    let (commit_tag, rest_block_bytes) = storage::CommitTag::read_from_bytes(commit_tag_bytes)
         .map_err(BlockProcessReadJobError::CommitTagDeserialize)?;
     if commit_tag.block_id != block_header.block_id {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
@@ -437,7 +434,13 @@ fn run_block_process_read_job(
             block_id_actual: commit_tag.block_id,
         }));
     }
-    let block_bytes = block_bytes.subrange(block_buffer_start .. block_buffer_end);
+    if rest_block_bytes.len() > 0 {
+        return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::TrailingGarbageAfterCommitTagFor {
+            block_id: commit_tag.block_id,
+        }));
+    }
+
+    let block_bytes = after_block_header_bytes.subrange(.. storage_block_header.block_size as usize);
     let block_id = block_header.block_id;
 
     let crc_expected = block::crc(&block_bytes);
