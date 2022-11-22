@@ -55,6 +55,7 @@ use crate::{
 
 #[test]
 fn create_read_empty() {
+    let blocks_pool = BytesPool::new();
     let wheel_filename = "/tmp/blockwheel_create_read_empty";
     let _wheel_data =
         create::<LocalEchoPolicy>(
@@ -66,6 +67,7 @@ fn create_read_empty() {
                 lru::Cache::new(0),
                 None,
                 64 * 1024,
+                &blocks_pool,
             ).unwrap(),
         )
         .unwrap();
@@ -79,7 +81,9 @@ fn create_read_empty() {
                 lru::Cache::new(0),
                 None,
                 64 * 1024,
+                &blocks_pool,
             ).unwrap(),
+            &blocks_pool,
         )
         .unwrap();
     fs::remove_file(wheel_filename)
@@ -1034,6 +1038,7 @@ where P: edeltraud::ThreadPool<Job> + Send + 'static
                         lru::Cache::new(0),
                         None,
                         64 * 1024,
+                        &blocks_pool,
                     ).unwrap(),
                     blocks_pool,
                     thread_pool,

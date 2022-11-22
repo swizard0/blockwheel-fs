@@ -1,12 +1,7 @@
 use alloc_pool::{
     bytes::{
-        Bytes,
         BytesMut,
     },
-};
-
-use alloc_pool_pack::{
-    ReadFromBytes,
 };
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -51,12 +46,12 @@ pub enum ReadIdError {
     Serial(alloc_pool_pack::integer::ReadIntegerError),
 }
 
-impl alloc_pool_pack::ReadFromBytes for Id {
+impl alloc_pool_pack::ReadFromSource for Id {
     type Error = ReadIdError;
 
-    fn read_from_bytes(bytes: Bytes) -> Result<(Self, Bytes), Self::Error> {
-        let (serial, bytes) = u64::read_from_bytes(bytes)
+    fn read_from_source<S>(source: &mut S) -> Result<Self, Self::Error> where S: alloc_pool_pack::Source {
+        let serial = u64::read_from_source(source)
             .map_err(ReadIdError::Serial)?;
-        Ok((Id { serial, }, bytes))
+        Ok(Id { serial, })
     }
 }

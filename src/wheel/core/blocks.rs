@@ -18,7 +18,7 @@ use crate::{
 #[derive(Debug)]
 pub struct Index {
     index: BTreeMap<block::Id, BlockEntry>,
-    blocks_total_size: usize,
+    blocks_total_size: u64,
 }
 
 impl Index {
@@ -33,7 +33,7 @@ impl Index {
         self.index.len()
     }
 
-    pub fn blocks_total_size(&self) -> usize {
+    pub fn blocks_total_size(&self) -> u64 {
         self.blocks_total_size
     }
 

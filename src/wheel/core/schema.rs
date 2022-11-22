@@ -124,7 +124,7 @@ impl Schema {
         let blocks_count = self.blocks_index.count();
         let service_bytes_used = self.storage_layout.service_size_min()
             + (blocks_count * self.storage_layout.data_size_block_min());
-        let data_bytes_used = self.blocks_index.blocks_total_size();
+        let data_bytes_used = self.blocks_index.blocks_total_size() as usize;
         let bytes_free = self.gaps_index.space_total();
         let read_block_cache_hits = self.read_block_cache_hits;
         let read_block_cache_misses = self.read_block_cache_misses;
@@ -195,7 +195,7 @@ impl Schema {
                         offset: block_offset,
                         header: storage::BlockHeader {
                             block_id: block_id.clone(),
-                            block_size: block_bytes.len(),
+                            block_size: block_bytes.len() as u64,
                             ..Default::default()
                         },
                         environs: Environs {
@@ -249,7 +249,7 @@ impl Schema {
                         offset: block_offset,
                         header: storage::BlockHeader {
                             block_id: block_id.clone(),
-                            block_size: block_bytes.len(),
+                            block_size: block_bytes.len() as u64,
                             ..Default::default()
                         },
                         environs: Environs {
@@ -293,7 +293,7 @@ impl Schema {
                         offset: block_offset,
                         header: storage::BlockHeader {
                             block_id: block_id.clone(),
-                            block_size: block_bytes.len(),
+                            block_size: block_bytes.len() as u64,
                             ..Default::default()
                         },
                         environs: Environs {
@@ -338,7 +338,7 @@ impl Schema {
                         offset: block_offset,
                         header: storage::BlockHeader {
                             block_id: block_id.clone(),
-                            block_size: block_bytes.len(),
+                            block_size: block_bytes.len() as u64,
                             ..Default::default()
                         },
                         environs,
@@ -426,7 +426,7 @@ impl Schema {
             Environs { left: LeftEnvirons::Start, right: RightEnvirons::End, } => {
                 assert_eq!(self.gaps_index.space_total(), 0);
                 assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
-                let space_available = block_entry.header.block_size
+                let space_available = block_entry.header.block_size as usize
                     + self.storage_layout.data_size_block_min();
                 self.gaps_index.insert(space_available, gaps::GapBetween::StartAndEnd)
             },
@@ -441,7 +441,7 @@ impl Schema {
                         assert_eq!(left_block, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(left_block);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps_index.insert(
@@ -460,7 +460,7 @@ impl Schema {
                         #[allow(clippy::drop_non_drop)]
                         drop(left_block);
                         assert_eq!(block_entry.offset, self.storage_layout.wheel_header_size as u64);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         self.gaps_index.insert(space_available, gaps::GapBetween::StartAndEnd)
@@ -473,7 +473,7 @@ impl Schema {
                 left: LeftEnvirons::Start,
                 right: RightEnvirons::Block { block_id, },
             } => {
-                let space_available = block_entry.header.block_size
+                let space_available = block_entry.header.block_size as usize
                     + self.storage_layout.data_size_block_min();
                 let space_key = self.gaps_index.insert(space_available, gaps::GapBetween::StartAndBlock { right_block: block_id.clone(), });
                 self.blocks_index.update_env_left(block_id, LeftEnvirons::Space { space_key, });
@@ -495,7 +495,7 @@ impl Schema {
                         assert_eq!(right_block, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(right_block);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps_index.insert(
@@ -511,7 +511,7 @@ impl Schema {
                         assert_eq!(right_block, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(right_block);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         self.gaps_index.insert(space_available, gaps::GapBetween::StartAndEnd)
@@ -541,7 +541,7 @@ impl Schema {
                         assert_eq!(left_block_right, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
                             + space_key_right.space_available();
@@ -559,7 +559,7 @@ impl Schema {
                         assert_eq!(left_block_right, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
                             + space_key_right.space_available();
@@ -583,7 +583,7 @@ impl Schema {
                         assert_eq!(left_block_right, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
                             + space_key_right.space_available();
@@ -606,7 +606,7 @@ impl Schema {
                         assert_eq!(left_block_right, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(left_block_right);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key_left.space_available()
                             + space_key_right.space_available();
@@ -637,7 +637,7 @@ impl Schema {
                         assert_eq!(right_block, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(right_block);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps_index.insert(
@@ -658,7 +658,7 @@ impl Schema {
                         assert_eq!(right_block, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(right_block);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps_index.insert(
@@ -677,7 +677,7 @@ impl Schema {
                 left: LeftEnvirons::Block { block_id, },
                 right: RightEnvirons::End,
             } => {
-                let space_available = block_entry.header.block_size
+                let space_available = block_entry.header.block_size as usize
                     + self.storage_layout.data_size_block_min();
                 let space_key = self.gaps_index.insert(
                     space_available,
@@ -700,7 +700,7 @@ impl Schema {
                         assert_eq!(left_block, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(left_block);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps_index.insert(
@@ -721,7 +721,7 @@ impl Schema {
                         assert_eq!(left_block, removed_block_id);
                         #[allow(clippy::drop_non_drop)]
                         drop(left_block);
-                        let space_available = block_entry.header.block_size
+                        let space_available = block_entry.header.block_size as usize
                             + self.storage_layout.data_size_block_min()
                             + space_key.space_available();
                         let space_key = self.gaps_index.insert(
@@ -739,7 +739,7 @@ impl Schema {
                 left: LeftEnvirons::Block { block_id: block_id_left, },
                 right: RightEnvirons::Block { block_id: block_id_right, },
             } => {
-                let space_available = block_entry.header.block_size
+                let space_available = block_entry.header.block_size as usize
                     + self.storage_layout.data_size_block_min();
                 let space_key = self.gaps_index.insert(
                     space_available,
@@ -1167,7 +1167,7 @@ impl Builder {
             prev_block_left_env: left.clone(),
             prev_block_offset: offset,
             prev_block_size: self.storage_layout.data_size_block_min()
-                + block_header.block_size,
+                + block_header.block_size as usize,
             max_block_id,
         });
         self.blocks_index.insert(
@@ -1263,9 +1263,11 @@ impl Builder {
 
 #[cfg(test)]
 mod tests {
-    use alloc_pool::bytes::{
-        Bytes,
-        BytesMut,
+    use alloc_pool::{
+        bytes::{
+            Bytes,
+            BytesMut,
+        },
     };
 
     use super::{
@@ -1294,7 +1296,7 @@ mod tests {
     };
 
     fn init() -> Schema {
-        let storage_layout = storage::Layout::calculate(&mut Vec::new()).unwrap();
+        let storage_layout = storage::Layout::calculate(&mut BytesMut::new_detached(Vec::new()));
         Builder::new(storage_layout).finish(160).1
     }
 
@@ -1307,14 +1309,14 @@ mod tests {
     #[test]
     fn process_write_block_request() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 128);
+        assert_eq!(schema.gaps_index.space_total(), 134);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(WriteBlockPerform {
             defrag_op: DefragOp::None,
             task_op: WriteBlockTaskOp {
                 block_id,
-                block_offset: 24,
+                block_offset: 18,
             },
             ..
         }) if block_id == block::Id::init()));
@@ -1323,7 +1325,7 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init()),
             Some(&BlockEntry {
-                offset: 24,
+                offset: 18,
                 header: storage::BlockHeader {
                     ref block_id,
                     block_size: 13,
@@ -1331,13 +1333,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 67, serial: 2, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 73, serial: 2, }, },
                 },
                 ..
             }) if block_id == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 67);
+        assert_eq!(schema.gaps_index.space_total(), 73);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(
@@ -1345,7 +1347,7 @@ mod tests {
                 defrag_op: DefragOp::None,
                 task_op: WriteBlockTaskOp {
                     block_id,
-                    block_offset: 85,
+                    block_offset: 79,
                 },
                 ..
             },
@@ -1355,7 +1357,7 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init()),
             Some(&BlockEntry {
-                offset: 24,
+                offset: 18,
                 header: storage::BlockHeader {
                     block_id: ref block_id_a,
                     block_size: 13,
@@ -1371,7 +1373,7 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&BlockEntry {
-                offset: 85,
+                offset: 79,
                 header: storage::BlockHeader {
                     block_id: ref block_id_a,
                     block_size: 13,
@@ -1379,13 +1381,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Block { block_id: ref block_id_b, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 12, serial: 3, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 6);
+        assert_eq!(schema.gaps_index.space_total(), 12);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::ReplyNoSpaceLeft));
@@ -1394,7 +1396,7 @@ mod tests {
     #[test]
     fn process_write_read_block_requests() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 128);
+        assert_eq!(schema.gaps_index.space_total(), 134);
 
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::NotFound));
@@ -1405,7 +1407,7 @@ mod tests {
                 defrag_op: DefragOp::None,
                 task_op: WriteBlockTaskOp {
                     ref block_id,
-                    block_offset: 24,
+                    block_offset: 18,
                 },
                 ..
             },
@@ -1415,7 +1417,7 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init()),
             Some(&BlockEntry {
-                offset: 24,
+                offset: 18,
                 header: storage::BlockHeader {
                     ref block_id,
                     block_size: 13,
@@ -1423,13 +1425,13 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 67, serial: 2, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 73, serial: 2, }, },
                 },
                 ..
             }) if block_id == &block::Id::init()
         ));
         assert_eq!(schema.blocks_index.get(&block::Id::init().next()), None);
-        assert_eq!(schema.gaps_index.space_total(), 67);
+        assert_eq!(schema.gaps_index.space_total(), 73);
 
         let op = schema.process_read_block_request(&block::Id::init());
         assert!(matches!(op, ReadBlockOp::Perform(ReadBlockPerform { .. })));
@@ -1438,7 +1440,7 @@ mod tests {
     #[test]
     fn process_delete_block_request() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 128);
+        assert_eq!(schema.gaps_index.space_total(), 134);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(..)));
@@ -1451,7 +1453,7 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init()),
             Some(&BlockEntry {
-                offset: 24,
+                offset: 18,
                 header: storage::BlockHeader {
                     block_id: ref block_id_a,
                     block_size: 13,
@@ -1466,11 +1468,12 @@ mod tests {
         ));
 
         let op = schema.process_delete_block_task_done(block::Id::init());
+
         assert!(matches!(op, DeleteBlockTaskDoneOp::Perform(DeleteBlockTaskDonePerform {
             defrag_op: DefragOp::Queue {
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                    space_key_right: SpaceKey { space_available: 12, serial: 3, },
                     ..
                 },
                 moving_block_id,
@@ -1479,10 +1482,11 @@ mod tests {
         }) if moving_block_id == block::Id::init().next()));
 
         assert_eq!(schema.blocks_index.get(&block::Id::init()), None);
+
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&BlockEntry {
-                offset: 85,
+                offset: 79,
                 header: storage::BlockHeader {
                     ref block_id,
                     block_size: 13,
@@ -1490,12 +1494,12 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Space { space_key: SpaceKey { space_available: 61, serial: 4, }, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 12, serial: 3, }, },
                 },
                 ..
             }) if block_id == &block::Id::init().next()
         ));
-        assert_eq!(schema.gaps_index.space_total(), 67);
+        assert_eq!(schema.gaps_index.space_total(), 73);
 
         let op = schema.process_write_block_request(&sample_hello_world(), None);
         assert!(matches!(op, WriteBlockOp::Perform(..)));
@@ -1506,7 +1510,7 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&BlockEntry {
-                offset: 85,
+                offset: 79,
                 header: storage::BlockHeader {
                     block_id: ref block_id_a,
                     block_size: 13,
@@ -1514,7 +1518,7 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Block { block_id: ref block_id_b, },
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 6, serial: 3, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 12, serial: 3, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next() && block_id_b == &block::Id::init().next().next()
@@ -1527,7 +1531,7 @@ mod tests {
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next().next()),
             Some(&BlockEntry {
-                offset: 24,
+                offset: 18,
                 header: storage::BlockHeader {
                     ref block_id,
                     block_size: 13,
@@ -1535,18 +1539,18 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 67, serial: 5, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 73, serial: 5, }, },
                 },
                 ..
             }) if block_id == &block::Id::init().next().next()
         ));
-        assert_eq!(schema.gaps_index.space_total(), 67);
+        assert_eq!(schema.gaps_index.space_total(), 73);
     }
 
     #[test]
     fn process_delete_block_task_done_defrag() {
         let mut schema = init();
-        assert_eq!(schema.gaps_index.space_total(), 128);
+        assert_eq!(schema.gaps_index.space_total(), 134);
 
         let op = schema.process_write_block_request(&sample_hello_world(), Some(0));
         assert!(matches!(op, WriteBlockOp::Perform(..)));
@@ -1561,7 +1565,7 @@ mod tests {
             defrag_op: DefragOp::Queue {
                 defrag_gaps: DefragGaps::Both {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    space_key_right: SpaceKey { space_available: 6, serial: 3, },
+                    space_key_right: SpaceKey { space_available: 12, serial: 3, },
                     ..
                 },
                 moving_block_id,
@@ -1570,21 +1574,21 @@ mod tests {
         }) if moving_block_id == block::Id::init().next()));
 
         // defrag delete
-        assert_eq!(schema.gaps_index.space_total(), 67);
+        assert_eq!(schema.gaps_index.space_total(), 73);
 
         let op = schema.process_delete_block_request(&block::Id::init().next());
         assert!(matches!(op, DeleteBlockOp::Perform(DeleteBlockPerform { .. })));
 
         let op = schema.process_delete_block_task_done_defrag(block::Id::init().next());
         assert!(matches!(op, DeleteBlockTaskDoneDefragOp::Perform(DeleteBlockTaskDoneDefragPerform {
-            block_offset: 24,
+            block_offset: 18,
             ..
         })));
 
         assert!(matches!(
             schema.blocks_index.get(&block::Id::init().next()),
             Some(&BlockEntry {
-                offset: 24,
+                offset: 18,
                 header: storage::BlockHeader {
                     block_id: ref block_id_a,
                     block_size: 13,
@@ -1592,12 +1596,12 @@ mod tests {
                 },
                 environs: Environs {
                     left: LeftEnvirons::Start,
-                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 67, serial: 5, }, },
+                    right: RightEnvirons::Space { space_key: SpaceKey { space_available: 73, serial: 5, }, },
                 },
                 ..
             }) if block_id_a == &block::Id::init().next()
         ));
 
-        assert_eq!(schema.gaps_index.space_total(), 67);
+        assert_eq!(schema.gaps_index.space_total(), 73);
     }
 }

@@ -441,9 +441,9 @@ fn script_iter() {
             context: task::WriteBlockContext::External("ectx02"),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        // { 0: write task in progress @ 24 }
+        // { 0: write task in progress @ 18 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -455,18 +455,18 @@ fn script_iter() {
         }),
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task in progress @ 24, 1: write req }
+        // { 0: write task in progress @ 18, 1: write req }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx03")),
         }),
-        // { 0: write task in progress @ 24, 1: prep write }
+        // { 0: write task in progress @ 18, 1: prep write }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
             expect_block_id: block::Id::init().next(),
             expect_block_bytes: hello_world_bytes().freeze(),
             expect_context: task::WriteBlockContext::External("ectx03"),
         }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task in progress @ 24, 1: prep write done }
+        // { 0: write task in progress @ 18, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
             block_id: block::Id::init().next(),
             write_block_bytes: hello_world_bytes(),
@@ -474,10 +474,10 @@ fn script_iter() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task done @ 24 .. 85, 1: prep write done }
+        // { 0: write task done @ 18 .. 79, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -490,9 +490,9 @@ fn script_iter() {
             expect_block_id: block::Id::init(),
             expect_context: "ectx02",
         }),
-        // { 0: ready @ 24 .. 85, 1: write task in progress @ 85 }
+        // { 0: ready @ 18 .. 79, 1: write task in progress @ 79 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
+            expect_offset: 79,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -504,7 +504,7 @@ fn script_iter() {
         }),
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 1: write task done @ 85 }
+        // { 0: ready @ 18 .. 79, 1: write task done @ 79 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
                 current_offset: 130,
@@ -549,7 +549,7 @@ fn script_iter() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {
@@ -569,7 +569,7 @@ fn script_iter() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
@@ -619,7 +619,7 @@ fn script_iter() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
+            expect_offset: 79,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {

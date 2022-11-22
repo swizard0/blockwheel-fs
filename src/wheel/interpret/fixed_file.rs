@@ -15,14 +15,16 @@ use std::{
     },
 };
 
-use bincode::{
-    Options,
-};
-
 use alloc_pool::{
     bytes::{
         BytesPool,
     },
+};
+
+use alloc_pool_pack::{
+    SourceSlice,
+    ReadFromSource,
+    WriteToBytesMut,
 };
 
 use arbeitssklave::{
@@ -44,7 +46,6 @@ use crate::{
         interpret::{
             Order,
             Request,
-            AppendTerminatorError,
             Error as InterpretError,
             block_append_terminator,
         },
@@ -54,8 +55,8 @@ use crate::{
     FixedFileInterpreterParams,
 };
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 #[derive(Debug)]
 pub enum Error {
@@ -67,7 +68,6 @@ pub enum Error {
         cursor: u64,
         error: io::Error,
     },
-    AppendTerminator(AppendTerminatorError),
     BlockWrite(io::Error),
     TerminatorWrite(io::Error),
     BlockRead(io::Error),
@@ -86,8 +86,6 @@ pub enum WheelCreateError {
         provided: usize,
         required_min: usize,
     },
-    HeaderSerialize(bincode::Error),
-    TerminatorTagSerialize(bincode::Error),
     HeaderTagWrite(io::Error),
     ZeroChunkWrite(io::Error),
     Flush(io::Error),
@@ -105,15 +103,7 @@ pub enum WheelOpenError {
         error: io::Error,
     },
     HeaderRead(io::Error),
-    HeaderDeserialize(bincode::Error),
-    HeaderInvalidMagic {
-        provided: u64,
-        expected: u64,
-    },
-    HeaderVersionMismatch {
-        provided: usize,
-        expected: usize,
-    },
+    HeaderDeserialize(storage::ReadWheelHeaderError),
     WheelSizeMismatch {
         header: u64,
         actual: u64,
@@ -126,7 +116,7 @@ pub enum WheelOpenError {
     BlockSeekCommitTag(io::Error),
     BlockRewindCommitTag(io::Error),
     BlockReadCommitTag(io::Error),
-    CommitTagDeserialize(bincode::Error),
+    CommitTagDeserialize(storage::ReadCommitTagError),
     BlockSeekContents(io::Error),
     BlockReadContents(io::Error),
     BlockCrcMismatch {
@@ -151,7 +141,7 @@ where E: EchoPolicy,
       B: From<performer_sklave::Order<E>>,
 {
     let WheelData { wheel_file, storage_layout, performer, } =
-        match open(&params, performer_builder) {
+        match open(&params, performer_builder, &blocks_pool) {
             Ok(WheelOpenStatus::Success(wheel_data)) =>
                 wheel_data,
             Ok(WheelOpenStatus::FileNotFound { performer_builder, }) => {
@@ -185,7 +175,8 @@ enum WheelOpenStatus<E> where E: EchoPolicy {
 
 fn open<E>(
     params: &FixedFileInterpreterParams,
-    mut performer_builder: performer::PerformerBuilderInit<Context<E>>,
+    performer_builder: performer::PerformerBuilderInit<Context<E>>,
+    blocks_pool: &BytesPool,
 )
     -> Result<WheelOpenStatus<E>, WheelOpenError>
 where E: EchoPolicy,
@@ -220,26 +211,14 @@ where E: EchoPolicy,
         .wheel_header_size;
 
     // read wheel header
-    performer_builder
-        .work_block_cleared()
+    let mut wheel_header_bytes_mut = blocks_pool.lend();
+    wheel_header_bytes_mut
         .extend((0 .. wheel_header_size).map(|_| 0));
-    wheel_file.read_exact(performer_builder.work_block())
+    wheel_file.read_exact(&mut wheel_header_bytes_mut)
         .map_err(WheelOpenError::HeaderRead)?;
-    let wheel_header: storage::WheelHeader = storage::bincode_options()
-        .deserialize_from(&performer_builder.work_block()[..])
+    let mut source = SourceSlice::from(&***wheel_header_bytes_mut);
+    let wheel_header = storage::WheelHeader::read_from_source(&mut source)
         .map_err(WheelOpenError::HeaderDeserialize)?;
-    if wheel_header.magic != storage::WHEEL_MAGIC {
-        return Err(WheelOpenError::HeaderInvalidMagic {
-            provided: wheel_header.magic,
-            expected: storage::WHEEL_MAGIC,
-        });
-    }
-    if wheel_header.version != storage::WHEEL_VERSION {
-        return Err(WheelOpenError::HeaderVersionMismatch {
-            provided: wheel_header.version,
-            expected: storage::WHEEL_VERSION,
-        });
-    }
     if wheel_header.size_bytes != file_size {
         return Err(WheelOpenError::WheelSizeMismatch {
             header: wheel_header.size_bytes,
@@ -250,13 +229,13 @@ where E: EchoPolicy,
     log::debug!("wheel_header read: {:?}", wheel_header);
 
     // read blocks and gaps
-        let (mut builder, mut work_block) = performer_builder.start_fill();
-
+    let (mut builder, mut work_block) = performer_builder.start_fill();
     work_block.clear();
-    let mut cursor = wheel_header_size as u64;
 
+    let mut cursor = wheel_header_size as u64;
     let work_block_size_bytes = work_block.capacity();
     work_block.resize(work_block_size_bytes, 0);
+
     let mut offset = 0;
     'outer: loop {
         let bytes_read = match wheel_file.read(&mut work_block[offset ..]) {
@@ -281,7 +260,8 @@ where E: EchoPolicy,
         let mut start = 0;
         while offset - start >= builder.storage_layout().block_header_size {
             let area = &work_block[start .. start + builder.storage_layout().block_header_size];
-            match storage::bincode_options().deserialize_from::<_, storage::BlockHeader>(area) {
+            let mut source = SourceSlice::from(area);
+            match storage::BlockHeader::read_from_source(&mut source) {
                 Ok(block_header) if block_header.magic == storage::BLOCK_MAGIC => {
                     let try_read_block_status = try_read_block(
                         &mut wheel_file,
@@ -298,24 +278,23 @@ where E: EchoPolicy,
                         ReadBlockStatus::NotABlock { next_cursor, } =>
                             cursor = next_cursor,
                         ReadBlockStatus::BlockFound { next_cursor, } => {
-
                             log::debug!("restored block @ {}: {:?}, next_cursor = {}", cursor, block_header, next_cursor);
-
                             builder.push_block(cursor, block_header);
                             cursor = next_cursor;
                         },
                     }
                     break;
                 },
-                Ok(..) | Err(..) =>
-                    match storage::bincode_options().deserialize_from::<_, storage::TerminatorTag>(area) {
+                Ok(..) | Err(..) => {
+                    match storage::TerminatorTag::read_from_source(&mut SourceSlice::from(area)) {
                         Ok(terminator_tag) if terminator_tag.magic == storage::TERMINATOR_TAG_MAGIC => {
                             log::debug!("terminator found @ {:?}, loading done", cursor);
                             break 'outer;
                         },
                         Ok(..) | Err(..) =>
                             (),
-                    },
+                    }
+                },
             };
             start += 1;
             cursor += 1;
@@ -361,13 +340,9 @@ where E: EchoPolicy,
         size_bytes: params.init_wheel_size_bytes as u64,
         ..storage::WheelHeader::default()
     };
-    storage::bincode_options()
-        .serialize_into(performer_builder.work_block_cleared(), &wheel_header)
-        .map_err(WheelCreateError::HeaderSerialize)?;
+    wheel_header.write_to_bytes_mut(performer_builder.work_block_cleared());
     let terminator_tag = storage::TerminatorTag::default();
-    storage::bincode_options()
-        .serialize_into(performer_builder.work_block(), &terminator_tag)
-        .map_err(WheelCreateError::TerminatorTagSerialize)?;
+    terminator_tag.write_to_bytes_mut(performer_builder.work_block());
 
     let mut cursor = performer_builder.work_block().len();
     let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size
@@ -444,8 +419,8 @@ fn try_read_block(
     work_block.resize(storage_layout.commit_tag_size, 0);
     wheel_file.read_exact(work_block)
         .map_err(WheelOpenError::BlockReadCommitTag)?;
-    let commit_tag: storage::CommitTag = storage::bincode_options()
-        .deserialize_from(&work_block[..])
+    let mut source = SourceSlice::from(&work_block[..]);
+    let commit_tag = storage::CommitTag::read_from_source(&mut source)
         .map_err(WheelOpenError::CommitTagDeserialize)?;
     if commit_tag.magic != storage::COMMIT_TAG_MAGIC {
         // not a block: rewind and step
@@ -467,17 +442,17 @@ fn try_read_block(
 
         return Ok(ReadBlockStatus::NotABlock { next_cursor, });
     }
-    if block_header.block_size > work_block.capacity() {
+    if block_header.block_size > work_block.capacity() as u64 {
         return Err(WheelOpenError::BlockSizeTooLarge {
             work_block_size_bytes: work_block.capacity(),
-            block_size: block_header.block_size,
+            block_size: block_header.block_size as usize,
         });
     }
     // seek to block contents
     wheel_file.seek(io::SeekFrom::Start(cursor + storage_layout.block_header_size as u64))
         .map_err(WheelOpenError::BlockSeekContents)?;
     // read block contents
-    work_block.resize(block_header.block_size, 0);
+    work_block.resize(block_header.block_size as usize, 0);
     wheel_file.read_exact(work_block)
         .map_err(WheelOpenError::BlockReadContents)?;
     let crc = block::crc(work_block);
@@ -526,8 +501,7 @@ where E: EchoPolicy,
     let mut stats = InterpretStats::default();
 
     let mut terminator_block_bytes = blocks_pool.lend();
-    block_append_terminator(&mut terminator_block_bytes)
-        .map_err(Error::AppendTerminator)?;
+    block_append_terminator(&mut terminator_block_bytes);
 
     let mut cursor = storage_layout.wheel_header_size as u64;
     wheel_file.seek(io::SeekFrom::Start(cursor))
@@ -546,6 +520,7 @@ where E: EchoPolicy,
                     stats.count_total += 1;
 
                     if cursor != offset {
+                        #[allow(clippy::comparison_chain)]
                         if cursor < offset {
                             stats.count_seek_forward += 1;
                         } else if cursor > offset {
@@ -628,7 +603,7 @@ where E: EchoPolicy,
 
                         task::TaskKind::ReadBlock(task::ReadBlock { block_header, context, }) => {
                             let total_chunk_size = storage_layout.data_size_block_min()
-                                + block_header.block_size;
+                                + block_header.block_size as usize;
 
                             log::debug!(
                                 "read block {:?} @ {} of {} bytes, context = {:?}",

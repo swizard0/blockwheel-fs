@@ -11,6 +11,7 @@ use alloc_pool::{
     bytes::{
         Bytes,
         BytesMut,
+        BytesPool,
     },
 };
 
@@ -222,14 +223,13 @@ impl<C> DefragConfig<C> {
 
 #[derive(Debug)]
 pub enum BuilderError {
-    StorageLayoutCalculate(storage::LayoutSerializeError),
 }
 
 pub struct PerformerBuilderInit<C> where C: Context {
     lru_cache: lru::Cache,
     defrag: Option<Defrag<C::WriteBlock>>,
     storage_layout: storage::Layout,
-    work_block: Vec<u8>,
+    work_block: BytesMut,
 }
 
 impl<C> PerformerBuilderInit<C> where C: Context {
@@ -237,12 +237,13 @@ impl<C> PerformerBuilderInit<C> where C: Context {
         lru_cache: lru::Cache,
         defrag_queues: Option<DefragConfig<C::WriteBlock>>,
         work_block_size_bytes: usize,
+        blocks_pool: &BytesPool,
     )
         -> Result<PerformerBuilderInit<C>, BuilderError>
     {
-        let mut work_block = Vec::with_capacity(work_block_size_bytes);
-        let storage_layout = storage::Layout::calculate(&mut work_block)
-            .map_err(BuilderError::StorageLayoutCalculate)?;
+        let mut work_block = blocks_pool.lend();
+        work_block.reserve(work_block_size_bytes);
+        let storage_layout = storage::Layout::calculate(&mut work_block);
 
         Ok(PerformerBuilderInit {
             lru_cache,
@@ -263,16 +264,16 @@ impl<C> PerformerBuilderInit<C> where C: Context {
         &self.storage_layout
     }
 
-    pub fn work_block_cleared(&mut self) -> &mut Vec<u8> {
+    pub fn work_block_cleared(&mut self) -> &mut BytesMut {
         self.work_block.clear();
         self.work_block()
     }
 
-    pub fn work_block(&mut self) -> &mut Vec<u8> {
+    pub fn work_block(&mut self) -> &mut BytesMut {
         &mut self.work_block
     }
 
-    pub fn start_fill(self) -> (PerformerBuilder<C>, Vec<u8>) {
+    pub fn start_fill(self) -> (PerformerBuilder<C>, BytesMut) {
         let schema_builder = schema::Builder::new(self.storage_layout);
         (
             PerformerBuilder {

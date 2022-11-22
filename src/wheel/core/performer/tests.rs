@@ -8,6 +8,7 @@ use alloc_pool::{
     bytes::{
         Bytes,
         BytesMut,
+        BytesPool,
     },
 };
 
@@ -80,6 +81,7 @@ fn with_defrag_config(defrag_config: Option<DefragConfig<C>>) -> Performer<Conte
         lru::Cache::new(16),
         defrag_config,
         1024,
+        &BytesPool::new(),
     )
         .unwrap()
         .start_fill();

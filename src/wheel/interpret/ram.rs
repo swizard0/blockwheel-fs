@@ -2,14 +2,15 @@ use std::{
     io,
 };
 
-use bincode::{
-    Options,
-};
-
 use alloc_pool::{
     bytes::{
+        BytesMut,
         BytesPool,
     },
+};
+
+use alloc_pool_pack::{
+    WriteToBytesMut,
 };
 
 use arbeitssklave::{
@@ -31,7 +32,6 @@ use crate::{
         interpret::{
             Order,
             Request,
-            AppendTerminatorError,
             Error as InterpretError,
             block_append_terminator,
         },
@@ -44,7 +44,6 @@ use crate::{
 #[derive(Debug)]
 pub enum Error {
     WheelCreate(WheelCreateError),
-    AppendTerminator(AppendTerminatorError),
     ThreadSpawn(io::Error),
     Arbeitssklave(arbeitssklave::Error),
 }
@@ -55,8 +54,6 @@ pub enum WheelCreateError {
         provided: usize,
         required_min: usize,
     },
-    HeaderSerialize(bincode::Error),
-    TerminatorTagSerialize(bincode::Error),
 }
 
 pub fn bootstrap<E, P>(
@@ -72,7 +69,7 @@ where E: EchoPolicy,
       P: edeltraud::ThreadPool<job::Job<E>>,
 {
     let WheelData { memory, storage_layout, performer, } =
-        create(&params, performer_builder)
+        create(&params, &blocks_pool, performer_builder)
         .map_err(Error::WheelCreate)?;
     performer_sklave_meister
         .befehl(
@@ -89,6 +86,7 @@ where E: EchoPolicy,
 
 fn create<E>(
     params: &RamInterpreterParams,
+    blocks_pool: &BytesPool,
     performer_builder: performer::PerformerBuilderInit<Context<E>>,
 )
     -> Result<WheelData<E>, WheelCreateError>
@@ -96,20 +94,17 @@ where E: EchoPolicy,
 {
     log::debug!("creating new ram file of {:?} bytes", params.init_wheel_size_bytes);
 
-    let mut memory = Vec::with_capacity(params.init_wheel_size_bytes);
+    let mut memory = blocks_pool.lend();
+    memory.reserve(params.init_wheel_size_bytes);
 
     let wheel_header = storage::WheelHeader {
         size_bytes: params.init_wheel_size_bytes as u64,
         ..storage::WheelHeader::default()
     };
-    storage::bincode_options()
-        .serialize_into(&mut memory, &wheel_header)
-        .map_err(WheelCreateError::HeaderSerialize)?;
+    wheel_header.write_to_bytes_mut(&mut memory);
 
     let terminator_tag = storage::TerminatorTag::default();
-    storage::bincode_options()
-        .serialize_into(&mut memory, &terminator_tag)
-        .map_err(WheelCreateError::TerminatorTagSerialize)?;
+    terminator_tag.write_to_bytes_mut(&mut memory);
 
     let min_wheel_file_size = performer_builder.storage_layout().wheel_header_size
         + performer_builder.storage_layout().terminator_tag_size;
@@ -138,14 +133,14 @@ where E: EchoPolicy,
 }
 
 struct WheelData<E> where E: EchoPolicy {
-    memory: Vec<u8>,
+    memory: BytesMut,
     storage_layout: storage::Layout,
     performer: performer::Performer<Context<E>>,
 }
 
 pub fn run<E, P>(
     sklave: &ewig::Sklave<Order<E>, InterpretError>,
-    memory: Vec<u8>,
+    memory: BytesMut,
     storage_layout: storage::Layout,
     performer_sklave_meister: performer_sklave::Meister<E>,
     blocks_pool: BytesPool,
@@ -160,8 +155,7 @@ where E: EchoPolicy,
     let mut stats = InterpretStats::default();
 
     let mut terminator_block_bytes = blocks_pool.lend();
-    block_append_terminator(&mut terminator_block_bytes)
-        .map_err(Error::AppendTerminator)?;
+    block_append_terminator(&mut terminator_block_bytes);
 
     let mut cursor = io::Cursor::new(memory);
     cursor.set_position(storage_layout.wheel_header_size as u64);
@@ -195,7 +189,11 @@ where E: EchoPolicy,
                                         .copy_from_slice(&write_block_bytes);
                                     write_block_bytes.len()
                                 },
-                                task::WriteBlockBytes::Composite(task::WriteBlockBytesComposite { block_header, block_bytes, commit_tag, }) => {
+                                task::WriteBlockBytes::Composite(task::WriteBlockBytesComposite {
+                                    block_header,
+                                    block_bytes,
+                                    commit_tag,
+                                }) => {
                                     let mut offset = start;
                                     slice[offset .. offset + block_header.len()]
                                         .copy_from_slice(&block_header);
@@ -246,9 +244,12 @@ where E: EchoPolicy,
                             }
                         },
 
-                        task::TaskKind::ReadBlock(task::ReadBlock { block_header, context, }) => {
+                        task::TaskKind::ReadBlock(task::ReadBlock {
+                            block_header,
+                            context,
+                        }) => {
                             let total_chunk_size = storage_layout.data_size_block_min()
-                                + block_header.block_size;
+                                + block_header.block_size as usize;
                             let mut block_bytes = blocks_pool.lend();
                             block_bytes.resize(total_chunk_size, 0);
                             let start = cursor.position() as usize;

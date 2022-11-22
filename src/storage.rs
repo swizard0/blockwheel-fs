@@ -1,13 +1,13 @@
 use alloc_pool::{
     bytes::{
-        Bytes,
         BytesMut,
     },
 };
 
 use alloc_pool_pack::{
     integer,
-    ReadFromBytes,
+    Source,
+    ReadFromSource,
     WriteToBytesMut,
 };
 
@@ -54,11 +54,11 @@ pub enum ReadWheelHeaderError {
     InvalidVersion { expected: u16, provided: u16, },
 }
 
-impl ReadFromBytes for WheelHeader {
+impl ReadFromSource for WheelHeader {
     type Error = ReadWheelHeaderError;
 
-    fn read_from_bytes(bytes: Bytes) -> Result<(Self, Bytes), Self::Error> {
-        let (magic, bytes) = u64::read_from_bytes(bytes)
+    fn read_from_source<S>(source: &mut S) -> Result<Self, Self::Error> where S: Source {
+        let magic = u64::read_from_source(source)
             .map_err(ReadWheelHeaderError::Magic)?;
         if magic != WHEEL_MAGIC {
             return Err(ReadWheelHeaderError::InvalidMagic {
@@ -66,7 +66,7 @@ impl ReadFromBytes for WheelHeader {
                 provided: magic,
             });
         }
-        let (version, bytes) = u16::read_from_bytes(bytes)
+        let version = u16::read_from_source(source)
             .map_err(ReadWheelHeaderError::Version)?;
         if version != WHEEL_VERSION {
             return Err(ReadWheelHeaderError::InvalidVersion {
@@ -74,9 +74,9 @@ impl ReadFromBytes for WheelHeader {
                 provided: version,
             });
         }
-        let (size_bytes, bytes) = u64::read_from_bytes(bytes)
+        let size_bytes = u64::read_from_source(source)
             .map_err(ReadWheelHeaderError::SizeBytes)?;
-        Ok((WheelHeader { magic, version, size_bytes, }, bytes))
+        Ok(WheelHeader { magic, version, size_bytes, })
     }
 }
 
@@ -117,11 +117,11 @@ pub enum ReadBlockHeaderError {
     InvalidMagic { expected: u64, provided: u64, },
 }
 
-impl ReadFromBytes for BlockHeader {
+impl ReadFromSource for BlockHeader {
     type Error = ReadBlockHeaderError;
 
-    fn read_from_bytes(bytes: Bytes) -> Result<(Self, Bytes), Self::Error> {
-        let (magic, bytes) = u64::read_from_bytes(bytes)
+    fn read_from_source<S>(source: &mut S) -> Result<Self, Self::Error> where S: Source {
+        let magic = u64::read_from_source(source)
             .map_err(ReadBlockHeaderError::Magic)?;
         if magic != BLOCK_MAGIC {
             return Err(ReadBlockHeaderError::InvalidMagic {
@@ -129,11 +129,11 @@ impl ReadFromBytes for BlockHeader {
                 provided: magic,
             });
         }
-        let (block_id, bytes) = block::Id::read_from_bytes(bytes)
+        let block_id = block::Id::read_from_source(source)
             .map_err(ReadBlockHeaderError::BlockId)?;
-        let (block_size, bytes) = u64::read_from_bytes(bytes)
+        let block_size = u64::read_from_source(source)
             .map_err(ReadBlockHeaderError::BlockSize)?;
-        Ok((BlockHeader { magic, block_id, block_size, }, bytes))
+        Ok(BlockHeader { magic, block_id, block_size, })
     }
 }
 
@@ -166,11 +166,11 @@ pub enum ReadTombstoneTagError {
     InvalidMagic { expected: u64, provided: u64, },
 }
 
-impl ReadFromBytes for TombstoneTag {
+impl ReadFromSource for TombstoneTag {
     type Error = ReadTombstoneTagError;
 
-    fn read_from_bytes(bytes: Bytes) -> Result<(Self, Bytes), Self::Error> {
-        let (magic, bytes) = u64::read_from_bytes(bytes)
+    fn read_from_source<S>(source: &mut S) -> Result<Self, Self::Error> where S: Source {
+        let magic = u64::read_from_source(source)
             .map_err(ReadTombstoneTagError::Magic)?;
         if magic != TOMBSTONE_TAG_MAGIC {
             return Err(ReadTombstoneTagError::InvalidMagic {
@@ -178,7 +178,7 @@ impl ReadFromBytes for TombstoneTag {
                 provided: magic,
             });
         }
-        Ok((TombstoneTag { magic, }, bytes))
+        Ok(TombstoneTag { magic, })
     }
 }
 
@@ -219,11 +219,11 @@ pub enum ReadCommitTagError {
     InvalidMagic { expected: u64, provided: u64, },
 }
 
-impl ReadFromBytes for CommitTag {
+impl ReadFromSource for CommitTag {
     type Error = ReadCommitTagError;
 
-    fn read_from_bytes(bytes: Bytes) -> Result<(Self, Bytes), Self::Error> {
-        let (magic, bytes) = u64::read_from_bytes(bytes)
+    fn read_from_source<S>(source: &mut S) -> Result<Self, Self::Error> where S: Source {
+        let magic = u64::read_from_source(source)
             .map_err(ReadCommitTagError::Magic)?;
         if magic != COMMIT_TAG_MAGIC {
             return Err(ReadCommitTagError::InvalidMagic {
@@ -231,11 +231,11 @@ impl ReadFromBytes for CommitTag {
                 provided: magic,
             });
         }
-        let (block_id, bytes) = block::Id::read_from_bytes(bytes)
+        let block_id = block::Id::read_from_source(source)
             .map_err(ReadCommitTagError::BlockId)?;
-        let (crc, bytes) = u64::read_from_bytes(bytes)
+        let crc = u64::read_from_source(source)
             .map_err(ReadCommitTagError::Crc)?;
-        Ok((CommitTag { magic, block_id, crc, }, bytes))
+        Ok(CommitTag { magic, block_id, crc, })
     }
 }
 
@@ -268,11 +268,11 @@ pub enum ReadTerminatorTagError {
     InvalidMagic { expected: u64, provided: u64, },
 }
 
-impl ReadFromBytes for TerminatorTag {
+impl ReadFromSource for TerminatorTag {
     type Error = ReadTerminatorTagError;
 
-    fn read_from_bytes(bytes: Bytes) -> Result<(Self, Bytes), Self::Error> {
-        let (magic, bytes) = u64::read_from_bytes(bytes)
+    fn read_from_source<S>(source: &mut S) -> Result<Self, Self::Error> where S: Source {
+        let magic = u64::read_from_source(source)
             .map_err(ReadTerminatorTagError::Magic)?;
         if magic != TERMINATOR_TAG_MAGIC {
             return Err(ReadTerminatorTagError::InvalidMagic {
@@ -280,7 +280,7 @@ impl ReadFromBytes for TerminatorTag {
                 provided: magic,
             });
         }
-        Ok((TerminatorTag { magic, }, bytes))
+        Ok(TerminatorTag { magic, })
     }
 }
 

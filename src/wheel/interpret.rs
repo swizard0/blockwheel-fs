@@ -7,7 +7,9 @@ use alloc_pool::{
 };
 
 use alloc_pool_pack::{
-    ReadFromBytes,
+    Source,
+    SourceBytes,
+    ReadFromSource,
     WriteToBytesMut,
 };
 
@@ -98,6 +100,7 @@ impl<E> Interpreter<E> where E: EchoPolicy {
                     Some(performer::DefragConfig::new(params.defrag_parallel_tasks_limit))
                 },
                 params.work_block_size_bytes,
+                &blocks_pool,
             )
             .map_err(Error::PerformerBuilderInit)?;
 
@@ -406,10 +409,8 @@ fn run_block_process_read_job(
 )
     -> Result<RunBlockProcessReadJobDone, BlockProcessReadJobError>
 {
-    // let block_buffer_start = storage_layout.block_header_size;
-    // let block_buffer_end = block_bytes.len() - storage_layout.commit_tag_size;
-
-    let (storage_block_header, after_block_header_bytes) = storage::BlockHeader::read_from_bytes(block_bytes)
+    let mut source = SourceBytes::from(block_bytes.clone());
+    let storage_block_header = storage::BlockHeader::read_from_source(&mut source)
         .map_err(BlockProcessReadJobError::BlockHeaderDeserialize)?;
     if storage_block_header.block_id != block_header.block_id {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::BlockIdMismatch {
@@ -425,8 +426,8 @@ fn run_block_process_read_job(
         }));
     }
 
-    let commit_tag_bytes = after_block_header_bytes.subrange(storage_block_header.block_size as usize ..);
-    let (commit_tag, rest_block_bytes) = storage::CommitTag::read_from_bytes(commit_tag_bytes)
+    source.advance(storage_block_header.block_size as usize);
+    let commit_tag = storage::CommitTag::read_from_source(&mut source)
         .map_err(BlockProcessReadJobError::CommitTagDeserialize)?;
     if commit_tag.block_id != block_header.block_id {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::CommitTagBlockIdMismatch {
@@ -434,13 +435,15 @@ fn run_block_process_read_job(
             block_id_actual: commit_tag.block_id,
         }));
     }
-    if rest_block_bytes.len() > 0 {
+    if source.slice().len() > 0 {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::TrailingGarbageAfterCommitTagFor {
             block_id: commit_tag.block_id,
         }));
     }
 
-    let block_bytes = after_block_header_bytes.subrange(.. storage_block_header.block_size as usize);
+    let block_bytes = block_bytes.into_subrange(
+        storage_layout.block_header_size .. storage_layout.block_header_size + storage_block_header.block_size as usize,
+    );
     let block_id = block_header.block_id;
 
     let crc_expected = block::crc(&block_bytes);
