@@ -62,9 +62,9 @@ fn script_basic() {
             context: task::WriteBlockContext::External("ectx02"),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        // { 0: write task in progress @ 24 }
+        // { 0: write task in progress @ 18 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -76,34 +76,34 @@ fn script_basic() {
         }),
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task in progress @ 24, 0: read req }
+        // { 0: write task in progress @ 18, 0: read req }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ectx03", }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task in progress @ 24, 0: read req, 0: delete req }
+        // { 0: write task in progress @ 18, 0: read req, 0: delete req }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::DeleteBlock(proto::RequestDeleteBlock { block_id: block::Id::init(), context: "ectx04", }),
         }),
-        // { 0: write task in progress @ 24, 0: read req, 0: prep delete }
+        // { 0: write task in progress @ 18, 0: read req, 0: prep delete }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock {
             expect_block_id: block::Id::init(),
             expect_context: task::DeleteBlockContext::External("ectx04"),
         }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task in progress @ 24, 0: read req, 0: prep delete, 1: write req }
+        // { 0: write task in progress @ 18, 0: read req, 0: prep delete, 1: write req }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx05")),
         }),
-        // { 0: write task in progress @ 24, 0: read req, 0: prep delete, 1: prep write }
+        // { 0: write task in progress @ 18, 0: read req, 0: prep delete, 1: prep write }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
             expect_block_id: block::Id::init().next(),
             expect_block_bytes: hello_world_bytes().freeze(),
             expect_context: task::WriteBlockContext::External("ectx05"),
         }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task in progress @ 24, 0: read req, 0: prep delete done, 1: prep write }
+        // { 0: write task in progress @ 18, 0: read req, 0: prep delete done, 1: prep write }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
             block_id: block::Id::init(),
             delete_block_bytes: hello_world_bytes(),
@@ -111,7 +111,7 @@ fn script_basic() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task in progress @ 24, 0: read req, 0: prep delete done, 1: prep write done }
+        // { 0: write task in progress @ 18, 0: read req, 0: prep delete done, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
             block_id: block::Id::init().next(),
             write_block_bytes: hello_world_bytes(),
@@ -119,10 +119,10 @@ fn script_basic() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task done @ 24 .. 85, 0: read req, 0: prep delete done, 1: prep write done }
+        // { 0: write task done @ 18 .. 79, 0: read req, 0: prep delete done, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -135,9 +135,9 @@ fn script_basic() {
             expect_block_id: block::Id::init(),
             expect_context: "ectx02",
         }),
-        // { 0: ready @ 24 .. 85, 0: read req, 0: prep delete done, 1: write task in progress @ 85 }
+        // { 0: ready @ 18 .. 79, 0: read req, 0: prep delete done, 1: write task in progress @ 79 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
+            expect_offset: 79,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -149,10 +149,10 @@ fn script_basic() {
         }),
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 0: read req, 0: prep delete done, 1: write task done @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read req, 0: prep delete done, 1: write task done @ 79 .. 124 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 130,
+                current_offset: 124,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -165,9 +165,9 @@ fn script_basic() {
             expect_block_id: block::Id::init().next(),
             expect_context: "ectx05",
         }),
-        // { 0: ready @ 24 .. 85, 0: read task in progress @ 24, 0: prep delete done, 1: write task done @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task in progress @ 24, 0: prep delete done, 1: write task done @ 79 .. 124 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {
@@ -182,24 +182,24 @@ fn script_basic() {
         }),
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 0: read task done @ 24 .. 85, 0: prep delete done, 1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done @ 18 .. 79, 0: prep delete done, 1: ready @ 79 .. 124 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: hello_world_read_done(block::Id::init(), "ectx03"),
             },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::Idle),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: prep delete done, 1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: prep delete done, 1: ready @ 79 .. 124 }
         ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone {
             expect_block_id: block::Id::init(),
             expect_block_bytes: hello_world_bytes().freeze(),
             expect_pending_contexts_key: "pk0",
         }),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task in progress @ 24, 1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: delete task in progress @ 18, 1: ready @ 79 .. 124 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
@@ -211,26 +211,26 @@ fn script_basic() {
         }),
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task in progress @ 24, 0: read req, 1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: delete task in progress @ 18, 0: read req, 1: ready @ 79 .. 124 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init(), context: "ectx06", }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task in progress @ 24, 0: read req, 0: delete req,
-        //   1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: delete task in progress @ 18, 0: read req, 0: delete req,
+        //   1: ready @ 79 .. 124 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::DeleteBlock(proto::RequestDeleteBlock { block_id: block::Id::init(), context: "ectx07", }),
         }),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task in progress @ 24, 0: read req, 0: prep delete,
-        //   1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: delete task in progress @ 18, 0: read req, 0: prep delete,
+        //   1: ready @ 79 .. 124 }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock {
             expect_block_id: block::Id::init(),
             expect_context: task::DeleteBlockContext::External("ectx07"),
         }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task in progress @ 24, 0: read req, 0: prep delete done,
-        //   1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: delete task in progress @ 18, 0: read req, 0: prep delete done,
+        //   1: ready @ 79 .. 124 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedDeleteBlockDone {
             block_id: block::Id::init(),
             delete_block_bytes: hello_world_bytes(),
@@ -238,11 +238,11 @@ fn script_basic() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task done @ 24, 0: read req, 0: prep delete done,
-        //   1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: delete task done @ 18, 0: read req, 0: prep delete done,
+        //   1: ready @ 79 .. 124 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 24,
+                current_offset: 18,
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
@@ -255,50 +255,50 @@ fn script_basic() {
             expect_block_id: block::Id::init(),
             expect_context: "ectx04",
         }),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task done @ 24, 0: prep delete done,
-        //   1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: delete task done @ 18, 0: prep delete done,
+        //   1: ready @ 79 .. 124 }
         ScriptOp::Expect(ExpectOp::ReadBlockNotFound {
             expect_context: "ectx06",
         }),
-        // { 0: ready @ 24 .. 85, 0: read task done process @ 24 .. 85, 0: delete task done @ 24, 1: ready @ 85 .. 130 }
+        // { 0: ready @ 18 .. 79, 0: read task done process @ 18 .. 79, 0: delete task done @ 18, 1: ready @ 79 .. 124 }
         ScriptOp::Expect(ExpectOp::DeleteBlockNotFound {
             expect_context: "ectx07",
         }),
-        // { 0: read task done process @ 24 .. 85, 1: ready @ 85 .. 130 }
+        // { 0: read task done process @ 18 .. 79, 1: ready @ 79 .. 124 }
         ScriptOp::Expect(ExpectOp::PollRequest),
-        // { 0: read task done process done @ 24 .. 85, 1: ready @ 85 .. 130 }
+        // { 0: read task done process done @ 18 .. 79, 1: ready @ 79 .. 124 }
         ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone {
             block_id: block::Id::init(),
             block_bytes: hello_world_bytes().freeze(),
             pending_contexts_key: "pk0",
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        // { 1: ready @ 85 .. 130 }
+        // { 1: ready @ 79 .. 124 }
         ScriptOp::Expect(ExpectOp::ReadBlockNotFound {
             expect_context: "ectx03",
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
-        // { 1: ready @ 85 .. 130, 2: write req }
+        // { 1: ready @ 79 .. 124, 2: write req }
         ScriptOp::Do(DoOp::RequestIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx08")),
         }),
-        // { 1: ready @ 85 .. 130, 2: prep write }
+        // { 1: ready @ 79 .. 124, 2: prep write }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
             expect_block_id: block::Id::init().next().next(),
             expect_block_bytes: hello_world_bytes().freeze(),
             expect_context: task::WriteBlockContext::External("ectx08"),
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
-        // { 1: ready @ 85 .. 130, 2: prep write done }
+        // { 1: ready @ 79 .. 124, 2: prep write done }
         ScriptOp::Do(DoOp::RequestIncomingPreparedWriteBlockDone {
             block_id: block::Id::init().next().next(),
             write_block_bytes: hello_world_bytes(),
             context: task::WriteBlockContext::External("ectx08"),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        // { 1: ready @ 85 .. 130, 2: write task in progress @ 24 }
+        // { 1: ready @ 79 .. 124, 2: write task in progress @ 18 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -317,16 +317,16 @@ fn script_basic() {
             expect_context: "ectx09",
         }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 1: ready @ 85 .. 130, 1: read req, 2: write task in progress @ 24 }
+        // { 1: ready @ 79 .. 124, 1: read req, 2: write task in progress @ 18 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::ReadBlock(proto::RequestReadBlock { block_id: block::Id::init().next(), context: "ectx0a", }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 1: ready @ 85 .. 130, 1: read req, 2: write task done @ 24 .. 85 }
+        // { 1: ready @ 79 .. 124, 1: read req, 2: write task done @ 18 .. 79 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: task::TaskDone {
                     block_id: block::Id::init().next().next(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -339,9 +339,9 @@ fn script_basic() {
             expect_block_id: block::Id::init().next().next(),
             expect_context: "ectx08",
         }),
-        // { 1: ready @ 85 .. 130, 1: read task in progress, 2: ready @ 24 .. 85 }
+        // { 1: ready @ 79 .. 124, 1: read task in progress, 2: ready @ 18 .. 79 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
+            expect_offset: 79,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {
@@ -358,20 +358,20 @@ fn script_basic() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: hello_world_read_done(block::Id::init().next(), "ectx0a"),
             },
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::Idle),
-        // { 1: ready @ 85 .. 130, 1: read task done process, 2: ready @ 24 .. 85 }
+        // { 1: ready @ 79 .. 124, 1: read task done process, 2: ready @ 18 .. 79 }
         ScriptOp::Expect(ExpectOp::ProcessReadBlockTaskDone {
             expect_block_id: block::Id::init().next(),
             expect_block_bytes: hello_world_bytes().freeze(),
             expect_pending_contexts_key: "pk1",
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
-        // { 1: ready @ 85 .. 130, 1: read task done process done, 2: ready @ 24 .. 85 }
+        // { 1: ready @ 79 .. 124, 1: read task done process done, 2: ready @ 18 .. 79 }
         ScriptOp::Do(DoOp::RequestIncomingProcessReadBlockDone {
             block_id: block::Id::init().next(),
             block_bytes: hello_world_bytes().freeze(),
@@ -390,10 +390,10 @@ fn script_basic() {
             expect_info: Info {
                 blocks_count: 2,
                 wheel_size_bytes: 160,
-                service_bytes_used: 128,
+                service_bytes_used: 122,
                 data_bytes_used: 26,
                 defrag_write_pending_bytes: 0,
-                bytes_free: 6,
+                bytes_free: 12,
                 interpret_stats: InterpretStats {
                     count_total: 0,
                     count_no_seek: 0,
@@ -507,7 +507,7 @@ fn script_iter() {
         // { 0: ready @ 18 .. 79, 1: write task done @ 79 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 130,
+                current_offset: 124,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -639,7 +639,7 @@ fn script_iter() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 130,
+                current_offset: 124,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {

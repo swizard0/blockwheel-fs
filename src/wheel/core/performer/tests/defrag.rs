@@ -52,9 +52,9 @@ fn script_simple_defrag() {
             context: task::WriteBlockContext::External("ectx00"),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        // { 0: write task in progress @ 24 }
+        // { 0: write task in progress @ 18 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -67,18 +67,18 @@ fn script_simple_defrag() {
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
 
-        // { 0: write task in progress @ 24, 1: write req }
+        // { 0: write task in progress @ 18, 1: write req }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingRequest {
             request: proto::Request::WriteBlock(hello_world_write_req("ectx01")),
         }),
-        // { 0: write task in progress @ 24, 1: prep write }
+        // { 0: write task in progress @ 18, 1: prep write }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskWriteBlock {
             expect_block_id: block::Id::init().next(),
             expect_block_bytes: hello_world_bytes().freeze(),
             expect_context: task::WriteBlockContext::External("ectx01"),
         }),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task in progress @ 24, 1: prep write done }
+        // { 0: write task in progress @ 18, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingPreparedWriteBlockDone {
             block_id: block::Id::init().next(),
             write_block_bytes: hello_world_bytes(),
@@ -86,10 +86,10 @@ fn script_simple_defrag() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: write task done @ 24 .. 85, 1: prep write done }
+        // { 0: write task done @ 18 .. 79, 1: prep write done }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -102,9 +102,9 @@ fn script_simple_defrag() {
             expect_block_id: block::Id::init(),
             expect_context: "ectx00",
         }),
-        // { 0: ready @ 24 .. 85, 1: write task in progress @ 85 }
+        // { 0: ready @ 18 .. 79, 1: write task in progress @ 79 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
+            expect_offset: 79,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -116,10 +116,10 @@ fn script_simple_defrag() {
         }),
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 1: write task done @ 85 }
+        // { 0: ready @ 18 .. 79, 1: write task done @ 79 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 130,
+                current_offset: 124,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -132,29 +132,29 @@ fn script_simple_defrag() {
             expect_block_id: block::Id::init().next(),
             expect_context: "ectx01",
         }),
-        // { 0: ready @ 24 .. 85, 1: ready @ 85 }
+        // { 0: ready @ 18 .. 79, 1: ready @ 79 }
         ScriptOp::Expect(ExpectOp::PollRequest),
 
-        // { 0: ready @ 24 .. 85, 0: delete req, 1: ready @ 85 }
+        // { 0: ready @ 18 .. 79, 0: delete req, 1: ready @ 79 }
         ScriptOp::Do(DoOp::RequestIncomingRequest {
             request: proto::Request::DeleteBlock(proto::RequestDeleteBlock { block_id: block::Id::init(), context: "ectx02", }),
         }),
-        // { 0: ready @ 24 .. 85, 0: prep delete, 1: ready @ 85 }
+        // { 0: ready @ 18 .. 79, 0: prep delete, 1: ready @ 79 }
         ScriptOp::Expect(ExpectOp::PrepareInterpretTaskDeleteBlock {
             expect_block_id: block::Id::init(),
             expect_context: task::DeleteBlockContext::External("ectx02"),
         }),
         ScriptOp::Expect(ExpectOp::PollRequest),
-        // { 0: ready @ 24 .. 85, 0: prep delete done, 1: ready @ 85 }
+        // { 0: ready @ 18 .. 79, 0: prep delete done, 1: ready @ 79 }
         ScriptOp::Do(DoOp::RequestIncomingPreparedDeleteBlockDone {
             block_id: block::Id::init(),
             delete_block_bytes: hello_world_bytes(),
             context: task::DeleteBlockContext::External("ectx02"),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
-        // { 0: ready @ 24 .. 85, 0: delete task in progress @ 24, 1: ready @ 85 }
+        // { 0: ready @ 18 .. 79, 0: delete task in progress @ 18, 1: ready @ 79 }
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init(),
                 kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
@@ -166,10 +166,10 @@ fn script_simple_defrag() {
         }),
         ScriptOp::Do(DoOp::TaskAccept),
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
-        // { 0: ready @ 24 .. 85, 0: delete task done @ 24, 1: ready @ 85 }
+        // { 0: ready @ 18 .. 79, 0: delete task done @ 18, 1: ready @ 79 }
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 24,
+                current_offset: 18,
                 task: task::TaskDone {
                     block_id: block::Id::init(),
                     kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
@@ -183,10 +183,10 @@ fn script_simple_defrag() {
             expect_context: "ectx02",
         }),
 
-        // { 1: ready @ 85 }
+        // { 1: ready @ 79 }
         // defragmentation has started
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
+            expect_offset: 79,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::ReadBlock(ExpectTaskReadBlock {
@@ -199,8 +199,8 @@ fn script_simple_defrag() {
                         defrag_id: 0,
                         defrag_gaps: DefragGaps::Both {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                            space_key_right: SpaceKey { space_available: 6, serial: 3, },
-                            block_offset: 85,
+                            space_key_right: SpaceKey { space_available: 12, serial: 3, },
+                            block_offset: 79,
                         },
                     }),
                 }),
@@ -210,7 +210,7 @@ fn script_simple_defrag() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
@@ -219,7 +219,7 @@ fn script_simple_defrag() {
                             defrag_id: 0,
                             defrag_gaps: DefragGaps::OnlyLeft {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                                block_offset: 85,
+                                block_offset: 79,
                             },
                         }),
                     }),
@@ -234,7 +234,7 @@ fn script_simple_defrag() {
                 block_bytes: hello_world_bytes().freeze(),
                 defrag_gaps: DefragGaps::OnlyLeft {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    block_offset: 85,
+                    block_offset: 79,
                 },
             }),
         }),
@@ -247,13 +247,13 @@ fn script_simple_defrag() {
                 block_bytes: hello_world_bytes().freeze(),
                 defrag_gaps: DefragGaps::OnlyLeft {
                     space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                    block_offset: 85,
+                    block_offset: 79,
                 },
             }),
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
+            expect_offset: 79,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::DeleteBlock(ExpectTaskDeleteBlock {
@@ -263,7 +263,7 @@ fn script_simple_defrag() {
                         defrag_id: 0,
                         defrag_gaps: DefragGaps::OnlyLeft {
                             space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                            block_offset: 85,
+                            block_offset: 79,
                         },
                         block_bytes: hello_world_bytes().freeze(),
                     }),
@@ -274,7 +274,7 @@ fn script_simple_defrag() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
@@ -282,7 +282,7 @@ fn script_simple_defrag() {
                             defrag_id: 0,
                             defrag_gaps: DefragGaps::OnlyLeft {
                                 space_key_left: SpaceKey { space_available: 61, serial: 4, },
-                                block_offset: 85,
+                                block_offset: 79,
                             },
                             block_bytes: hello_world_bytes().freeze(),
                         }),
@@ -292,7 +292,7 @@ fn script_simple_defrag() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 24,
+            expect_offset: 18,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -308,7 +308,7 @@ fn script_simple_defrag() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 85,
+                current_offset: 79,
                 task: task::TaskDone {
                     block_id: block::Id::init().next(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
@@ -338,7 +338,7 @@ fn script_simple_defrag() {
         }),
         ScriptOp::Expect(ExpectOp::Idle),
         ScriptOp::Expect(ExpectOp::InterpretTask {
-            expect_offset: 85,
+            expect_offset: 79,
             expect_task: ExpectTask {
                 block_id: block::Id::init().next().next(),
                 kind: ExpectTaskKind::WriteBlock(ExpectTaskWriteBlock {
@@ -352,7 +352,7 @@ fn script_simple_defrag() {
         ScriptOp::Expect(ExpectOp::PollRequestAndInterpreter),
         ScriptOp::Do(DoOp::RequestAndInterpreterIncomingTaskDone {
             task_done: task::Done {
-                current_offset: 130,
+                current_offset: 124,
                 task: task::TaskDone {
                     block_id: block::Id::init().next().next(),
                     kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
