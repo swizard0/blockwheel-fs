@@ -55,8 +55,8 @@ use crate::{
     FixedFileInterpreterParams,
 };
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug)]
 pub enum Error {
@@ -196,6 +196,7 @@ where E: EchoPolicy,
                 error,
             }),
     };
+
     let mut wheel_file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -262,7 +263,7 @@ where E: EchoPolicy,
             let area = &work_block[start .. start + builder.storage_layout().block_header_size];
             let mut source = SourceSlice::from(area);
             match storage::BlockHeader::read_from_source(&mut source) {
-                Ok(block_header) if block_header.magic == storage::BLOCK_MAGIC => {
+                Ok(block_header) => {
                     let try_read_block_status = try_read_block(
                         &mut wheel_file,
                         &mut work_block,
@@ -285,16 +286,11 @@ where E: EchoPolicy,
                     }
                     break;
                 },
-                Ok(..) | Err(..) => {
-                    match storage::TerminatorTag::read_from_source(&mut SourceSlice::from(area)) {
-                        Ok(terminator_tag) if terminator_tag.magic == storage::TERMINATOR_TAG_MAGIC => {
-                            log::debug!("terminator found @ {:?}, loading done", cursor);
-                            break 'outer;
-                        },
-                        Ok(..) | Err(..) =>
-                            (),
-                    }
-                },
+                Err(..) =>
+                    if storage::TerminatorTag::read_from_source(&mut SourceSlice::from(area)).is_ok() {
+                        log::debug!("terminator found @ {:?}, loading done", cursor);
+                        break 'outer;
+                    },
             };
             start += 1;
             cursor += 1;
@@ -420,28 +416,33 @@ fn try_read_block(
     wheel_file.read_exact(work_block)
         .map_err(WheelOpenError::BlockReadCommitTag)?;
     let mut source = SourceSlice::from(&work_block[..]);
-    let commit_tag = storage::CommitTag::read_from_source(&mut source)
-        .map_err(WheelOpenError::CommitTagDeserialize)?;
-    if commit_tag.magic != storage::COMMIT_TAG_MAGIC {
-        // not a block: rewind and step
-        let next_cursor = cursor + 1;
-        wheel_file.seek(io::SeekFrom::Start(next_cursor))
-            .map_err(WheelOpenError::BlockRewindCommitTag)?;
+    let commit_tag = match storage::CommitTag::read_from_source(&mut source) {
+        Ok(commit_tag) if commit_tag.block_id != block_header.block_id => {
+            // some other block terminator: rewind
+            let next_cursor = cursor + 1;
+            wheel_file.seek(io::SeekFrom::Start(next_cursor))
+                .map_err(WheelOpenError::BlockRewindCommitTag)?;
 
-        log::debug!("NotABlock because of commit magic {:?} != {:?}", commit_tag.magic, storage::COMMIT_TAG_MAGIC);
+            log::debug!("NotABlock because of commit block_id {:?} != header.block_id {:?}", commit_tag.block_id, block_header.block_id);
 
-        return Ok(ReadBlockStatus::NotABlock { next_cursor, });
-    }
-    if commit_tag.block_id != block_header.block_id {
-        // some other block terminator: rewind
-        let next_cursor = cursor + 1;
-        wheel_file.seek(io::SeekFrom::Start(next_cursor))
-            .map_err(WheelOpenError::BlockRewindCommitTag)?;
+            return Ok(ReadBlockStatus::NotABlock { next_cursor, });
+        },
+        Ok(commit_tag) =>
+            commit_tag,
+        Err(storage::ReadCommitTagError::InvalidMagic { expected, provided, }) => {
+            // not a block: rewind and step
+            let next_cursor = cursor + 1;
+            wheel_file.seek(io::SeekFrom::Start(next_cursor))
+                .map_err(WheelOpenError::BlockRewindCommitTag)?;
 
-        log::debug!("NotABlock because of commit block_id {:?} != header.block_id {:?}", commit_tag.block_id, block_header.block_id);
+            log::debug!("NotABlock because of commit magic {:?} != {:?}", provided, expected);
 
-        return Ok(ReadBlockStatus::NotABlock { next_cursor, });
-    }
+            return Ok(ReadBlockStatus::NotABlock { next_cursor, });
+        },
+        Err(error) =>
+            return Err(WheelOpenError::CommitTagDeserialize(error)),
+    };
+
     if block_header.block_size > work_block.capacity() as u64 {
         return Err(WheelOpenError::BlockSizeTooLarge {
             work_block_size_bytes: work_block.capacity(),

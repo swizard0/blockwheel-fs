@@ -117,7 +117,9 @@ fn create_read_one() {
         thread_pool.clone(),
     );
     let performer = match orders_rx.recv() {
-        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
+            performer,
+        }))) =>
             performer,
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -149,7 +151,9 @@ fn create_read_one() {
                     task_done: task::Done {
                         task: task::TaskDone {
                             block_id,
-                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(rueckkopplung), }),
+                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                context: task::WriteBlockContext::External(rueckkopplung),
+                            }),
                         },
                         ..
                     },
@@ -194,6 +198,13 @@ fn create_read_one() {
     }
 
     drop(interpreter);
+    match orders_rx.recv() {
+        Ok(Order::InterpreterError(interpret::Error::Ewig(arbeitssklave::ewig::Error::Terminated))) =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
+
     let interpreter = make_interpreter(
         wheel_filename.into(),
         performer_sklave_meister,
@@ -201,7 +212,9 @@ fn create_read_one() {
         thread_pool,
     );
     let performer = match orders_rx.recv() {
-        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
+            performer,
+        }))) =>
             performer,
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -218,7 +231,9 @@ fn create_read_one() {
                 block_id: block_header.block_id.clone(),
                 kind: task::TaskKind::ReadBlock(task::ReadBlock {
                     block_header: block_header.clone(),
-                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(sendegeraet.rueckkopplung(ReplyReadBlock))),
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
+                        sendegeraet.rueckkopplung(ReplyReadBlock),
+                    )),
                 })
             };
             interpreter.push_task(expected_offset, task)
@@ -232,7 +247,9 @@ fn create_read_one() {
                                     block_id,
                                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                                         block_bytes,
-                                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(rueckkopplung)),
+                                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
+                                            rueckkopplung,
+                                        )),
                                         ..
                                     }),
                                 },
@@ -302,7 +319,9 @@ fn create_write_overlap_read_one() {
         thread_pool.clone(),
     );
     let performer = match orders_rx.recv() {
-        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
+            performer,
+        }))) =>
             performer,
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -335,7 +354,9 @@ fn create_write_overlap_read_one() {
                     task_done: task::Done {
                         task: task::TaskDone {
                             block_id,
-                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(rueckkopplung), }),
+                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                context: task::WriteBlockContext::External(rueckkopplung),
+                            }),
                         },
                         ..
                     },
@@ -387,7 +408,9 @@ fn create_write_overlap_read_one() {
                     task_done: task::Done {
                         task: task::TaskDone {
                             block_id,
-                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(rueckkopplung), }),
+                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                context: task::WriteBlockContext::External(rueckkopplung),
+                            }),
                         },
                         ..
                     },
@@ -434,6 +457,13 @@ fn create_write_overlap_read_one() {
 
     // open existing and read
     drop(interpreter);
+    match orders_rx.recv() {
+        Ok(Order::InterpreterError(interpret::Error::Ewig(arbeitssklave::ewig::Error::Terminated))) =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
+
     let interpreter = make_interpreter(
         wheel_filename.into(),
         performer_sklave_meister,
@@ -441,7 +471,9 @@ fn create_write_overlap_read_one() {
         thread_pool,
     );
     let performer = match orders_rx.recv() {
-        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
+            performer,
+        }))) =>
             performer,
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -468,7 +500,9 @@ fn create_write_overlap_read_one() {
                 block_id: block_header.block_id.clone(),
                 kind: task::TaskKind::ReadBlock(task::ReadBlock {
                     block_header: block_header.clone(),
-                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(sendegeraet.rueckkopplung(ReplyReadBlock))),
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
+                        sendegeraet.rueckkopplung(ReplyReadBlock),
+                    )),
                 })
             };
             interpreter.push_task(expected_offset, task)
@@ -482,7 +516,9 @@ fn create_write_overlap_read_one() {
                                     block_id,
                                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                                         block_bytes,
-                                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(rueckkopplung)),
+                                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
+                                            rueckkopplung,
+                                        )),
                                         ..
                                     }),
                                 },
@@ -551,7 +587,9 @@ fn create_write_delete_read_one() {
         thread_pool.clone(),
     );
     let performer = match orders_rx.recv() {
-        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
+            performer,
+        }))) =>
             performer,
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -585,7 +623,9 @@ fn create_write_delete_read_one() {
                         current_offset,
                         task: task::TaskDone {
                             block_id,
-                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(rueckkopplung), }),
+                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                context: task::WriteBlockContext::External(rueckkopplung),
+                            }),
                         },
                         ..
                     },
@@ -635,7 +675,9 @@ fn create_write_delete_read_one() {
                     task_done: task::Done {
                         task: task::TaskDone {
                             block_id,
-                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock { context: task::WriteBlockContext::External(rueckkopplung), }),
+                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                context: task::WriteBlockContext::External(rueckkopplung),
+                            }),
                         },
                         ..
                     },
@@ -731,6 +773,13 @@ fn create_write_delete_read_one() {
 
     // open existing and read
     drop(interpreter);
+    match orders_rx.recv() {
+        Ok(Order::InterpreterError(interpret::Error::Ewig(arbeitssklave::ewig::Error::Terminated))) =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
+
     let interpreter = make_interpreter(
         wheel_filename.into(),
         performer_sklave_meister,
@@ -738,7 +787,9 @@ fn create_write_delete_read_one() {
         thread_pool,
     );
     let performer = match orders_rx.recv() {
-        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap { performer, }))) =>
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
+            performer,
+        }))) =>
             performer,
         other_order =>
             panic!("unexpected order received: {other_order:?}"),
@@ -767,7 +818,9 @@ fn create_write_delete_read_one() {
                 block_id: block_header.block_id.clone(),
                 kind: task::TaskKind::ReadBlock(task::ReadBlock {
                     block_header: block_header.clone(),
-                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(sendegeraet.rueckkopplung(ReplyReadBlock))),
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
+                        sendegeraet.rueckkopplung(ReplyReadBlock),
+                    )),
                 })
             };
             interpreter.push_task(expected_offset, task)
@@ -781,7 +834,9 @@ fn create_write_delete_read_one() {
                                     block_id,
                                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
                                         block_bytes,
-                                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(rueckkopplung)),
+                                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
+                                            rueckkopplung,
+                                        )),
                                         ..
                                     }),
                                 },
@@ -827,6 +882,7 @@ fn create_write_delete_read_one() {
 enum Order {
     PerformerSklave(performer_sklave::Order<LocalEchoPolicy>),
     Reply(OrderReply),
+    InterpreterError(interpret::Error),
 }
 
 impl From<performer_sklave::Order<LocalEchoPolicy>> for Order {
@@ -1021,19 +1077,19 @@ fn make_interpreter<P>(
     thread_pool: P,
 )
     -> interpret::Interpreter<LocalEchoPolicy>
-where P: edeltraud::ThreadPool<Job> + Send + 'static
+where P: edeltraud::ThreadPool<Job> + Clone + Send + 'static
 {
     let interpreter_meister = ewig::Freie::new()
         .versklaven_als(
             "blockwheel_fs::wheel::interpret::fixed_file".to_string(),
             move |sklave| {
-                bootstrap(
+                let interpreter_result = bootstrap(
                     sklave,
                     FixedFileInterpreterParams {
                         wheel_filename,
                         init_wheel_size_bytes: 256 * 1024,
                     },
-                    performer_sklave_meister,
+                    performer_sklave_meister.clone(),
                     performer::PerformerBuilderInit::new(
                         lru::Cache::new(0),
                         None,
@@ -1041,8 +1097,12 @@ where P: edeltraud::ThreadPool<Job> + Send + 'static
                         &blocks_pool,
                     ).unwrap(),
                     blocks_pool,
-                    thread_pool,
-                )
+                    thread_pool.clone(),
+                );
+                if let Err(error) = interpreter_result {
+                    performer_sklave_meister.befehl(Order::InterpreterError(error), &thread_pool).ok();
+                }
+                Ok(())
             },
         )
         .unwrap();

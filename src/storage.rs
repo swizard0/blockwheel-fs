@@ -15,8 +15,8 @@ use crate::{
     block,
 };
 
-pub const WHEEL_MAGIC: u64 = 0xc0f124c9f1ba71d5;
-pub const WHEEL_VERSION: u16 = 2;
+const WHEEL_MAGIC: u64 = 0xc0f124c9f1ba71d5;
+const WHEEL_VERSION: u16 = 2;
 
 // WheelHeader
 
@@ -82,7 +82,7 @@ impl ReadFromSource for WheelHeader {
 
 // BlockHeader
 
-pub const BLOCK_MAGIC: u64 = 0x1af107518a38d0cf;
+const BLOCK_MAGIC: u64 = 0x1af107518a38d0cf;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BlockHeader {
@@ -139,7 +139,7 @@ impl ReadFromSource for BlockHeader {
 
 // TombstoneTag
 
-pub const TOMBSTONE_TAG_MAGIC: u64 = 0xce1063910922bdd5;
+const TOMBSTONE_TAG_MAGIC: u64 = 0xce1063910922bdd5;
 
 #[derive(Clone, PartialEq, Eq,  Debug)]
 pub struct TombstoneTag {
@@ -184,7 +184,7 @@ impl ReadFromSource for TombstoneTag {
 
 // CommitTag
 
-pub const COMMIT_TAG_MAGIC: u64 = 0xdb68d2d17dfe9811;
+const COMMIT_TAG_MAGIC: u64 = 0xdb68d2d17dfe9811;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CommitTag {
@@ -241,7 +241,7 @@ impl ReadFromSource for CommitTag {
 
 // TerminatorTag
 
-pub const TERMINATOR_TAG_MAGIC: u64 = 0x375d8f85e8daab4a;
+const TERMINATOR_TAG_MAGIC: u64 = 0x375d8f85e8daab4a;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TerminatorTag {
