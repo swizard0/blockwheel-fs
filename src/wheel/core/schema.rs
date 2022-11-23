@@ -1296,7 +1296,7 @@ mod tests {
     };
 
     fn init() -> Schema {
-        let storage_layout = storage::Layout::calculate(&mut BytesMut::new_detached(Vec::new()));
+        let storage_layout = storage::Layout::calculate();
         Builder::new(storage_layout).finish(160).1
     }
 

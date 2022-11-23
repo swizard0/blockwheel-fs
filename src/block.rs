@@ -1,9 +1,3 @@
-use alloc_pool::{
-    bytes::{
-        BytesMut,
-    },
-};
-
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Id {
     serial: u64,
@@ -36,8 +30,8 @@ pub fn crc(bytes: &[u8]) -> u64 {
 }
 
 impl alloc_pool_pack::WriteToBytesMut for Id {
-    fn write_to_bytes_mut(&self, bytes_mut: &mut BytesMut) {
-        self.serial.write_to_bytes_mut(bytes_mut);
+    fn write_to_bytes_mut<T>(&self, target: &mut T) where T: alloc_pool_pack::Target {
+        self.serial.write_to_bytes_mut(target);
     }
 }
 

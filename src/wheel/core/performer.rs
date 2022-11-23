@@ -243,7 +243,7 @@ impl<C> PerformerBuilderInit<C> where C: Context {
     {
         let mut work_block = blocks_pool.lend();
         work_block.reserve(work_block_size_bytes);
-        let storage_layout = storage::Layout::calculate(&mut work_block);
+        let storage_layout = storage::Layout::calculate();
 
         Ok(PerformerBuilderInit {
             lru_cache,

@@ -1,12 +1,8 @@
-use alloc_pool::{
-    bytes::{
-        BytesMut,
-    },
-};
-
 use alloc_pool_pack::{
     integer,
     Source,
+    Target,
+    TargetCounter,
     ReadFromSource,
     WriteToBytesMut,
 };
@@ -38,10 +34,10 @@ impl Default for WheelHeader {
 }
 
 impl WriteToBytesMut for WheelHeader {
-    fn write_to_bytes_mut(&self, bytes_mut: &mut BytesMut) {
-        self.magic.write_to_bytes_mut(bytes_mut);
-        self.version.write_to_bytes_mut(bytes_mut);
-        self.size_bytes.write_to_bytes_mut(bytes_mut);
+    fn write_to_bytes_mut<T>(&self, target: &mut T) where T: Target {
+        self.magic.write_to_bytes_mut(target);
+        self.version.write_to_bytes_mut(target);
+        self.size_bytes.write_to_bytes_mut(target);
     }
 }
 
@@ -102,10 +98,10 @@ impl Default for BlockHeader {
 }
 
 impl WriteToBytesMut for BlockHeader {
-    fn write_to_bytes_mut(&self, bytes_mut: &mut BytesMut) {
-        self.magic.write_to_bytes_mut(bytes_mut);
-        self.block_id.write_to_bytes_mut(bytes_mut);
-        self.block_size.write_to_bytes_mut(bytes_mut);
+    fn write_to_bytes_mut<T>(&self, target: &mut T) where T: Target {
+        self.magic.write_to_bytes_mut(target);
+        self.block_id.write_to_bytes_mut(target);
+        self.block_size.write_to_bytes_mut(target);
     }
 }
 
@@ -155,8 +151,8 @@ impl Default for TombstoneTag {
 }
 
 impl WriteToBytesMut for TombstoneTag {
-    fn write_to_bytes_mut(&self, bytes_mut: &mut BytesMut) {
-        self.magic.write_to_bytes_mut(bytes_mut);
+    fn write_to_bytes_mut<T>(&self, target: &mut T) where T: Target {
+        self.magic.write_to_bytes_mut(target);
     }
 }
 
@@ -204,10 +200,10 @@ impl Default for CommitTag {
 }
 
 impl WriteToBytesMut for CommitTag {
-    fn write_to_bytes_mut(&self, bytes_mut: &mut BytesMut) {
-        self.magic.write_to_bytes_mut(bytes_mut);
-        self.block_id.write_to_bytes_mut(bytes_mut);
-        self.crc.write_to_bytes_mut(bytes_mut);
+    fn write_to_bytes_mut<T>(&self, target: &mut T) where T: Target {
+        self.magic.write_to_bytes_mut(target);
+        self.block_id.write_to_bytes_mut(target);
+        self.crc.write_to_bytes_mut(target);
     }
 }
 
@@ -257,8 +253,8 @@ impl Default for TerminatorTag {
 }
 
 impl WriteToBytesMut for TerminatorTag {
-    fn write_to_bytes_mut(&self, bytes_mut: &mut BytesMut) {
-        self.magic.write_to_bytes_mut(bytes_mut);
+    fn write_to_bytes_mut<T>(&self, target: &mut T) where T: Target {
+        self.magic.write_to_bytes_mut(target);
     }
 }
 
@@ -295,24 +291,22 @@ pub struct Layout {
 }
 
 impl Layout {
-    pub fn calculate(work_block: &mut BytesMut) -> Layout {
-        let mut cursor = work_block.len();
+    pub fn calculate() -> Layout {
+        let mut target = TargetCounter::default();
+        WheelHeader::default().write_to_bytes_mut(&mut target);
+        let wheel_header_size = target.bytes_written();
 
-        WheelHeader::default().write_to_bytes_mut(work_block);
-        let wheel_header_size = work_block.len() - cursor;
-        cursor = work_block.len();
+        let mut target = TargetCounter::default();
+        BlockHeader::default().write_to_bytes_mut(&mut target);
+        let block_header_size = target.bytes_written();
 
-        BlockHeader::default().write_to_bytes_mut(work_block);
-        let block_header_size = work_block.len() - cursor;
-        cursor = work_block.len();
+        let mut target = TargetCounter::default();
+        CommitTag::default().write_to_bytes_mut(&mut target);
+        let commit_tag_size = target.bytes_written();
 
-        CommitTag::default().write_to_bytes_mut(work_block);
-        let commit_tag_size = work_block.len() - cursor;
-        cursor = work_block.len();
-
-        TerminatorTag::default().write_to_bytes_mut(work_block);
-        let terminator_tag_size = work_block.len() - cursor;
-        work_block.clear();
+        let mut target = TargetCounter::default();
+        TerminatorTag::default().write_to_bytes_mut(&mut target);
+        let terminator_tag_size = target.bytes_written();
 
         Layout {
             wheel_header_size,
