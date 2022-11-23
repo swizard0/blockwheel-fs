@@ -393,7 +393,7 @@ where P: edeltraud::ThreadPool<Job>,
         Order::ReadBlock(komm::Umschlag { inhalt: Err(RequestReadBlockError::NotFound), stamp: ReplyReadBlock { block_id, .. }, }) => {
             counter.reads += 1;
             active_tasks_counter.reads -= 1;
-            assert!(blocks.iter().find(|tank| tank.block_id == block_id).is_none());
+            assert!(blocks.iter().any(|tank| tank.block_id == block_id));
             Ok(())
         },
         Order::DeleteBlock(komm::Umschlag { inhalt: Ok(Deleted), stamp: ReplyDeleteBlock, }) => {
@@ -657,6 +657,7 @@ impl edeltraud::Job for Job {
             Job::VerifyBlock(args) =>
                 job_verify_block(args),
             Job::FtdSklave(mut sklave_job) => {
+                #[allow(clippy::while_let_loop)]
                 loop {
                     match sklave_job.zu_ihren_diensten().unwrap() {
                         arbeitssklave::Gehorsam::Machen { mut befehle, } =>

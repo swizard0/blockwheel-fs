@@ -167,7 +167,7 @@ where E: EchoPolicy,
 
                 Order::Request(Request { offset, task, }) => {
                     stats.count_total += 1;
-
+                    #[allow(clippy::comparison_chain)]
                     if cursor.position() != offset {
                         if cursor.position() < offset {
                             stats.count_seek_forward += 1;

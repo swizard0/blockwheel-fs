@@ -435,7 +435,7 @@ fn run_block_process_read_job(
             block_id_actual: commit_tag.block_id,
         }));
     }
-    if source.slice().len() > 0 {
+    if !source.slice().is_empty() {
         return Err(BlockProcessReadJobError::CorruptedData(CorruptedDataError::TrailingGarbageAfterCommitTagFor {
             block_id: commit_tag.block_id,
         }));
