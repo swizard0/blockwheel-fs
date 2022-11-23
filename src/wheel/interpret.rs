@@ -8,7 +8,7 @@ use alloc_pool::{
 
 use alloc_pool_pack::{
     Source,
-    SourceBytes,
+    SourceSlice,
     ReadFromSource,
     WriteToBytesMut,
 };
@@ -409,7 +409,7 @@ fn run_block_process_read_job(
 )
     -> Result<RunBlockProcessReadJobDone, BlockProcessReadJobError>
 {
-    let mut source = SourceBytes::from(block_bytes.clone());
+    let mut source = SourceSlice::from(&*block_bytes);
     let storage_block_header = storage::BlockHeader::read_from_source(&mut source)
         .map_err(BlockProcessReadJobError::BlockHeaderDeserialize)?;
     if storage_block_header.block_id != block_header.block_id {
