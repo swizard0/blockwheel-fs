@@ -127,7 +127,7 @@ pub enum WheelOpenError {
 }
 
 pub fn bootstrap<E, W, B, P, J>(
-    sklave: &ewig::Sklave<Order<E>, InterpretError>,
+    sklave: &mut ewig::Sklave<Order<E>, InterpretError>,
     params: FixedFileInterpreterParams,
     performer_sklave_meister: arbeitssklave::Meister<W, B>,
     performer_builder: performer::PerformerBuilderInit<Context<E>>,
@@ -484,7 +484,7 @@ struct Timings {
 }
 
 pub fn run<E, W, B, P, J>(
-    sklave: &ewig::Sklave<Order<E>, InterpretError>,
+    sklave: &mut ewig::Sklave<Order<E>, InterpretError>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
     performer_sklave_meister: arbeitssklave::Meister<W, B>,
@@ -559,7 +559,11 @@ where E: EchoPolicy,
                                     wheel_file.write_all(write_block_bytes)
                                         .map_err(Error::BlockWrite)?;
                                 },
-                                task::WriteBlockBytes::Composite(task::WriteBlockBytesComposite { block_header, block_bytes, commit_tag, }) => {
+                                task::WriteBlockBytes::Composite(task::WriteBlockBytesComposite {
+                                    block_header,
+                                    block_bytes,
+                                    commit_tag,
+                                }) => {
                                     wheel_file.write_all(block_header)
                                         .map_err(Error::BlockWrite)?;
                                     wheel_file.write_all(block_bytes)

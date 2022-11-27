@@ -57,7 +57,7 @@ pub enum WheelCreateError {
 }
 
 pub fn bootstrap<E, P>(
-    sklave: &ewig::Sklave<Order<E>, InterpretError>,
+    sklave: &mut ewig::Sklave<Order<E>, InterpretError>,
     params: RamInterpreterParams,
     performer_sklave_meister: performer_sklave::Meister<E>,
     performer_builder: performer::PerformerBuilderInit<Context<E>>,
@@ -139,7 +139,7 @@ struct WheelData<E> where E: EchoPolicy {
 }
 
 pub fn run<E, P>(
-    sklave: &ewig::Sklave<Order<E>, InterpretError>,
+    sklave: &mut ewig::Sklave<Order<E>, InterpretError>,
     memory: BytesMut,
     storage_layout: storage::Layout,
     performer_sklave_meister: performer_sklave::Meister<E>,
