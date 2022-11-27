@@ -32,7 +32,6 @@ use crate::{
     IterBlocks,
     EchoPolicy,
     IterBlocksItem,
-    InterpreterParams,
     RequestReadBlockError,
     RequestWriteBlockError,
     RequestDeleteBlockError,
@@ -45,13 +44,13 @@ pub enum Error {
     Edeltraud(edeltraud::SpawnError),
     BlockwheelFs(BlockwheelFsError),
     UnexpectedFtdOrder(String),
-    RequestInfo(arbeitssklave::Error),
-    RequestFlush(arbeitssklave::Error),
-    RequestReadBlock(arbeitssklave::Error),
-    RequestWriteBlock(arbeitssklave::Error),
-    RequestDeleteBlock(arbeitssklave::Error),
-    RequestIterBlocksInit(arbeitssklave::Error),
-    RequestIterBlocksNext(arbeitssklave::Error),
+    RequestInfo(BlockwheelFsError),
+    RequestFlush(BlockwheelFsError),
+    RequestReadBlock(BlockwheelFsError),
+    RequestWriteBlock(BlockwheelFsError),
+    RequestDeleteBlock(BlockwheelFsError),
+    RequestIterBlocksInit(BlockwheelFsError),
+    RequestIterBlocksNext(BlockwheelFsError),
     FtdProcessIsLost,
     ReadBlock(RequestReadBlockError),
     WriteBlock(RequestWriteBlockError),
@@ -183,12 +182,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         let bytes_used: usize = blocks.iter()
             .map(|block_tank| block_tank.block_bytes.len())
             .sum();
-        let wheel_size_bytes = match &params.interpreter {
-            InterpreterParams::FixedFile(p) =>
-                p.init_wheel_size_bytes,
-            InterpreterParams::Ram(p) =>
-                p.init_wheel_size_bytes,
-        };
+        let wheel_size_bytes = params.interpreter.init_wheel_size_bytes();
         let bytes_free = wheel_size_bytes - bytes_used;
 
         if blocks.is_empty() || rand::thread_rng().gen_range(0.0f32 .. 1.0) < 0.5 {

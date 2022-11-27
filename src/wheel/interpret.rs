@@ -56,6 +56,7 @@ pub enum Error {
     Ewig(ewig::Error),
     FixedFile(fixed_file::Error),
     Ram(ram::Error),
+    DummyInterpreterNotSupported,
     PerformerBuilderInit(performer::BuilderError),
 }
 
@@ -107,6 +108,8 @@ impl<E> Interpreter<E> where E: EchoPolicy {
         let thread_pool_clone = thread_pool.clone();
         let interpreter_frei = ewig::Freie::new();
         match params.interpreter {
+            InterpreterParams::Dummy(..) =>
+                return Err(Error::DummyInterpreterNotSupported),
             InterpreterParams::FixedFile(interpreter_params) => {
                 let interpreter_meister = interpreter_frei
                     .versklaven_als(

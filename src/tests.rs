@@ -12,6 +12,7 @@ use crate::{
     Params,
     InterpreterParams,
     RamInterpreterParams,
+    DummyInterpreterParams,
     FixedFileInterpreterParams,
 };
 
@@ -31,7 +32,6 @@ fn stress_fixed_file() {
         work_block_size_bytes,
         lru_cache_size_bytes: 0,
         defrag_parallel_tasks_limit: 8,
-        ..Default::default()
     };
 
     let limits = stress::Limits {
@@ -56,7 +56,7 @@ fn stress_fixed_file() {
 
     // next load existing wheel and repeat stress with blocks
     counter.clear();
-    stress::stress_loop(params.clone(), &mut blocks, &mut counter, &limits).unwrap();
+    stress::stress_loop(params, &mut blocks, &mut counter, &limits).unwrap();
 
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
@@ -73,7 +73,7 @@ fn stress_ram() {
     init();
 
     let work_block_size_bytes = 16 * 1024;
-    let init_wheel_size_bytes = 1 * 1024 * 1024;
+    let init_wheel_size_bytes = 1024 * 1024;
 
     let params = Params {
         interpreter: InterpreterParams::Ram(RamInterpreterParams {
@@ -82,7 +82,6 @@ fn stress_ram() {
         work_block_size_bytes,
         lru_cache_size_bytes: 0,
         defrag_parallel_tasks_limit: 8,
-        ..Default::default()
     };
 
     let limits = stress::Limits {
@@ -95,7 +94,7 @@ fn stress_ram() {
     let mut blocks = Vec::new();
 
     // fill wheel from scratch
-    stress::stress_loop(params.clone(), &mut blocks, &mut counter, &limits).unwrap();
+    stress::stress_loop(params, &mut blocks, &mut counter, &limits).unwrap();
 
     assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
 
@@ -103,6 +102,42 @@ fn stress_ram() {
     log::info!("ram JOB_BLOCK_PROCESS_READ: {}", crate::job::JOB_BLOCK_PROCESS_READ.load(Ordering::SeqCst));
     log::info!("ram JOB_BLOCK_PREPARE_DELETE: {}", crate::job::JOB_BLOCK_PREPARE_DELETE.load(Ordering::SeqCst));
     log::info!("ram JOB_PERFORMER_SKLAVE: {}", crate::job::JOB_PERFORMER_SKLAVE.load(Ordering::SeqCst));
+}
+
+#[test]
+fn stress_dummy() {
+    init();
+
+    let work_block_size_bytes = 16 * 1024;
+    let init_wheel_size_bytes = 1024 * 1024;
+
+    let params = Params {
+        interpreter: InterpreterParams::Dummy(DummyInterpreterParams {
+            init_wheel_size_bytes,
+        }),
+        work_block_size_bytes,
+        lru_cache_size_bytes: 0,
+        defrag_parallel_tasks_limit: 8,
+    };
+
+    let limits = stress::Limits {
+        active_tasks: 192,
+        actions: 1536,
+        block_size_bytes: work_block_size_bytes - 256,
+    };
+
+    let mut counter = stress::Counter::default();
+    let mut blocks = Vec::new();
+
+    // fill wheel from scratch
+    stress::stress_loop(params, &mut blocks, &mut counter, &limits).unwrap();
+
+    assert_eq!(counter.reads + counter.writes + counter.deletes, limits.actions);
+
+    log::info!("dummy JOB_BLOCK_PREPARE_WRITE: {}", crate::job::JOB_BLOCK_PREPARE_WRITE.load(Ordering::SeqCst));
+    log::info!("dummy JOB_BLOCK_PROCESS_READ: {}", crate::job::JOB_BLOCK_PROCESS_READ.load(Ordering::SeqCst));
+    log::info!("dummy JOB_BLOCK_PREPARE_DELETE: {}", crate::job::JOB_BLOCK_PREPARE_DELETE.load(Ordering::SeqCst));
+    log::info!("dummy JOB_PERFORMER_SKLAVE: {}", crate::job::JOB_PERFORMER_SKLAVE.load(Ordering::SeqCst));
 }
 
 fn init() {

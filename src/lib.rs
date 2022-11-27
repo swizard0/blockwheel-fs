@@ -23,6 +23,7 @@ pub mod stress;
 
 mod wheel;
 mod proto;
+mod dummy;
 mod storage;
 mod context;
 mod blockwheel_context;
@@ -42,6 +43,7 @@ pub struct Params {
 pub enum InterpreterParams {
     FixedFile(FixedFileInterpreterParams),
     Ram(RamInterpreterParams),
+    Dummy(DummyInterpreterParams),
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +54,11 @@ pub struct FixedFileInterpreterParams {
 
 #[derive(Clone, Debug)]
 pub struct RamInterpreterParams {
+    pub init_wheel_size_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct DummyInterpreterParams {
     pub init_wheel_size_bytes: usize,
 }
 
@@ -93,6 +100,21 @@ impl Default for RamInterpreterParams {
 pub enum Error {
     Interpreter(wheel::interpret::Error),
     Arbeitssklave(arbeitssklave::Error),
+    StorageMutexPoisoned,
+    RequestInfo(arbeitssklave::Error),
+    RequestInfoCommit(komm::EchoError),
+    RequestFlush(arbeitssklave::Error),
+    RequestFlushCommit(komm::EchoError),
+    RequestWriteBlock(arbeitssklave::Error),
+    RequestWriteBlockCommit(komm::EchoError),
+    RequestReadBlock(arbeitssklave::Error),
+    RequestReadBlockCommit(komm::EchoError),
+    RequestDeleteBlock(arbeitssklave::Error),
+    RequestDeleteBlockCommit(komm::EchoError),
+    RequestIterBlocksInit(arbeitssklave::Error),
+    RequestIterBlocksInitCommit(komm::EchoError),
+    RequestIterBlocksNext(arbeitssklave::Error),
+    RequestIterBlocksNextCommit(komm::EchoError),
 }
 
 pub trait EchoPolicy
@@ -140,6 +162,12 @@ impl<E> Freie<E> where E: EchoPolicy {
         -> Result<Meister<E>, Error>
     where P: edeltraud::ThreadPool<job::Job<E>> + Clone + Send + 'static,
     {
+        if let InterpreterParams::Dummy(..) = params.interpreter {
+            return Ok(Meister {
+                inner: MeisterInner::Dummy(dummy::Meister::new(params)),
+            });
+        }
+
         let performer_sklave_meister =
             self.performer_sklave_freie.meister();
 
@@ -169,18 +197,50 @@ impl<E> Freie<E> where E: EchoPolicy {
             .map_err(Error::Arbeitssklave)?;
 
         Ok(Meister {
-            performer_sklave_meister,
+            inner: MeisterInner::Blockwheel(
+                BlockwheelMeister {
+                    performer_sklave_meister,
+                },
+            ),
         })
     }
 }
 
 pub struct Meister<E> where E: EchoPolicy {
-    performer_sklave_meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<E>, wheel::performer_sklave::Order<E>>,
+    inner: MeisterInner<E>,
 }
 
 impl<E> Clone for Meister<E> where E: EchoPolicy {
     fn clone(&self) -> Self {
-        Meister {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+enum MeisterInner<E> where E: EchoPolicy {
+    Blockwheel(BlockwheelMeister<E>),
+    Dummy(dummy::Meister),
+}
+
+impl<E> Clone for MeisterInner<E> where E: EchoPolicy {
+    fn clone(&self) -> Self {
+        match self {
+            MeisterInner::Blockwheel(meister) =>
+                MeisterInner::Blockwheel(meister.clone()),
+            MeisterInner::Dummy(meister) =>
+                MeisterInner::Dummy(meister.clone()),
+        }
+    }
+}
+
+pub struct BlockwheelMeister<E> where E: EchoPolicy {
+    performer_sklave_meister: arbeitssklave::Meister<wheel::performer_sklave::Welt<E>, wheel::performer_sklave::Order<E>>,
+}
+
+impl<E> Clone for BlockwheelMeister<E> where E: EchoPolicy {
+    fn clone(&self) -> Self {
+        Self {
             performer_sklave_meister: self.performer_sklave_meister.clone(),
         }
     }
@@ -192,10 +252,15 @@ impl<E> Meister<E> where E: EchoPolicy {
         echo: <blockwheel_context::Context<E> as context::Context>::Info,
         thread_pool: &P,
     )
-        -> Result<(), arbeitssklave::Error>
+        -> Result<(), Error>
     where P: edeltraud::ThreadPool<job::Job<E>>
     {
-        self.order(proto::Request::Info(proto::RequestInfo { context: echo, }), thread_pool)
+        match &self.inner {
+            MeisterInner::Blockwheel(meister) =>
+                meister.info(echo, thread_pool),
+            MeisterInner::Dummy(meister) =>
+                meister.info::<E>(echo),
+        }
     }
 
     pub fn flush<P>(
@@ -203,10 +268,15 @@ impl<E> Meister<E> where E: EchoPolicy {
         echo: <blockwheel_context::Context<E> as context::Context>::Flush,
         thread_pool: &P,
     )
-        -> Result<(), arbeitssklave::Error>
+        -> Result<(), Error>
     where P: edeltraud::ThreadPool<job::Job<E>>
     {
-        self.order(proto::Request::Flush(proto::RequestFlush { context: echo, }), thread_pool)
+        match &self.inner {
+            MeisterInner::Blockwheel(meister) =>
+                meister.flush(echo, thread_pool),
+            MeisterInner::Dummy(meister) =>
+                meister.flush::<E>(echo),
+        }
     }
 
     pub fn write_block<P>(
@@ -215,7 +285,118 @@ impl<E> Meister<E> where E: EchoPolicy {
         echo: <blockwheel_context::Context<E> as context::Context>::WriteBlock,
         thread_pool: &P,
     )
-        -> Result<(), arbeitssklave::Error>
+        -> Result<(), Error>
+    where P: edeltraud::ThreadPool<job::Job<E>>
+    {
+        match &self.inner {
+            MeisterInner::Blockwheel(meister) =>
+                meister.write_block(block_bytes, echo, thread_pool),
+            MeisterInner::Dummy(meister) =>
+                meister.write_block::<E>(block_bytes, echo),
+        }
+    }
+
+    pub fn read_block<P>(
+        &self,
+        block_id: block::Id,
+        echo: <blockwheel_context::Context<E> as context::Context>::ReadBlock,
+        thread_pool: &P,
+    )
+        -> Result<(), Error>
+    where P: edeltraud::ThreadPool<job::Job<E>>
+    {
+        match &self.inner {
+            MeisterInner::Blockwheel(meister) =>
+                meister.read_block(block_id, echo, thread_pool),
+            MeisterInner::Dummy(meister) =>
+                meister.read_block::<E>(block_id, echo),
+        }
+    }
+
+    pub fn delete_block<P>(
+        &self,
+        block_id: block::Id,
+        echo: <blockwheel_context::Context<E> as context::Context>::DeleteBlock,
+        thread_pool: &P,
+    )
+        -> Result<(), Error>
+    where P: edeltraud::ThreadPool<job::Job<E>>
+    {
+        match &self.inner {
+            MeisterInner::Blockwheel(meister) =>
+                meister.delete_block(block_id, echo, thread_pool),
+            MeisterInner::Dummy(meister) =>
+                meister.delete_block::<E>(block_id, echo),
+        }
+    }
+
+    pub fn iter_blocks_init<P>(
+        &self,
+        echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksInit,
+        thread_pool: &P,
+    )
+        -> Result<(), Error>
+    where P: edeltraud::ThreadPool<job::Job<E>>
+    {
+        match &self.inner {
+            MeisterInner::Blockwheel(meister) =>
+                meister.iter_blocks_init(echo, thread_pool),
+            MeisterInner::Dummy(meister) =>
+                meister.iter_blocks_init::<E>(echo),
+        }
+    }
+
+    pub fn iter_blocks_next<P>(
+        &self,
+        iterator_next: IterBlocksIterator,
+        echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksNext,
+        thread_pool: &P,
+    )
+        -> Result<(), Error>
+    where P: edeltraud::ThreadPool<job::Job<E>>
+    {
+        match &self.inner {
+            MeisterInner::Blockwheel(meister) =>
+                meister.iter_blocks_next(iterator_next, echo, thread_pool),
+            MeisterInner::Dummy(meister) =>
+                meister.iter_blocks_next::<E>(iterator_next, echo),
+        }
+    }
+
+}
+
+impl<E> BlockwheelMeister<E> where E: EchoPolicy {
+    pub fn info<P>(
+        &self,
+        echo: <blockwheel_context::Context<E> as context::Context>::Info,
+        thread_pool: &P,
+    )
+        -> Result<(), Error>
+    where P: edeltraud::ThreadPool<job::Job<E>>
+    {
+        self.order(proto::Request::Info(proto::RequestInfo { context: echo, }), thread_pool)
+            .map_err(Error::RequestInfo)
+    }
+
+    pub fn flush<P>(
+        &self,
+        echo: <blockwheel_context::Context<E> as context::Context>::Flush,
+        thread_pool: &P,
+    )
+        -> Result<(), Error>
+    where P: edeltraud::ThreadPool<job::Job<E>>
+    {
+        self.order(proto::Request::Flush(proto::RequestFlush { context: echo, }), thread_pool)
+            .map_err(Error::RequestFlush)
+    }
+
+    pub fn write_block<P>(
+        &self,
+        block_bytes: Bytes,
+        echo: <blockwheel_context::Context<E> as context::Context>::WriteBlock,
+        thread_pool: &P,
+    )
+        -> Result<(), Error>
     where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
@@ -226,7 +407,7 @@ impl<E> Meister<E> where E: EchoPolicy {
                 },
             ),
             thread_pool,
-        )
+        ).map_err(Error::RequestWriteBlock)
     }
 
     pub fn read_block<P>(
@@ -235,7 +416,7 @@ impl<E> Meister<E> where E: EchoPolicy {
         echo: <blockwheel_context::Context<E> as context::Context>::ReadBlock,
         thread_pool: &P,
     )
-        -> Result<(), arbeitssklave::Error>
+        -> Result<(), Error>
     where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
@@ -246,7 +427,7 @@ impl<E> Meister<E> where E: EchoPolicy {
                 },
             ),
             thread_pool,
-        )
+        ).map_err(Error::RequestReadBlock)
     }
 
     pub fn delete_block<P>(
@@ -255,7 +436,7 @@ impl<E> Meister<E> where E: EchoPolicy {
         echo: <blockwheel_context::Context<E> as context::Context>::DeleteBlock,
         thread_pool: &P,
     )
-        -> Result<(), arbeitssklave::Error>
+        -> Result<(), Error>
     where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
@@ -266,7 +447,7 @@ impl<E> Meister<E> where E: EchoPolicy {
                 },
             ),
             thread_pool,
-        )
+        ).map_err(Error::RequestDeleteBlock)
     }
 
     pub fn iter_blocks_init<P>(
@@ -274,7 +455,7 @@ impl<E> Meister<E> where E: EchoPolicy {
         echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksInit,
         thread_pool: &P,
     )
-        -> Result<(), arbeitssklave::Error>
+        -> Result<(), Error>
     where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
@@ -284,7 +465,7 @@ impl<E> Meister<E> where E: EchoPolicy {
                 },
             ),
             thread_pool,
-        )
+        ).map_err(Error::RequestIterBlocksInit)
     }
 
     pub fn iter_blocks_next<P>(
@@ -293,7 +474,7 @@ impl<E> Meister<E> where E: EchoPolicy {
         echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksNext,
         thread_pool: &P,
     )
-        -> Result<(), arbeitssklave::Error>
+        -> Result<(), Error>
     where P: edeltraud::ThreadPool<job::Job<E>>
     {
         self.order(
@@ -304,7 +485,7 @@ impl<E> Meister<E> where E: EchoPolicy {
                 },
             ),
             thread_pool,
-        )
+        ).map_err(Error::RequestIterBlocksNext)
     }
 
     fn order<P>(
@@ -385,4 +566,17 @@ pub enum IterBlocksItem {
 #[derive(PartialEq, Eq, Debug)]
 pub struct IterBlocksIterator {
     block_id_from: block::Id,
+}
+
+impl InterpreterParams {
+    pub fn init_wheel_size_bytes(&self) -> usize {
+        match self {
+            InterpreterParams::FixedFile(params) =>
+                params.init_wheel_size_bytes,
+            InterpreterParams::Ram(params) =>
+                params.init_wheel_size_bytes,
+            InterpreterParams::Dummy(params) =>
+                params.init_wheel_size_bytes,
+        }
+    }
 }
