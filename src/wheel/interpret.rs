@@ -109,7 +109,7 @@ impl<E> Interpreter<E> where E: EchoPolicy {
         let interpreter_frei = ewig::Freie::new();
         match params.interpreter {
             InterpreterParams::Dummy(..) =>
-                return Err(Error::DummyInterpreterNotSupported),
+                Err(Error::DummyInterpreterNotSupported),
             InterpreterParams::FixedFile(interpreter_params) => {
                 let interpreter_meister = interpreter_frei
                     .versklaven_als(
