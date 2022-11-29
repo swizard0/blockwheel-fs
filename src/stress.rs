@@ -24,7 +24,6 @@ use crate::{
     job,
     block,
     Info,
-    Freie,
     Params,
     Meister,
     Flushed,
@@ -123,19 +122,28 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         .map_err(Error::ThreadPool)?;
     let blocks_pool = BytesPool::new();
 
-    let blockwheel_fs_meister = Freie::new()
-        .versklaven(params.clone(), blocks_pool.clone(), &edeltraud::ThreadPoolMap::new(thread_pool.clone()))
+    let blockwheel_fs_meister =
+        Meister::versklaven(
+            params.clone(),
+            blocks_pool.clone(),
+            &edeltraud::ThreadPoolMap::new(thread_pool.clone()),
+        )
         .map_err(Error::BlockwheelFs)?;
 
     let (ftd_tx, ftd_rx) = mpsc::channel();
-    let ftd_sklave_freie = arbeitssklave::Freie::new();
-    let ftd_sendegeraet = komm::Sendegeraet::starten(&ftd_sklave_freie, thread_pool.clone())
+    let ftd_sklave_meister =
+        arbeitssklave::Freie::new(
+            Welt { ftd_tx: Mutex::new(ftd_tx), },
+        )
+        .versklaven_komm(&thread_pool)
         .unwrap();
-    let _ftd_sklave_meister = ftd_sklave_freie
-        .versklaven(Welt { ftd_tx: Mutex::new(ftd_tx), }, &thread_pool)
-        .unwrap();
+    let ftd_sendegeraet = ftd_sklave_meister.sendegeraet().clone();
 
-    blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &edeltraud::ThreadPoolMap::new(&thread_pool))
+    blockwheel_fs_meister
+        .info(
+            ftd_sendegeraet.rueckkopplung(ReplyInfo),
+            &edeltraud::ThreadPoolMap::new(&thread_pool),
+        )
         .map_err(Error::RequestInfo)?;
     let info = match ftd_rx.recv() {
         Ok(Order::Info(komm::Umschlag { inhalt: info, stamp: ReplyInfo, })) =>
@@ -613,7 +621,7 @@ enum Job {
     BlockwheelFs(job::Job<LocalEchoPolicy>),
     WriteBlock(JobWriteBlockArgs),
     VerifyBlock(JobVerifyBlockArgs),
-    FtdSklave(arbeitssklave::SklaveJob<Welt, Order>),
+    FtdSklave(arbeitssklave::komm::SklaveJob<Welt, Order>),
 }
 
 impl From<job::Job<LocalEchoPolicy>> for Job {
@@ -634,8 +642,8 @@ impl From<JobVerifyBlockArgs> for Job {
     }
 }
 
-impl From<arbeitssklave::SklaveJob<Welt, Order>> for Job {
-    fn from(job: arbeitssklave::SklaveJob<Welt, Order>) -> Job {
+impl From<arbeitssklave::komm::SklaveJob<Welt, Order>> for Job {
+    fn from(job: arbeitssklave::komm::SklaveJob<Welt, Order>) -> Job {
         Job::FtdSklave(job)
     }
 }
@@ -653,14 +661,20 @@ impl edeltraud::Job for Job {
             Job::FtdSklave(mut sklave_job) => {
                 #[allow(clippy::while_let_loop)]
                 loop {
-                    match sklave_job.zu_ihren_diensten().unwrap() {
-                        arbeitssklave::Gehorsam::Machen { mut befehle, } =>
+                    match sklave_job.zu_ihren_diensten() {
+                        Ok(arbeitssklave::Gehorsam::Machen { mut befehle, }) =>
                             loop {
                                 match befehle.befehl() {
                                     arbeitssklave::SklavenBefehl::Mehr { befehl, mehr_befehle, } => {
                                         befehle = mehr_befehle;
-                                        let tx_lock = befehle.sklavenwelt().ftd_tx.lock().unwrap();
-                                        tx_lock.send(befehl).unwrap();
+                                        let Ok(tx_lock) = befehle.ftd_tx.lock() else {
+                                            log::error!("failed to lock mutex in FtdSklave job, terminating");
+                                            return;
+                                        };
+                                        let Ok(()) = tx_lock.send(befehl) else {
+                                            log::error!("failed to send back order in FtdSklave job, terminating");
+                                            return;
+                                        };
                                     },
                                     arbeitssklave::SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
                                         sklave_job = next_sklave_job;
@@ -668,8 +682,12 @@ impl edeltraud::Job for Job {
                                     },
                                 }
                             },
-                        arbeitssklave::Gehorsam::Rasten =>
+                        Ok(arbeitssklave::Gehorsam::Rasten) =>
                             break,
+                        Err(error) => {
+                            log::info!("FtdSklave::zu_ihren_diensten terminated with {error:?}");
+                            break;
+                        },
                     }
                 }
             },

@@ -46,7 +46,8 @@ pub struct Request<E> where E: EchoPolicy {
     task: task::Task<Context<E>>,
 }
 
-pub enum Order<E> where E: EchoPolicy {
+enum Order<W, E> where E: EchoPolicy {
+    CommitStart { performer_sklave_meister: arbeitssklave::Meister<W, performer_sklave::Order<E>>, },
     Request(Request<E>),
     DeviceSync { flush_context: <Context<E> as context::Context>::Flush, },
 }
@@ -78,14 +79,19 @@ impl From<ram::Error> for Error {
     }
 }
 
-pub struct Interpreter<E> where E: EchoPolicy {
-    interpreter_meister: ewig::Meister<Order<E>, Error>
+pub struct Interpreter<W, E> where E: EchoPolicy {
+    interpreter_meister: ewig::Meister<Order<W, E>, Error>
 }
 
-impl<E> Interpreter<E> where E: EchoPolicy {
+impl<W, E> Clone for Interpreter<W, E> where E: EchoPolicy {
+    fn clone(&self) -> Self {
+        Self { interpreter_meister: self.interpreter_meister.clone(), }
+    }
+}
+
+impl<E> Interpreter<performer_sklave::Welt<E>, E> where E: EchoPolicy {
     pub fn starten<P>(
         params: Params,
-        performer_sklave_meister: performer_sklave::Meister<E>,
         blocks_pool: BytesPool,
         thread_pool: &P
     )
@@ -118,7 +124,6 @@ impl<E> Interpreter<E> where E: EchoPolicy {
                             fixed_file::bootstrap(
                                 sklave,
                                 interpreter_params,
-                                performer_sklave_meister,
                                 performer_builder,
                                 blocks_pool,
                                 thread_pool_clone,
@@ -135,7 +140,6 @@ impl<E> Interpreter<E> where E: EchoPolicy {
                             ram::bootstrap(
                                 sklave,
                                 interpreter_params,
-                                performer_sklave_meister,
                                 performer_builder,
                                 blocks_pool,
                                 thread_pool_clone,
@@ -145,6 +149,13 @@ impl<E> Interpreter<E> where E: EchoPolicy {
                 Ok(Interpreter { interpreter_meister, })
             },
         }
+    }
+}
+
+impl<W, E> Interpreter<W, E> where E: EchoPolicy {
+    pub fn commit_start(&self, performer_sklave_meister: arbeitssklave::Meister<W, performer_sklave::Order<E>>) -> Result<(), Error> {
+        self.interpreter_meister
+            .befehl(Order::CommitStart { performer_sklave_meister, })
     }
 
     pub fn push_task(&self, offset: u64, task: task::Task<Context<E>>) -> Result<(), Error> {

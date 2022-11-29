@@ -69,7 +69,7 @@ pub struct OrderPreparedDeleteBlockDone<E> where E: EchoPolicy {
 }
 
 pub struct Env<E> where E: EchoPolicy {
-    pub interpreter: interpret::Interpreter<E>,
+    pub interpreter: interpret::Interpreter<Welt<E>, E>,
     pub blocks_pool: BytesPool,
     pub incoming_orders: Vec<Order<E>>,
     pub delayed_orders: Vec<Order<E>>,
@@ -124,14 +124,14 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
 {
     loop {
         let mut performer_op = 'op: loop {
-            let kont = match std::mem::replace(&mut sklave_job.sklavenwelt_mut().kont, Kont::Initialize) {
+            let kont = match std::mem::replace(&mut sklave_job.kont, Kont::Initialize) {
                 Kont::Start { performer, } =>
                     break 'op performer.next(),
                 other_kont =>
                     other_kont,
             };
 
-            let sklavenwelt = sklave_job.sklavenwelt_mut();
+            let sklavenwelt = &mut *sklave_job;
             sklavenwelt.env
                 .incoming_orders
                 .append(&mut sklavenwelt.env.delayed_orders);
@@ -173,7 +173,11 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                                 sklavenwelt.env.delayed_orders.push(Order::TaskDoneStats(OrderTaskDoneStats { task_done, stats, })),
                         },
                     Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
-                        output: Ok(interpret::BlockPrepareWriteJobDone { block_id, write_block_bytes, context, }),
+                        output: Ok(interpret::BlockPrepareWriteJobDone {
+                            block_id,
+                            write_block_bytes,
+                            context,
+                        }),
                     }) =>
                         match kont {
                             Kont::PollRequestAndInterpreter { poll, } =>
@@ -187,10 +191,16 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                                     }),
                                 ),
                         },
-                    Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone { output: Err(error), }) =>
+                    Order::PreparedWriteBlockDone(OrderPreparedWriteBlockDone {
+                        output: Err(error),
+                    }) =>
                         return Err(Error::InterpretBlockPrepareWrite(error)),
                     Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
-                        output: Ok(interpret::BlockProcessReadJobDone { block_id, block_bytes, pending_contexts, }),
+                        output: Ok(interpret::BlockProcessReadJobDone {
+                            block_id,
+                            block_bytes,
+                            pending_contexts,
+                        }),
                     }) =>
                         match kont {
                             Kont::PollRequestAndInterpreter { poll, } =>
@@ -204,10 +214,16 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                                     }),
                                 ),
                         },
-                    Order::ProcessReadBlockDone(OrderProcessReadBlockDone { output: Err(error), }) =>
+                    Order::ProcessReadBlockDone(OrderProcessReadBlockDone {
+                        output: Err(error),
+                    }) =>
                         return Err(Error::InterpretBlockProcessRead(error)),
                     Order::PreparedDeleteBlockDone(OrderPreparedDeleteBlockDone {
-                        output: Ok(interpret::BlockPrepareDeleteJobDone { block_id, delete_block_bytes, context, }),
+                        output: Ok(interpret::BlockPrepareDeleteJobDone {
+                            block_id,
+                            delete_block_bytes,
+                            context,
+                        }),
                     }) =>
                         match kont {
                             Kont::PollRequestAndInterpreter { poll, } =>
@@ -229,18 +245,24 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
             sklavenwelt.kont = kont;
 
             match sklave_job.zu_ihren_diensten() {
-                Ok(arbeitssklave::Gehorsam::Machen { mut befehle, }) =>
+                Ok(arbeitssklave::Gehorsam::Machen {
+                    mut befehle,
+                }) =>
                     loop {
                         match befehle.befehl() {
-                            arbeitssklave::SklavenBefehl::Mehr { befehl, mut mehr_befehle, } => {
+                            arbeitssklave::SklavenBefehl::Mehr {
+                                befehl,
+                                mut mehr_befehle,
+                            } => {
                                 mehr_befehle
-                                    .sklavenwelt_mut()
                                     .env
                                     .delayed_orders
                                     .push(befehl);
                                 befehle = mehr_befehle;
                             },
-                            arbeitssklave::SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
+                            arbeitssklave::SklavenBefehl::Ende {
+                                sklave_job: next_sklave_job,
+                            } => {
                                 sklave_job = next_sklave_job;
                                 break;
                             },
@@ -259,18 +281,24 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                 performer::Op::Idle(performer) =>
                     performer.next(),
 
-                performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(poll)) => {
-                    sklave_job.sklavenwelt_mut().kont = Kont::PollRequestAndInterpreter { poll, };
+                performer::Op::Query(performer::QueryOp::PollRequestAndInterpreter(
+                    poll,
+                )) => {
+                    sklave_job.kont = Kont::PollRequestAndInterpreter { poll, };
                     break;
                 },
 
                 performer::Op::Query(performer::QueryOp::PollRequest(poll)) => {
-                    sklave_job.sklavenwelt_mut().kont = Kont::PollRequest { poll, };
+                    sklave_job.kont = Kont::PollRequest { poll, };
                     break;
                 },
 
-                performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask { offset, task, next, })) => {
-                    sklave_job.sklavenwelt().env.interpreter.push_task(offset, task)
+                performer::Op::Query(performer::QueryOp::InterpretTask(performer::InterpretTask {
+                    offset,
+                    task,
+                    next,
+                })) => {
+                    sklave_job.env.interpreter.push_task(offset, task)
                         .map_err(Error::InterpretPushTask)?;
                     let performer = next.task_accepted();
                     performer.next()
@@ -278,7 +306,10 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::Info(
-                        performer::TaskDoneOp { context: echo, op: performer::InfoOp::Success { info, }, },
+                        performer::TaskDoneOp {
+                            context: echo,
+                            op: performer::InfoOp::Success { info, },
+                        },
                     ),
                     performer,
                 }) => {
@@ -290,17 +321,23 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::Flush(
-                        performer::TaskDoneOp { context: echo, op: performer::FlushOp::Flushed, },
+                        performer::TaskDoneOp {
+                            context: echo,
+                            op: performer::FlushOp::Flushed,
+                        },
                     ),
                     performer,
                 }) => {
-                    sklave_job.sklavenwelt().env.interpreter.device_sync(echo)
+                    sklave_job.env.interpreter.device_sync(echo)
                         .map_err(Error::InterpretDeviceSync)?;
                     performer.next()
                 },
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::WriteBlock(
-                        performer::TaskDoneOp { context: echo, op: performer::WriteBlockOp::NoSpaceLeft, },
+                        performer::TaskDoneOp {
+                            context: echo,
+                            op: performer::WriteBlockOp::NoSpaceLeft,
+                        },
                     ),
                     performer,
                 }) => {
@@ -312,7 +349,10 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::WriteBlock(
-                        performer::TaskDoneOp { context: echo, op: performer::WriteBlockOp::Done { block_id, }, },
+                        performer::TaskDoneOp {
+                            context: echo,
+                            op: performer::WriteBlockOp::Done { block_id, },
+                        },
                     ),
                     performer,
                 }) => {
@@ -324,7 +364,10 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::ReadBlock(
-                        performer::TaskDoneOp { context: echo, op: performer::ReadBlockOp::NotFound, },
+                        performer::TaskDoneOp {
+                            context: echo,
+                            op: performer::ReadBlockOp::NotFound,
+                        },
                     ),
                     performer,
                 }) => {
@@ -336,7 +379,10 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::ReadBlock(
-                        performer::TaskDoneOp { context: echo, op: performer::ReadBlockOp::Done { block_bytes, }, },
+                        performer::TaskDoneOp {
+                            context: echo,
+                            op: performer::ReadBlockOp::Done { block_bytes, },
+                        },
                     ),
                     performer,
                 }) => {
@@ -348,7 +394,10 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::DeleteBlock(
-                        performer::TaskDoneOp { context: echo, op: performer::DeleteBlockOp::NotFound, },
+                        performer::TaskDoneOp {
+                            context: echo,
+                            op: performer::DeleteBlockOp::NotFound,
+                        },
                     ),
                     performer,
                 }) => {
@@ -360,7 +409,10 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
 
                 performer::Op::Event(performer::Event {
                     op: performer::EventOp::DeleteBlock(
-                        performer::TaskDoneOp { context: echo, op: performer::DeleteBlockOp::Done { .. }, },
+                        performer::TaskDoneOp {
+                            context: echo,
+                            op: performer::DeleteBlockOp::Done { .. },
+                        },
                     ),
                     performer,
                 }) => {
@@ -415,7 +467,7 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                     let job_args = interpret::BlockPrepareWriteJobArgs {
                         block_id,
                         block_bytes,
-                        blocks_pool: sklave_job.sklavenwelt().env.blocks_pool.clone(),
+                        blocks_pool: sklave_job.env.blocks_pool.clone(),
                         context,
                         meister: sklave_job.meister(),
                     };
@@ -437,7 +489,7 @@ where P: edeltraud::ThreadPool<job::Job<E>>,
                 }) => {
                     let job_args = interpret::BlockPrepareDeleteJobArgs {
                         block_id,
-                        blocks_pool: sklave_job.sklavenwelt().env.blocks_pool.clone(),
+                        blocks_pool: sklave_job.env.blocks_pool.clone(),
                         context,
                         meister: sklave_job.meister(),
                     };

@@ -136,30 +136,17 @@ where Self: Send + 'static,
     type IterBlocksNext;
 }
 
-pub struct Freie<E> where E: EchoPolicy {
-    performer_sklave_freie: arbeitssklave::Freie<wheel::performer_sklave::Welt<E>, wheel::performer_sklave::Order<E>>,
+pub struct Meister<E> where E: EchoPolicy {
+    inner: MeisterInner<E>,
 }
 
-impl<E> Default for Freie<E> where E: EchoPolicy {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<E> Freie<E> where E: EchoPolicy {
-    pub fn new() -> Self {
-        Self {
-            performer_sklave_freie: arbeitssklave::Freie::new(),
-        }
-    }
-
+impl<E> Meister<E> where E: EchoPolicy {
     pub fn versklaven<P>(
-        self,
         params: Params,
         blocks_pool: BytesPool,
         thread_pool: &P,
     )
-        -> Result<Meister<E>, Error>
+        -> Result<Self, Error>
     where P: edeltraud::ThreadPool<job::Job<E>> + Clone + Send + 'static,
     {
         if let InterpreterParams::Dummy(..) = params.interpreter {
@@ -168,33 +155,31 @@ impl<E> Freie<E> where E: EchoPolicy {
             });
         }
 
-        let performer_sklave_meister =
-            self.performer_sklave_freie.meister();
-
         let interpreter =
             wheel::interpret::Interpreter::starten(
                 params,
-                performer_sklave_meister,
                 blocks_pool.clone(),
                 thread_pool,
             )
             .map_err(Error::Interpreter)?;
 
-        let performer_sklave_meister = self
-            .performer_sklave_freie
-            .versklaven(
+        let performer_sklave_meister =
+            arbeitssklave::Freie::new(
                 wheel::performer_sklave::Welt {
                     env: wheel::performer_sklave::Env {
-                        interpreter,
+                        interpreter: interpreter.clone(),
                         blocks_pool,
                         incoming_orders: Vec::new(),
                         delayed_orders: Vec::new(),
                     },
                     kont: wheel::performer_sklave::Kont::Initialize,
                 },
-                thread_pool,
             )
+            .versklaven(thread_pool)
             .map_err(Error::Arbeitssklave)?;
+
+        interpreter.commit_start(performer_sklave_meister.clone())
+            .map_err(Error::Interpreter)?;
 
         Ok(Meister {
             inner: MeisterInner::Blockwheel(
@@ -204,10 +189,6 @@ impl<E> Freie<E> where E: EchoPolicy {
             ),
         })
     }
-}
-
-pub struct Meister<E> where E: EchoPolicy {
-    inner: MeisterInner<E>,
 }
 
 impl<E> Clone for Meister<E> where E: EchoPolicy {

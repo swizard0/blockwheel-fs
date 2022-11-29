@@ -74,6 +74,8 @@ pub enum Error {
     DeviceSyncFlush(io::Error),
     ThreadSpawn(io::Error),
     Arbeitssklave(arbeitssklave::Error),
+    UnexpectedOrderBeforeCommitStart,
+    UnexpectedCommitStartOrder,
 }
 
 #[derive(Debug)]
@@ -126,10 +128,9 @@ pub enum WheelOpenError {
     BlockSeekEnd(io::Error),
 }
 
-pub fn bootstrap<E, W, B, P, J>(
-    sklave: &mut ewig::Sklave<Order<E>, InterpretError>,
+pub(super) fn bootstrap<E, W, P, J>(
+    sklave: &mut ewig::Sklave<Order<W, E>, InterpretError>,
     params: FixedFileInterpreterParams,
-    performer_sklave_meister: arbeitssklave::Meister<W, B>,
     performer_builder: performer::PerformerBuilderInit<Context<E>>,
     blocks_pool: BytesPool,
     thread_pool: P,
@@ -137,9 +138,21 @@ pub fn bootstrap<E, W, B, P, J>(
     -> Result<(), InterpretError>
 where E: EchoPolicy,
       P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, B>>,
-      B: From<performer_sklave::Order<E>>,
+      J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, performer_sklave::Order<E>>>,
 {
+    let performer_sklave_meister = 'outer: loop {
+        let orders = sklave.zu_ihren_diensten()?;
+        #[allow(clippy::never_loop)]
+        for order in orders {
+            match order {
+                Order::CommitStart { performer_sklave_meister, } =>
+                    break 'outer performer_sklave_meister,
+                _other =>
+                    return Err(Error::UnexpectedOrderBeforeCommitStart.into()),
+            }
+        }
+    };
+
     let WheelData { wheel_file, storage_layout, performer, } =
         match open(&params, performer_builder, &blocks_pool) {
             Ok(WheelOpenStatus::Success(wheel_data)) =>
@@ -158,7 +171,7 @@ where E: EchoPolicy,
                 performer_sklave::OrderBootstrap {
                     performer,
                 },
-            ).into(),
+            ),
             &thread_pool,
         )
         .map_err(Error::Arbeitssklave)?;
@@ -483,19 +496,18 @@ struct Timings {
     total: Duration,
 }
 
-pub fn run<E, W, B, P, J>(
-    sklave: &mut ewig::Sklave<Order<E>, InterpretError>,
+fn run<E, W, P, J>(
+    sklave: &mut ewig::Sklave<Order<W, E>, InterpretError>,
     mut wheel_file: fs::File,
     storage_layout: storage::Layout,
-    performer_sklave_meister: arbeitssklave::Meister<W, B>,
+    performer_sklave_meister: arbeitssklave::Meister<W, performer_sklave::Order<E>>,
     blocks_pool: BytesPool,
     thread_pool: P,
 )
     -> Result<(), InterpretError>
 where E: EchoPolicy,
       P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, B>>,
-      B: From<performer_sklave::Order<E>>,
+      J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, performer_sklave::Order<E>>>,
 {
     log::debug!("running background interpreter job");
 
@@ -516,6 +528,9 @@ where E: EchoPolicy,
 
         for order in orders {
             match order {
+
+                Order::CommitStart { .. } =>
+                    return Err(Error::UnexpectedCommitStartOrder.into()),
 
                 Order::Request(Request { offset, task, }) => {
                     stats.count_total += 1;
@@ -596,7 +611,7 @@ where E: EchoPolicy,
                                     stats,
                                 },
                             );
-                            match performer_sklave_meister.befehl(order.into(), &thread_pool) {
+                            match performer_sklave_meister.befehl(order, &thread_pool) {
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
@@ -644,7 +659,7 @@ where E: EchoPolicy,
                                     stats,
                                 },
                             );
-                            match performer_sklave_meister.befehl(order.into(), &thread_pool) {
+                            match performer_sklave_meister.befehl(order, &thread_pool) {
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
@@ -685,7 +700,7 @@ where E: EchoPolicy,
                                     stats,
                                 },
                             );
-                            match performer_sklave_meister.befehl(order.into(), &thread_pool) {
+                            match performer_sklave_meister.befehl(order, &thread_pool) {
                                 Ok(()) =>
                                     (),
                                 Err(arbeitssklave::Error::Terminated) =>
@@ -717,7 +732,7 @@ where E: EchoPolicy,
                             flush_context,
                         },
                     );
-                    match performer_sklave_meister.befehl(order.into(), &thread_pool) {
+                    match performer_sklave_meister.befehl(order, &thread_pool) {
                         Ok(()) =>
                             (),
                         Err(arbeitssklave::Error::Terminated) =>
