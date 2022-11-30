@@ -53,8 +53,15 @@ use crate::{
     RequestDeleteBlockError,
 };
 
+fn init() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .try_init();
+}
+
 #[test]
 fn create_read_empty() {
+    init();
     let blocks_pool = BytesPool::new();
     let wheel_filename = "/tmp/blockwheel_create_read_empty";
     let _wheel_data =
@@ -92,13 +99,15 @@ fn create_read_empty() {
 
 #[test]
 fn create_read_one() {
-    let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
+    init();
+    let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
         .build()
         .unwrap();
+    let thread_pool = edeltraud.handle();
     let (orders_tx, orders_rx) = mpsc::channel();
     let endpoint_meister =
         arbeitssklave::Freie::new(
-            EndpointWelt { orders_tx: Mutex::new(orders_tx), },
+            EndpointWelt { tag: "create_read_one", orders_tx: Mutex::new(orders_tx), },
         )
         .versklaven_komm(&thread_pool)
         .unwrap();
@@ -299,13 +308,15 @@ fn create_read_one() {
 
 #[test]
 fn create_write_overlap_read_one() {
-    let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
+    init();
+    let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
         .build()
         .unwrap();
+    let thread_pool = edeltraud.handle();
     let (orders_tx, orders_rx) = mpsc::channel();
     let endpoint_meister =
         arbeitssklave::Freie::new(
-            EndpointWelt { orders_tx: Mutex::new(orders_tx), },
+            EndpointWelt { tag: "create_write_overlap_read_one", orders_tx: Mutex::new(orders_tx), },
         )
         .versklaven_komm(&thread_pool)
         .unwrap();
@@ -571,323 +582,330 @@ fn create_write_overlap_read_one() {
     fs::remove_file(wheel_filename).unwrap();
 }
 
-// #[test]
-// fn create_write_delete_read_one() {
-//     let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-//         .build()
-//         .unwrap();
-//     let (orders_tx, orders_rx) = mpsc::channel();
-//     let performer_sklave_freie = arbeitssklave::Freie::new();
-//     let sendegeraet =
-//         komm::Sendegeraet::starten(
-//             &performer_sklave_freie,
-//             thread_pool.clone(),
-//         )
-//         .unwrap();
-//     let performer_sklave_meister = performer_sklave_freie
-//         .versklaven(Welt { orders_tx: Mutex::new(orders_tx), }, &thread_pool).unwrap();
+#[test]
+fn create_write_delete_read_one() {
+    let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
+        .build()
+        .unwrap();
+    let thread_pool = edeltraud.handle();
+    let (orders_tx, orders_rx) = mpsc::channel();
+    let endpoint_meister =
+        arbeitssklave::Freie::new(
+            EndpointWelt { tag: "create_write_delete_read_one", orders_tx: Mutex::new(orders_tx), },
+        )
+        .versklaven_komm(&thread_pool)
+        .unwrap();
+    let sendegeraet = endpoint_meister.sendegeraet().clone();
+    let forwarder_meister =
+        arbeitssklave::Freie::new(
+            ForwarderWelt { endpoint_meister: endpoint_meister.clone(), },
+        )
+        .versklaven(&thread_pool)
+        .unwrap();
 
-//     let blocks_pool = BytesPool::new();
-//     let wheel_filename = "/tmp/create_write_delete_read_one";
+    let blocks_pool = BytesPool::new();
+    let wheel_filename = "/tmp/create_write_delete_read_one";
 
-//     fs::remove_file(wheel_filename).ok();
+    fs::remove_file(wheel_filename).ok();
 
-//     let interpreter = make_interpreter(
-//         wheel_filename.into(),
-//         performer_sklave_meister.clone(),
-//         blocks_pool.clone(),
-//         thread_pool.clone(),
-//     );
-//     let performer = match orders_rx.recv() {
-//         Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
-//             performer,
-//         }))) =>
-//             performer,
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     };
-//     let schema = performer.decompose();
+    let interpreter = make_interpreter(
+        wheel_filename.into(),
+        forwarder_meister.clone(),
+        endpoint_meister.clone(),
+        blocks_pool.clone(),
+        thread_pool.clone(),
+    );
+    let performer = match orders_rx.recv() {
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
+            performer,
+        }))) =>
+            performer,
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    };
+    let schema = performer.decompose();
 
-//     // write first block
-//     let block_id = block::Id::init();
-//     let interpret::RunBlockPrepareWriteJobDone { write_block_bytes, } =
-//         interpret::run_block_prepare_write_job(
-//             block_id.clone(),
-//             hello_world_bytes(),
-//             blocks_pool.clone(),
-//         )
-//         .unwrap();
-//     let task = task::Task {
-//         block_id: block_id.clone(),
-//         kind: task::TaskKind::WriteBlock(task::WriteBlock {
-//             write_block_bytes,
-//             commit: task::Commit::WithTerminator,
-//             context: task::WriteBlockContext::External(sendegeraet.rueckkopplung(ReplyWriteBlock)),
-//         }),
-//     };
-//     interpreter.push_task(schema.storage_layout().wheel_header_size as u64, task)
-//         .unwrap();
-//     let current_offset = match orders_rx.recv() {
-//         Ok(Order::PerformerSklave(
-//             performer_sklave::Order::TaskDoneStats(
-//                 performer_sklave::OrderTaskDoneStats {
-//                     task_done: task::Done {
-//                         current_offset,
-//                         task: task::TaskDone {
-//                             block_id,
-//                             kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
-//                                 context: task::WriteBlockContext::External(rueckkopplung),
-//                             }),
-//                         },
-//                         ..
-//                     },
-//                     ..
-//                 },
-//             ),
-//         )) if block_id == block::Id::init() => {
-//             rueckkopplung.commit(Ok(block_id)).unwrap();
-//             current_offset
-//         },
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     };
-//     match orders_rx.recv() {
-//         Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
-//             inhalt: Ok(block_id),
-//             stamp: ReplyWriteBlock,
-//         }))) if block_id == block::Id::init() =>
-//             (),
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     }
+    // write first block
+    let block_id = block::Id::init();
+    let interpret::RunBlockPrepareWriteJobDone { write_block_bytes, } =
+        interpret::run_block_prepare_write_job(
+            block_id.clone(),
+            hello_world_bytes(),
+            blocks_pool.clone(),
+        )
+        .unwrap();
+    let task = task::Task {
+        block_id: block_id.clone(),
+        kind: task::TaskKind::WriteBlock(task::WriteBlock {
+            write_block_bytes,
+            commit: task::Commit::WithTerminator,
+            context: task::WriteBlockContext::External(sendegeraet.rueckkopplung(ReplyWriteBlock)),
+        }),
+    };
+    interpreter.push_task(schema.storage_layout().wheel_header_size as u64, task)
+        .unwrap();
+    let current_offset = match orders_rx.recv() {
+        Ok(Order::PerformerSklave(
+            performer_sklave::Order::TaskDoneStats(
+                performer_sklave::OrderTaskDoneStats {
+                    task_done: task::Done {
+                        current_offset,
+                        task: task::TaskDone {
+                            block_id,
+                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                context: task::WriteBlockContext::External(rueckkopplung),
+                            }),
+                        },
+                        ..
+                    },
+                    ..
+                },
+            ),
+        )) if block_id == block::Id::init() => {
+            rueckkopplung.commit(Ok(block_id)).unwrap();
+            current_offset
+        },
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    };
+    match orders_rx.recv() {
+        Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
+            inhalt: Ok(block_id),
+            stamp: ReplyWriteBlock,
+        }))) if block_id == block::Id::init() =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
 
-//     // write second block
-//     let block_id = block_id.next();
-//     let interpret::RunBlockPrepareWriteJobDone { write_block_bytes, } =
-//         interpret::run_block_prepare_write_job(
-//             block_id.clone(),
-//             hello_world_bytes(),
-//             blocks_pool.clone(),
-//         )
-//         .unwrap();
-//     let task = task::Task {
-//         block_id,
-//         kind: task::TaskKind::WriteBlock(task::WriteBlock {
-//             write_block_bytes,
-//             commit: task::Commit::WithTerminator,
-//             context: task::WriteBlockContext::External(sendegeraet.rueckkopplung(ReplyWriteBlock)),
-//         }),
-//     };
-//     interpreter.push_task(current_offset, task)
-//         .unwrap();
-//     match orders_rx.recv() {
-//         Ok(Order::PerformerSklave(
-//             performer_sklave::Order::TaskDoneStats(
-//                 performer_sklave::OrderTaskDoneStats {
-//                     task_done: task::Done {
-//                         task: task::TaskDone {
-//                             block_id,
-//                             kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
-//                                 context: task::WriteBlockContext::External(rueckkopplung),
-//                             }),
-//                         },
-//                         ..
-//                     },
-//                     ..
-//                 },
-//             ),
-//         )) if block_id == block::Id::init().next() => {
-//             rueckkopplung.commit(Ok(block_id)).unwrap();
-//         },
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     }
-//     match orders_rx.recv() {
-//         Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
-//             inhalt: Ok(block_id),
-//             stamp: ReplyWriteBlock,
-//         }))) if block_id == block::Id::init().next() =>
-//             (),
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     }
+    // write second block
+    let block_id = block_id.next();
+    let interpret::RunBlockPrepareWriteJobDone { write_block_bytes, } =
+        interpret::run_block_prepare_write_job(
+            block_id.clone(),
+            hello_world_bytes(),
+            blocks_pool.clone(),
+        )
+        .unwrap();
+    let task = task::Task {
+        block_id,
+        kind: task::TaskKind::WriteBlock(task::WriteBlock {
+            write_block_bytes,
+            commit: task::Commit::WithTerminator,
+            context: task::WriteBlockContext::External(sendegeraet.rueckkopplung(ReplyWriteBlock)),
+        }),
+    };
+    interpreter.push_task(current_offset, task)
+        .unwrap();
+    match orders_rx.recv() {
+        Ok(Order::PerformerSklave(
+            performer_sklave::Order::TaskDoneStats(
+                performer_sklave::OrderTaskDoneStats {
+                    task_done: task::Done {
+                        task: task::TaskDone {
+                            block_id,
+                            kind: task::TaskDoneKind::WriteBlock(task::TaskDoneWriteBlock {
+                                context: task::WriteBlockContext::External(rueckkopplung),
+                            }),
+                        },
+                        ..
+                    },
+                    ..
+                },
+            ),
+        )) if block_id == block::Id::init().next() => {
+            rueckkopplung.commit(Ok(block_id)).unwrap();
+        },
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
+    match orders_rx.recv() {
+        Ok(Order::Reply(OrderReply::WriteBlock(komm::Umschlag {
+            inhalt: Ok(block_id),
+            stamp: ReplyWriteBlock,
+        }))) if block_id == block::Id::init().next() =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
 
-//     // delete first block
-//     let block_id = block::Id::init();
-//     let interpret::RunBlockPrepareDeleteJobDone { delete_block_bytes, } =
-//         interpret::run_block_prepare_delete_job(
-//             blocks_pool.clone(),
-//         )
-//         .unwrap();
-//     let task = task::Task {
-//         block_id: block_id.clone(),
-//         kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
-//             delete_block_bytes: delete_block_bytes.freeze(),
-//             commit: task::Commit::None,
-//             context: task::DeleteBlockContext::External(sendegeraet.rueckkopplung(ReplyDeleteBlock)),
-//         }),
-//     };
-//     interpreter.push_task(schema.storage_layout().wheel_header_size as u64, task)
-//         .unwrap();
-//     match orders_rx.recv() {
-//         Ok(Order::PerformerSklave(
-//             performer_sklave::Order::TaskDoneStats(
-//                 performer_sklave::OrderTaskDoneStats {
-//                     task_done: task::Done {
-//                         task: task::TaskDone {
-//                             block_id,
-//                             kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
-//                                 context: task::DeleteBlockContext::External(rueckkopplung),
-//                             }),
-//                         },
-//                         ..
-//                     },
-//                     ..
-//                 },
-//             ),
-//         )) if block_id == block::Id::init() => {
-//             rueckkopplung.commit(Ok(Deleted)).unwrap();
-//         },
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     }
-//     match orders_rx.recv() {
-//         Ok(Order::Reply(OrderReply::DeleteBlock(komm::Umschlag {
-//             inhalt: Ok(Deleted),
-//             stamp: ReplyDeleteBlock,
-//         }))) if block_id == block::Id::init() =>
-//             (),
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     }
+    // delete first block
+    let block_id = block::Id::init();
+    let interpret::RunBlockPrepareDeleteJobDone { delete_block_bytes, } =
+        interpret::run_block_prepare_delete_job(
+            blocks_pool.clone(),
+        )
+        .unwrap();
+    let task = task::Task {
+        block_id: block_id.clone(),
+        kind: task::TaskKind::DeleteBlock(task::DeleteBlock {
+            delete_block_bytes: delete_block_bytes.freeze(),
+            commit: task::Commit::None,
+            context: task::DeleteBlockContext::External(sendegeraet.rueckkopplung(ReplyDeleteBlock)),
+        }),
+    };
+    interpreter.push_task(schema.storage_layout().wheel_header_size as u64, task)
+        .unwrap();
+    match orders_rx.recv() {
+        Ok(Order::PerformerSklave(
+            performer_sklave::Order::TaskDoneStats(
+                performer_sklave::OrderTaskDoneStats {
+                    task_done: task::Done {
+                        task: task::TaskDone {
+                            block_id,
+                            kind: task::TaskDoneKind::DeleteBlock(task::TaskDoneDeleteBlock {
+                                context: task::DeleteBlockContext::External(rueckkopplung),
+                            }),
+                        },
+                        ..
+                    },
+                    ..
+                },
+            ),
+        )) if block_id == block::Id::init() => {
+            rueckkopplung.commit(Ok(Deleted)).unwrap();
+        },
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
+    match orders_rx.recv() {
+        Ok(Order::Reply(OrderReply::DeleteBlock(komm::Umschlag {
+            inhalt: Ok(Deleted),
+            stamp: ReplyDeleteBlock,
+        }))) if block_id == block::Id::init() =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
 
-//     // fsync
-//     interpreter.device_sync(sendegeraet.rueckkopplung(ReplyFlush)).unwrap();
-//     match orders_rx.recv() {
-//         Ok(Order::PerformerSklave(
-//             performer_sklave::Order::DeviceSyncDone(
-//                 performer_sklave::OrderDeviceSyncDone {
-//                     flush_context: rueckkopplung,
-//                 },
-//             ),
-//         )) => {
-//             rueckkopplung.commit(Flushed).unwrap();
-//         },
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     }
-//     match orders_rx.recv() {
-//         Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { inhalt: Flushed, stamp: ReplyFlush, }))) =>
-//             (),
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     }
+    // fsync
+    interpreter.device_sync(sendegeraet.rueckkopplung(ReplyFlush)).unwrap();
+    match orders_rx.recv() {
+        Ok(Order::PerformerSklave(
+            performer_sklave::Order::DeviceSyncDone(
+                performer_sklave::OrderDeviceSyncDone {
+                    flush_context: rueckkopplung,
+                },
+            ),
+        )) => {
+            rueckkopplung.commit(Flushed).unwrap();
+        },
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
+    match orders_rx.recv() {
+        Ok(Order::Reply(OrderReply::Flush(komm::Umschlag { inhalt: Flushed, stamp: ReplyFlush, }))) =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
 
-//     // open existing and read
-//     drop(interpreter);
-//     match orders_rx.recv() {
-//         Ok(Order::InterpreterError(interpret::Error::Ewig(arbeitssklave::ewig::Error::Terminated))) =>
-//             (),
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     }
+    // open existing and read
+    drop(interpreter);
+    match orders_rx.recv() {
+        Ok(Order::InterpreterError(interpret::Error::Ewig(arbeitssklave::ewig::Error::Terminated))) =>
+            (),
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    }
 
-//     let interpreter = make_interpreter(
-//         wheel_filename.into(),
-//         performer_sklave_meister,
-//         blocks_pool,
-//         thread_pool,
-//     );
-//     let performer = match orders_rx.recv() {
-//         Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
-//             performer,
-//         }))) =>
-//             performer,
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     };
-//     let mut schema = performer.decompose();
+    let interpreter = make_interpreter(
+        wheel_filename.into(),
+        forwarder_meister,
+        endpoint_meister,
+        blocks_pool,
+        thread_pool,
+    );
+    let performer = match orders_rx.recv() {
+        Ok(Order::PerformerSklave(performer_sklave::Order::Bootstrap(performer_sklave::OrderBootstrap {
+            performer,
+        }))) =>
+            performer,
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    };
+    let mut schema = performer.decompose();
 
-//     let block_id = block::Id::init();
-//     match schema.process_read_block_request(&block_id) {
-//         schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
-//             panic!("unexpected cache hit for block_id = {block_id:?}"),
-//         schema::ReadBlockOp::Perform(schema::ReadBlockPerform { .. }) =>
-//             panic!("unexpected read perform for block_id = {block_id:?}"),
-//         schema::ReadBlockOp::NotFound =>
-//             (),
-//     }
-//     let block_id = block_id.next();
-//     let expected_offset = schema.storage_layout().wheel_header_size as u64
-//         + schema.storage_layout().data_size_block_min() as u64
-//         + hello_world_bytes().len() as u64;
+    let block_id = block::Id::init();
+    match schema.process_read_block_request(&block_id) {
+        schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
+            panic!("unexpected cache hit for block_id = {block_id:?}"),
+        schema::ReadBlockOp::Perform(schema::ReadBlockPerform { .. }) =>
+            panic!("unexpected read perform for block_id = {block_id:?}"),
+        schema::ReadBlockOp::NotFound =>
+            (),
+    }
+    let block_id = block_id.next();
+    let expected_offset = schema.storage_layout().wheel_header_size as u64
+        + schema.storage_layout().data_size_block_min() as u64
+        + hello_world_bytes().len() as u64;
 
-//     let block_header = match schema.process_read_block_request(&block_id) {
-//         schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
-//             panic!("unexpected cache hit for block_id = {block_id:?}"),
-//         schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
-//             let task = task::Task {
-//                 block_id: block_header.block_id.clone(),
-//                 kind: task::TaskKind::ReadBlock(task::ReadBlock {
-//                     block_header: block_header.clone(),
-//                     context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
-//                         sendegeraet.rueckkopplung(ReplyReadBlock),
-//                     )),
-//                 })
-//             };
-//             interpreter.push_task(expected_offset, task)
-//                 .unwrap();
-//             match orders_rx.recv() {
-//                 Ok(Order::PerformerSklave(
-//                     performer_sklave::Order::TaskDoneStats(
-//                         performer_sklave::OrderTaskDoneStats {
-//                             task_done: task::Done {
-//                                 task: task::TaskDone {
-//                                     block_id,
-//                                     kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
-//                                         block_bytes,
-//                                         context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
-//                                             rueckkopplung,
-//                                         )),
-//                                         ..
-//                                     }),
-//                                 },
-//                                 ..
-//                             },
-//                             ..
-//                         },
-//                     ),
-//                 )) if block_id == block_header.block_id => {
-//                     rueckkopplung.commit(Ok(block_bytes.freeze())).unwrap();
-//                     block_header.clone()
-//                 },
-//                 other_order =>
-//                     panic!("unexpected order received: {other_order:?}"),
-//             }
-//         },
-//         schema::ReadBlockOp::NotFound =>
-//             panic!("unexpected read not found for block_id = {block_id:?}"),
-//     };
-//     let block_bytes = match orders_rx.recv() {
-//         Ok(Order::Reply(OrderReply::ReadBlock(komm::Umschlag {
-//             inhalt: Ok(block_bytes),
-//             stamp: ReplyReadBlock,
-//         }))) =>
-//             block_bytes,
-//         other_order =>
-//             panic!("unexpected order received: {other_order:?}"),
-//     };
-//     let interpret::RunBlockProcessReadJobDone { block_bytes, .. } =
-//         interpret::run_block_process_read_job(
-//             schema.storage_layout().clone(),
-//             block_header,
-//             block_bytes,
-//         )
-//         .unwrap();
-//     assert_eq!(block_bytes, hello_world_bytes());
+    let block_header = match schema.process_read_block_request(&block_id) {
+        schema::ReadBlockOp::CacheHit(schema::ReadBlockCacheHit { .. }) =>
+            panic!("unexpected cache hit for block_id = {block_id:?}"),
+        schema::ReadBlockOp::Perform(schema::ReadBlockPerform { block_header, }) => {
+            let task = task::Task {
+                block_id: block_header.block_id.clone(),
+                kind: task::TaskKind::ReadBlock(task::ReadBlock {
+                    block_header: block_header.clone(),
+                    context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
+                        sendegeraet.rueckkopplung(ReplyReadBlock),
+                    )),
+                })
+            };
+            interpreter.push_task(expected_offset, task)
+                .unwrap();
+            match orders_rx.recv() {
+                Ok(Order::PerformerSklave(
+                    performer_sklave::Order::TaskDoneStats(
+                        performer_sklave::OrderTaskDoneStats {
+                            task_done: task::Done {
+                                task: task::TaskDone {
+                                    block_id,
+                                    kind: task::TaskDoneKind::ReadBlock(task::TaskDoneReadBlock {
+                                        block_bytes,
+                                        context: task::ReadBlockContext::Process(task::ReadBlockProcessContext::External(
+                                            rueckkopplung,
+                                        )),
+                                        ..
+                                    }),
+                                },
+                                ..
+                            },
+                            ..
+                        },
+                    ),
+                )) if block_id == block_header.block_id => {
+                    rueckkopplung.commit(Ok(block_bytes.freeze())).unwrap();
+                    block_header.clone()
+                },
+                other_order =>
+                    panic!("unexpected order received: {other_order:?}"),
+            }
+        },
+        schema::ReadBlockOp::NotFound =>
+            panic!("unexpected read not found for block_id = {block_id:?}"),
+    };
+    let block_bytes = match orders_rx.recv() {
+        Ok(Order::Reply(OrderReply::ReadBlock(komm::Umschlag {
+            inhalt: Ok(block_bytes),
+            stamp: ReplyReadBlock,
+        }))) =>
+            block_bytes,
+        other_order =>
+            panic!("unexpected order received: {other_order:?}"),
+    };
+    let interpret::RunBlockProcessReadJobDone { block_bytes, .. } =
+        interpret::run_block_process_read_job(
+            schema.storage_layout().clone(),
+            block_header,
+            block_bytes,
+        )
+        .unwrap();
+    assert_eq!(block_bytes, hello_world_bytes());
 
-//     fs::remove_file(wheel_filename).unwrap();
-// }
+    fs::remove_file(wheel_filename).unwrap();
+}
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -1021,6 +1039,7 @@ impl From<komm::Umschlag<IterBlocksItem, ReplyIterBlocksNext>> for Order {
 }
 
 struct EndpointWelt {
+    tag: &'static str,
     orders_tx: Mutex<mpsc::Sender<Order>>,
 }
 
@@ -1078,14 +1097,20 @@ impl edeltraud::Job for Job {
             Job::EndpointSklave(mut sklave_job) => {
                 #[allow(clippy::while_let_loop)]
                 loop {
-                    match sklave_job.zu_ihren_diensten().unwrap() {
-                        arbeitssklave::Gehorsam::Machen { mut befehle, } =>
+                    match sklave_job.zu_ihren_diensten() {
+                        Ok(arbeitssklave::Gehorsam::Machen { mut befehle, }) =>
                             loop {
                                 match befehle.befehl() {
                                     arbeitssklave::SklavenBefehl::Mehr { befehl, mehr_befehle, } => {
                                         befehle = mehr_befehle;
-                                        let tx_lock = befehle.orders_tx.lock().unwrap();
-                                        tx_lock.send(befehl).unwrap();
+                                        let Ok(tx_lock) = befehle.orders_tx.lock() else {
+                                            log::error!("failed to lock mutex in EndpointSklave/{} job, terminating", befehle.tag);
+                                            return;
+                                        };
+                                        if let Err(mpsc::SendError(befehl)) = tx_lock.send(befehl) {
+                                            log::warn!("failed to send back order {befehl:?} in EndpointSklave/{} job, terminating", befehle.tag);
+                                            return;
+                                        }
                                     },
                                     arbeitssklave::SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
                                         sklave_job = next_sklave_job;
@@ -1093,8 +1118,12 @@ impl edeltraud::Job for Job {
                                     },
                                 }
                             },
-                        arbeitssklave::Gehorsam::Rasten =>
+                        Ok(arbeitssklave::Gehorsam::Rasten) =>
                             break,
+                        Err(error) => {
+                            log::info!("EndpointSklave::zu_ihren_diensten terminated with {error:?}");
+                            break;
+                        },
                     }
                 }
             },

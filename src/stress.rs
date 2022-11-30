@@ -117,9 +117,10 @@ pub struct BlockTank {
 }
 
 pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Counter, limits: &Limits) -> Result<(), Error> {
-    let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
+    let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
         .build()
         .map_err(Error::ThreadPool)?;
+    let thread_pool = edeltraud.handle();
     let blocks_pool = BytesPool::new();
 
     let blockwheel_fs_meister =
@@ -165,18 +166,19 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             break;
         }
 
-        let maybe_task_result = if (active_tasks_counter.sum() >= limits.active_tasks) || (blocks.is_empty() && active_tasks_counter.writes > 0) {
-            Some(ftd_rx.recv())
-        } else {
-            match ftd_rx.try_recv() {
-                Ok(order) =>
-                    Some(Ok(order)),
-                Err(mpsc::TryRecvError::Empty) =>
-                    None,
-                Err(mpsc::TryRecvError::Disconnected) =>
-                    Some(Err(mpsc::RecvError)),
-            }
-        };
+        let maybe_task_result =
+            if (active_tasks_counter.sum() >= limits.active_tasks) || (blocks.is_empty() && active_tasks_counter.writes > 0) {
+                Some(ftd_rx.recv())
+            } else {
+                match ftd_rx.try_recv() {
+                    Ok(order) =>
+                        Some(Ok(order)),
+                    Err(mpsc::TryRecvError::Empty) =>
+                        None,
+                    Err(mpsc::TryRecvError::Disconnected) =>
+                        Some(Err(mpsc::RecvError)),
+                }
+            };
 
         match maybe_task_result {
             None =>

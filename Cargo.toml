@@ -1,6 +1,6 @@
 [package]
 name = "blockwheel-fs"
-version = "0.25.0"
+version = "0.25.1"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Persistent binary blocks with rotating wheel like access."
 edition = "2021"
@@ -10,7 +10,7 @@ o1 = { git = "https://github.com/swizard0/o1.git" }
 alloc-pool = { git = "https://github.com/swizard0/alloc-pool.git" }
 alloc-pool-pack = { git = "https://github.com/swizard0/alloc-pool-pack.git" }
 edeltraud = { git = "https://github.com/swizard0/edeltraud.git" }
-arbeitssklave = { git = "https://github.com/swizard0/arbeitssklave.git", branch = "unsafe_00" }
+arbeitssklave = { git = "https://github.com/swizard0/arbeitssklave.git" }
 
 log = "^0.4"
 rand = "^0.8"
