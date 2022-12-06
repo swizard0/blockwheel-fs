@@ -170,7 +170,7 @@ pub fn block_append_terminator(block_bytes: &mut BytesMut) {
         .write_to_bytes_mut(block_bytes);
 }
 
-pub struct BlockPrepareWriteJobArgs<E> where E: EchoPolicy {
+pub struct BlockPrepareWriteJob<E> where E: EchoPolicy {
     pub block_id: block::Id,
     pub block_bytes: Bytes,
     pub blocks_pool: BytesPool,
@@ -192,13 +192,13 @@ pub enum BlockPrepareWriteJobError {
 pub type BlockPrepareWriteJobOutput<E> = Result<BlockPrepareWriteJobDone<E>, BlockPrepareWriteJobError>;
 
 pub fn block_prepare_write_job<E, J>(
-    BlockPrepareWriteJobArgs {
+    BlockPrepareWriteJob {
         block_id,
         block_bytes,
         blocks_pool,
         context,
         meister,
-    }: BlockPrepareWriteJobArgs<E>,
+    }: BlockPrepareWriteJob<E>,
     thread_pool: &edeltraud::Handle<J>,
 )
 where E: EchoPolicy,
@@ -262,7 +262,7 @@ fn run_block_prepare_write_job(
     })
 }
 
-pub struct BlockPrepareDeleteJobArgs<E> where E: EchoPolicy {
+pub struct BlockPrepareDeleteJob<E> where E: EchoPolicy {
     pub block_id: block::Id,
     pub blocks_pool: BytesPool,
     pub context: performer_sklave::DeleteBlockContext<E>,
@@ -282,12 +282,12 @@ pub enum BlockPrepareDeleteJobError {
 pub type BlockPrepareDeleteJobOutput<E> = Result<BlockPrepareDeleteJobDone<E>, BlockPrepareDeleteJobError>;
 
 pub fn block_prepare_delete_job<E, J>(
-    BlockPrepareDeleteJobArgs {
+    BlockPrepareDeleteJob {
         block_id,
         blocks_pool,
         context,
         meister,
-    }: BlockPrepareDeleteJobArgs<E>,
+    }: BlockPrepareDeleteJob<E>,
     thread_pool: &edeltraud::Handle<J>,
 )
 where E: EchoPolicy,
@@ -325,7 +325,7 @@ fn run_block_prepare_delete_job(
     Ok(RunBlockPrepareDeleteJobDone { delete_block_bytes, })
 }
 
-pub struct BlockProcessReadJobArgs<E> where E: EchoPolicy {
+pub struct BlockProcessReadJob<E> where E: EchoPolicy {
     pub storage_layout: storage::Layout,
     pub block_header: storage::BlockHeader,
     pub block_bytes: Bytes,
@@ -374,13 +374,13 @@ pub enum CorruptedDataError {
 pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
 pub fn block_process_read_job<E, J>(
-    BlockProcessReadJobArgs {
+    BlockProcessReadJob {
         storage_layout,
         block_header,
         block_bytes,
         pending_contexts,
         meister,
-    }: BlockProcessReadJobArgs<E>,
+    }: BlockProcessReadJob<E>,
     thread_pool: &edeltraud::Handle<J>,
 )
 where E: EchoPolicy,

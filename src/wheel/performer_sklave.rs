@@ -110,9 +110,9 @@ pub enum Error {
 
 pub fn run_job<E, J>(sklave_job: SklaveJob<E>, thread_pool: &edeltraud::Handle<J>)
 where E: EchoPolicy,
-      J: From<interpret::BlockPrepareWriteJobArgs<E>>,
-      J: From<interpret::BlockPrepareDeleteJobArgs<E>>,
-      J: From<interpret::BlockProcessReadJobArgs<E>>,
+      J: From<interpret::BlockPrepareWriteJob<E>>,
+      J: From<interpret::BlockPrepareDeleteJob<E>>,
+      J: From<interpret::BlockProcessReadJob<E>>,
 {
     if let Err(error) = job(sklave_job, thread_pool) {
         log::error!("terminated with an error: {error:?}");
@@ -121,9 +121,9 @@ where E: EchoPolicy,
 
 fn job<E, J>(mut sklave_job: SklaveJob<E>, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error>
 where E: EchoPolicy,
-      J: From<interpret::BlockPrepareWriteJobArgs<E>>,
-      J: From<interpret::BlockPrepareDeleteJobArgs<E>>,
-      J: From<interpret::BlockProcessReadJobArgs<E>>,
+      J: From<interpret::BlockPrepareWriteJob<E>>,
+      J: From<interpret::BlockPrepareDeleteJob<E>>,
+      J: From<interpret::BlockProcessReadJob<E>>,
 {
     loop {
         let mut performer_op = 'op: loop {
@@ -467,7 +467,7 @@ where E: EchoPolicy,
                     ),
                     performer,
                 }) => {
-                    let job_args = interpret::BlockPrepareWriteJobArgs {
+                    let job_args = interpret::BlockPrepareWriteJob {
                         block_id,
                         block_bytes,
                         blocks_pool: sklave_job.env.blocks_pool.clone(),
@@ -490,7 +490,7 @@ where E: EchoPolicy,
                     ),
                     performer,
                 }) => {
-                    let job_args = interpret::BlockPrepareDeleteJobArgs {
+                    let job_args = interpret::BlockPrepareDeleteJob {
                         block_id,
                         blocks_pool: sklave_job.env.blocks_pool.clone(),
                         context,
@@ -512,7 +512,7 @@ where E: EchoPolicy,
                     ),
                     performer,
                 }) => {
-                    let job_args = interpret::BlockProcessReadJobArgs {
+                    let job_args = interpret::BlockProcessReadJob {
                         storage_layout,
                         block_header,
                         block_bytes,

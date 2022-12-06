@@ -632,20 +632,20 @@ impl From<performer_sklave::SklaveJob<LocalEchoPolicy>> for Job {
     }
 }
 
-impl From<interpret::BlockPrepareWriteJobArgs<LocalEchoPolicy>> for Job {
-    fn from(job: interpret::BlockPrepareWriteJobArgs<LocalEchoPolicy>) -> Self {
+impl From<interpret::BlockPrepareWriteJob<LocalEchoPolicy>> for Job {
+    fn from(job: interpret::BlockPrepareWriteJob<LocalEchoPolicy>) -> Self {
         Self::BlockwheelFs(job.into())
     }
 }
 
-impl From<interpret::BlockPrepareDeleteJobArgs<LocalEchoPolicy>> for Job {
-    fn from(job: interpret::BlockPrepareDeleteJobArgs<LocalEchoPolicy>) -> Self {
+impl From<interpret::BlockPrepareDeleteJob<LocalEchoPolicy>> for Job {
+    fn from(job: interpret::BlockPrepareDeleteJob<LocalEchoPolicy>) -> Self {
         Self::BlockwheelFs(job.into())
     }
 }
 
-impl From<interpret::BlockProcessReadJobArgs<LocalEchoPolicy>> for Job {
-    fn from(job: interpret::BlockProcessReadJobArgs<LocalEchoPolicy>) -> Self {
+impl From<interpret::BlockProcessReadJob<LocalEchoPolicy>> for Job {
+    fn from(job: interpret::BlockProcessReadJob<LocalEchoPolicy>) -> Self {
         Self::BlockwheelFs(job.into())
     }
 }
@@ -678,9 +678,9 @@ impl<J> From<edeltraud::JobUnit<J, Job>> for JobUnit<J> {
 
 impl<J> edeltraud::Job for JobUnit<J>
 where J: From<performer_sklave::SklaveJob<LocalEchoPolicy>>,
-      J: From<interpret::BlockPrepareWriteJobArgs<LocalEchoPolicy>>,
-      J: From<interpret::BlockPrepareDeleteJobArgs<LocalEchoPolicy>>,
-      J: From<interpret::BlockProcessReadJobArgs<LocalEchoPolicy>>,
+      J: From<interpret::BlockPrepareWriteJob<LocalEchoPolicy>>,
+      J: From<interpret::BlockPrepareDeleteJob<LocalEchoPolicy>>,
+      J: From<interpret::BlockProcessReadJob<LocalEchoPolicy>>,
 {
     fn run(self) {
         match self.0.job {

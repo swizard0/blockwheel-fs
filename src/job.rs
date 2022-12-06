@@ -16,28 +16,31 @@ use crate::{
 };
 
 pub use performer_sklave::SklaveJob;
+pub use interpret::BlockPrepareWriteJob;
+pub use interpret::BlockPrepareDeleteJob;
+pub use interpret::BlockProcessReadJob;
 
 pub enum Job<E> where E: EchoPolicy {
-    BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs<E>),
-    BlockProcessRead(interpret::BlockProcessReadJobArgs<E>),
-    BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs<E>),
+    BlockPrepareWrite(interpret::BlockPrepareWriteJob<E>),
+    BlockProcessRead(interpret::BlockProcessReadJob<E>),
+    BlockPrepareDelete(interpret::BlockPrepareDeleteJob<E>),
     PerformerSklave(SklaveJob<E>),
 }
 
-impl<E> From<interpret::BlockPrepareWriteJobArgs<E>> for Job<E> where E: EchoPolicy {
-    fn from(job_args: interpret::BlockPrepareWriteJobArgs<E>) -> Self {
+impl<E> From<interpret::BlockPrepareWriteJob<E>> for Job<E> where E: EchoPolicy {
+    fn from(job_args: interpret::BlockPrepareWriteJob<E>) -> Self {
         Self::BlockPrepareWrite(job_args)
     }
 }
 
-impl<E> From<interpret::BlockProcessReadJobArgs<E>> for Job<E> where E: EchoPolicy {
-    fn from(job_args: interpret::BlockProcessReadJobArgs<E>) -> Self {
+impl<E> From<interpret::BlockProcessReadJob<E>> for Job<E> where E: EchoPolicy {
+    fn from(job_args: interpret::BlockProcessReadJob<E>) -> Self {
         Self::BlockProcessRead(job_args)
     }
 }
 
-impl<E> From<interpret::BlockPrepareDeleteJobArgs<E>> for Job<E> where E: EchoPolicy {
-    fn from(job_args: interpret::BlockPrepareDeleteJobArgs<E>) -> Self {
+impl<E> From<interpret::BlockPrepareDeleteJob<E>> for Job<E> where E: EchoPolicy {
+    fn from(job_args: interpret::BlockPrepareDeleteJob<E>) -> Self {
         Self::BlockPrepareDelete(job_args)
     }
 }
@@ -64,9 +67,9 @@ impl<E, J> From<edeltraud::JobUnit<J, Job<E>>> for JobUnit<E, J> where E: EchoPo
 impl<E, J> edeltraud::Job for JobUnit<E, J>
 where E: EchoPolicy,
       J: From<SklaveJob<E>>,
-      J: From<interpret::BlockPrepareWriteJobArgs<E>>,
-      J: From<interpret::BlockPrepareDeleteJobArgs<E>>,
-      J: From<interpret::BlockProcessReadJobArgs<E>>,
+      J: From<interpret::BlockPrepareWriteJob<E>>,
+      J: From<interpret::BlockPrepareDeleteJob<E>>,
+      J: From<interpret::BlockProcessReadJob<E>>,
 {
     fn run(self) {
         match self.0.job {
