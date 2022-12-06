@@ -1059,10 +1059,6 @@ impl<J> From<edeltraud::JobUnit<J, Job>> for JobUnit<J> {
 
 impl<J> edeltraud::Job for JobUnit<J>
 where J: From<arbeitssklave::SklaveJob<EndpointWelt, Order>>,
-// where J: From<performer_sklave::SklaveJob<LocalEchoPolicy>>,
-//       J: From<interpret::BlockPrepareWriteJobArgs<LocalEchoPolicy>>,
-//       J: From<interpret::BlockPrepareDeleteJobArgs<LocalEchoPolicy>>,
-//       J: From<interpret::BlockProcessReadJobArgs<LocalEchoPolicy>>,
 {
     fn run(self) {
         match self.0.job {
