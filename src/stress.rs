@@ -23,6 +23,10 @@ use arbeitssklave::{
 use crate::{
     job,
     block,
+    wheel::{
+        interpret,
+        performer_sklave,
+    },
     Info,
     Params,
     Meister,
@@ -117,8 +121,8 @@ pub struct BlockTank {
 }
 
 pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Counter, limits: &Limits) -> Result<(), Error> {
-    let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-        .build()
+    let edeltraud = edeltraud::Builder::new()
+        .build::<_, JobUnit<_>>()
         .map_err(Error::ThreadPool)?;
     let thread_pool = edeltraud.handle();
     let blocks_pool = BytesPool::new();
@@ -127,24 +131,18 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         Meister::versklaven(
             params.clone(),
             blocks_pool.clone(),
-            &edeltraud::ThreadPoolMap::new(thread_pool.clone()),
+            &thread_pool,
         )
         .map_err(Error::BlockwheelFs)?;
 
     let (ftd_tx, ftd_rx) = mpsc::channel();
-    let ftd_sklave_meister =
-        arbeitssklave::Freie::new(
-            Welt { ftd_tx: Mutex::new(ftd_tx), },
-        )
-        .versklaven_komm(&thread_pool)
+    let ftd_sklave_meister = arbeitssklave::Freie::new()
+        .versklaven(Welt { ftd_tx: Mutex::new(ftd_tx), }, &thread_pool)
         .unwrap();
-    let ftd_sendegeraet = ftd_sklave_meister.sendegeraet().clone();
+    let ftd_sendegeraet =
+        komm::Sendegeraet::starten(ftd_sklave_meister.clone(), thread_pool.clone());
 
-    blockwheel_fs_meister
-        .info(
-            ftd_sendegeraet.rueckkopplung(ReplyInfo),
-            &edeltraud::ThreadPoolMap::new(&thread_pool),
-        )
+    blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &thread_pool)
         .map_err(Error::RequestInfo)?;
     let info = match ftd_rx.recv() {
         Ok(Order::Info(komm::Umschlag { inhalt: info, stamp: ReplyInfo, })) =>
@@ -227,8 +225,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
                 let block_index = rand::thread_rng().gen_range(0 .. blocks.len());
                 let BlockTank { block_id, .. } = blocks.swap_remove(block_index);
                 let rueckkopplung = ftd_sendegeraet.rueckkopplung(ReplyDeleteBlock);
-                blockwheel_fs_meister
-                    .delete_block(block_id, rueckkopplung, &edeltraud::ThreadPoolMap::new(&thread_pool))
+                blockwheel_fs_meister.delete_block(block_id, rueckkopplung, &thread_pool)
                     .map_err(Error::RequestDeleteBlock)?;
                 active_tasks_counter.deletes += 1;
             }
@@ -241,11 +238,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             let stamp = ReplyReadBlock { block_id: block_id.clone(), block_bytes, };
             let rueckkopplung = ftd_sendegeraet.rueckkopplung(stamp);
             blockwheel_fs_meister
-                .read_block(
-                    block_id,
-                    rueckkopplung,
-                    &edeltraud::ThreadPoolMap::new(&thread_pool),
-                )
+                .read_block(block_id, rueckkopplung, &thread_pool)
                 .map_err(Error::RequestReadBlock)?;
             active_tasks_counter.reads += 1;
         }
@@ -263,7 +256,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
 
     log::info!("finish | invoking flush; {active_tasks_counter:?}");
 
-    blockwheel_fs_meister.flush(ftd_sendegeraet.rueckkopplung(ReplyFlush), &edeltraud::ThreadPoolMap::new(&thread_pool))
+    blockwheel_fs_meister.flush(ftd_sendegeraet.rueckkopplung(ReplyFlush), &thread_pool)
         .map_err(Error::RequestFlush)?;
     match ftd_rx.recv() {
         Ok(Order::Flush(komm::Umschlag { inhalt: Flushed, stamp: ReplyFlush, })) =>
@@ -272,7 +265,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             return Err(Error::UnexpectedFtdOrder(format!("{other_order:?}"))),
     }
 
-    blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &edeltraud::ThreadPoolMap::new(&thread_pool))
+    blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &thread_pool)
         .map_err(Error::RequestInfo)?;
     let info = match ftd_rx.recv() {
         Ok(Order::Info(komm::Umschlag { inhalt: info, stamp: ReplyInfo, })) =>
@@ -283,7 +276,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     log::info!("finish | flushed: {:?}", info);
 
     // backwards check with iterator
-    blockwheel_fs_meister.iter_blocks_init(ftd_sendegeraet.rueckkopplung(ReplyIterBlocksInit), &edeltraud::ThreadPoolMap::new(&thread_pool))
+    blockwheel_fs_meister.iter_blocks_init(ftd_sendegeraet.rueckkopplung(ReplyIterBlocksInit), &thread_pool)
         .map_err(Error::RequestIterBlocksInit)?;
     let iter_blocks = match ftd_rx.recv() {
         Ok(Order::IterBlocksInit(komm::Umschlag { inhalt: iter_blocks, stamp: ReplyIterBlocksInit, })) =>
@@ -311,7 +304,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
             .iter_blocks_next(
                 current_iterator_next,
                 ftd_sendegeraet.rueckkopplung(ReplyIterBlocksNext),
-                &edeltraud::ThreadPoolMap::new(&thread_pool),
+                &thread_pool,
             )
             .map_err(Error::RequestIterBlocksNext)?;
         let iter_blocks_item = match ftd_rx.recv() {
@@ -348,16 +341,16 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     Ok(())
 }
 
-fn process<P>(
+fn process<J>(
     maybe_recv_order: Result<Order, mpsc::RecvError>,
     blocks: &mut Vec<BlockTank>,
     counter: &mut Counter,
     active_tasks_counter: &mut Counter,
     ftd_sendegeraet: &komm::Sendegeraet<Order>,
-    thread_pool: &P,
+    thread_pool: &edeltraud::Handle<J>,
 )
     -> Result<(), Error>
-where P: edeltraud::ThreadPool<Job>,
+where J: From<JobVerifyBlockArgs>,
 {
     let recv_order = maybe_recv_order
         .map_err(|mpsc::RecvError| Error::FtdProcessIsLost)?;
@@ -623,41 +616,82 @@ enum Job {
     BlockwheelFs(job::Job<LocalEchoPolicy>),
     WriteBlock(JobWriteBlockArgs),
     VerifyBlock(JobVerifyBlockArgs),
-    FtdSklave(arbeitssklave::komm::SklaveJob<Welt, Order>),
+    FtdSklave(arbeitssklave::SklaveJob<Welt, Order>),
 }
 
 impl From<job::Job<LocalEchoPolicy>> for Job {
-    fn from(job: job::Job<LocalEchoPolicy>) -> Job {
-        Job::BlockwheelFs(job)
+    fn from(job: job::Job<LocalEchoPolicy>) -> Self {
+        Self::BlockwheelFs(job)
+    }
+}
+
+impl From<performer_sklave::SklaveJob<LocalEchoPolicy>> for Job {
+    fn from(job: performer_sklave::SklaveJob<LocalEchoPolicy>) -> Self {
+        Self::BlockwheelFs(job.into())
+    }
+}
+
+impl From<interpret::BlockPrepareWriteJobArgs<LocalEchoPolicy>> for Job {
+    fn from(job: interpret::BlockPrepareWriteJobArgs<LocalEchoPolicy>) -> Self {
+        Self::BlockwheelFs(job.into())
+    }
+}
+
+impl From<interpret::BlockPrepareDeleteJobArgs<LocalEchoPolicy>> for Job {
+    fn from(job: interpret::BlockPrepareDeleteJobArgs<LocalEchoPolicy>) -> Self {
+        Self::BlockwheelFs(job.into())
+    }
+}
+
+impl From<interpret::BlockProcessReadJobArgs<LocalEchoPolicy>> for Job {
+    fn from(job: interpret::BlockProcessReadJobArgs<LocalEchoPolicy>) -> Self {
+        Self::BlockwheelFs(job.into())
     }
 }
 
 impl From<JobWriteBlockArgs> for Job {
-    fn from(args: JobWriteBlockArgs) -> Job {
-        Job::WriteBlock(args)
+    fn from(args: JobWriteBlockArgs) -> Self {
+        Self::WriteBlock(args)
     }
 }
 
 impl From<JobVerifyBlockArgs> for Job {
-    fn from(args: JobVerifyBlockArgs) -> Job {
-        Job::VerifyBlock(args)
+    fn from(args: JobVerifyBlockArgs) -> Self {
+        Self::VerifyBlock(args)
     }
 }
 
-impl From<arbeitssklave::komm::SklaveJob<Welt, Order>> for Job {
-    fn from(job: arbeitssklave::komm::SklaveJob<Welt, Order>) -> Job {
-        Job::FtdSklave(job)
+impl From<arbeitssklave::SklaveJob<Welt, Order>> for Job {
+    fn from(job: arbeitssklave::SklaveJob<Welt, Order>) -> Self {
+        Self::FtdSklave(job)
     }
 }
 
-impl edeltraud::Job for Job {
-    fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-        match self {
+pub struct JobUnit<J>(edeltraud::JobUnit<J, Job>);
+
+impl<J> From<edeltraud::JobUnit<J, Job>> for JobUnit<J> {
+    fn from(job_unit: edeltraud::JobUnit<J, Job>) -> Self {
+        Self(job_unit)
+    }
+}
+
+impl<J> edeltraud::Job for JobUnit<J>
+where J: From<performer_sklave::SklaveJob<LocalEchoPolicy>>,
+      J: From<interpret::BlockPrepareWriteJobArgs<LocalEchoPolicy>>,
+      J: From<interpret::BlockPrepareDeleteJobArgs<LocalEchoPolicy>>,
+      J: From<interpret::BlockProcessReadJobArgs<LocalEchoPolicy>>,
+{
+    fn run(self) {
+        match self.0.job {
             Job::BlockwheelFs(job) => {
-                job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
+                let job_unit = job::JobUnit::from(edeltraud::JobUnit {
+                    handle: self.0.handle,
+                    job,
+                });
+                job_unit.run();
             },
             Job::WriteBlock(args) =>
-                job_write_block(args, thread_pool),
+                job_write_block(args, &self.0.handle),
             Job::VerifyBlock(args) =>
                 job_verify_block(args),
             Job::FtdSklave(mut sklave_job) => {
@@ -712,12 +746,16 @@ struct JobWriteBlockArgsMain {
     ftd_sendegeraet: komm::Sendegeraet<Order>,
 }
 
-fn job_write_block<P>(args: JobWriteBlockArgs, thread_pool: &P) where P: edeltraud::ThreadPool<Job> {
+fn job_write_block<J>(args: JobWriteBlockArgs, thread_pool: &edeltraud::Handle<J>)
+where J: From<performer_sklave::SklaveJob<LocalEchoPolicy>>,
+{
     let output = run_job_write_block(args.main, thread_pool);
     args.job_complete.commit(output).ok();
 }
 
-fn run_job_write_block<P>(args: JobWriteBlockArgsMain, thread_pool: &P) -> Result<(), Error> where P: edeltraud::ThreadPool<Job> {
+fn run_job_write_block<J>(args: JobWriteBlockArgsMain, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error>
+where J: From<performer_sklave::SklaveJob<LocalEchoPolicy>>,
+{
     let mut rng = rand::thread_rng();
     let amount = rng.gen_range(1 .. args.block_size_bytes);
     let mut block = args.blocks_pool.lend();
@@ -729,11 +767,7 @@ fn run_job_write_block<P>(args: JobWriteBlockArgsMain, thread_pool: &P) -> Resul
     };
     let rueckkopplung = args.ftd_sendegeraet.rueckkopplung(stamp);
     args.blockwheel_fs_meister
-        .write_block(
-            block_bytes,
-            rueckkopplung,
-            &edeltraud::ThreadPoolMap::new(thread_pool),
-        )
+        .write_block(block_bytes, rueckkopplung, thread_pool)
         .map_err(Error::RequestWriteBlock)
 }
 

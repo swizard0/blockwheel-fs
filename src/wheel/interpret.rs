@@ -18,7 +18,6 @@ use arbeitssklave::{
 };
 
 use crate::{
-    job,
     block,
     context,
     storage,
@@ -46,8 +45,7 @@ pub struct Request<E> where E: EchoPolicy {
     task: task::Task<Context<E>>,
 }
 
-enum Order<W, E> where E: EchoPolicy {
-    CommitStart { performer_sklave_meister: arbeitssklave::Meister<W, performer_sklave::Order<E>>, },
+enum Order<E> where E: EchoPolicy {
     Request(Request<E>),
     DeviceSync { flush_context: <Context<E> as context::Context>::Flush, },
 }
@@ -79,24 +77,25 @@ impl From<ram::Error> for Error {
     }
 }
 
-pub struct Interpreter<W, E> where E: EchoPolicy {
-    interpreter_meister: ewig::Meister<Order<W, E>, Error>
+pub struct Interpreter<E> where E: EchoPolicy {
+    interpreter_meister: ewig::Meister<Order<E>, Error>
 }
 
-impl<W, E> Clone for Interpreter<W, E> where E: EchoPolicy {
+impl<E> Clone for Interpreter<E> where E: EchoPolicy {
     fn clone(&self) -> Self {
         Self { interpreter_meister: self.interpreter_meister.clone(), }
     }
 }
 
-impl<E> Interpreter<performer_sklave::Welt<E>, E> where E: EchoPolicy {
-    pub fn starten<P>(
+impl<E> Interpreter<E> where E: EchoPolicy {
+    pub fn starten<J>(
         params: Params,
         blocks_pool: BytesPool,
-        thread_pool: &P
+        performer_sklave_meister: performer_sklave::Meister<E>,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<Self, Error>
-    where P: edeltraud::ThreadPool<job::Job<E>> + Clone + Send + 'static,
+    where J: From<performer_sklave::SklaveJob<E>> + Send + 'static,
     {
         let performer_builder =
             performer::PerformerBuilderInit::new(
@@ -125,6 +124,7 @@ impl<E> Interpreter<performer_sklave::Welt<E>, E> where E: EchoPolicy {
                                 sklave,
                                 interpreter_params,
                                 performer_builder,
+                                performer_sklave_meister,
                                 blocks_pool,
                                 thread_pool_clone,
                             )
@@ -141,6 +141,7 @@ impl<E> Interpreter<performer_sklave::Welt<E>, E> where E: EchoPolicy {
                                 sklave,
                                 interpreter_params,
                                 performer_builder,
+                                performer_sklave_meister,
                                 blocks_pool,
                                 thread_pool_clone,
                             )
@@ -152,12 +153,7 @@ impl<E> Interpreter<performer_sklave::Welt<E>, E> where E: EchoPolicy {
     }
 }
 
-impl<W, E> Interpreter<W, E> where E: EchoPolicy {
-    pub fn commit_start(&self, performer_sklave_meister: arbeitssklave::Meister<W, performer_sklave::Order<E>>) -> Result<(), Error> {
-        self.interpreter_meister
-            .befehl(Order::CommitStart { performer_sklave_meister, })
-    }
-
+impl<E> Interpreter<E> where E: EchoPolicy {
     pub fn push_task(&self, offset: u64, task: task::Task<Context<E>>) -> Result<(), Error> {
         self.interpreter_meister
             .befehl(Order::Request(Request { offset, task, }))
@@ -195,7 +191,7 @@ pub enum BlockPrepareWriteJobError {
 
 pub type BlockPrepareWriteJobOutput<E> = Result<BlockPrepareWriteJobDone<E>, BlockPrepareWriteJobError>;
 
-pub fn block_prepare_write_job<E, P>(
+pub fn block_prepare_write_job<E, J>(
     BlockPrepareWriteJobArgs {
         block_id,
         block_bytes,
@@ -203,10 +199,10 @@ pub fn block_prepare_write_job<E, P>(
         context,
         meister,
     }: BlockPrepareWriteJobArgs<E>,
-    thread_pool: &P,
+    thread_pool: &edeltraud::Handle<J>,
 )
 where E: EchoPolicy,
-      P: edeltraud::ThreadPool<job::Job<E>>,
+      J: From<performer_sklave::SklaveJob<E>>,
 {
     let output =
         run_block_prepare_write_job(
@@ -285,17 +281,17 @@ pub enum BlockPrepareDeleteJobError {
 
 pub type BlockPrepareDeleteJobOutput<E> = Result<BlockPrepareDeleteJobDone<E>, BlockPrepareDeleteJobError>;
 
-pub fn block_prepare_delete_job<E, P>(
+pub fn block_prepare_delete_job<E, J>(
     BlockPrepareDeleteJobArgs {
         block_id,
         blocks_pool,
         context,
         meister,
     }: BlockPrepareDeleteJobArgs<E>,
-    thread_pool: &P,
+    thread_pool: &edeltraud::Handle<J>,
 )
 where E: EchoPolicy,
-      P: edeltraud::ThreadPool<job::Job<E>>,
+      J: From<performer_sklave::SklaveJob<E>>,
 {
     let output = run_block_prepare_delete_job(blocks_pool)
         .map(|RunBlockPrepareDeleteJobDone { delete_block_bytes, }| {
@@ -377,7 +373,7 @@ pub enum CorruptedDataError {
 
 pub type BlockProcessReadJobOutput = Result<BlockProcessReadJobDone, BlockProcessReadJobError>;
 
-pub fn block_process_read_job<E, P>(
+pub fn block_process_read_job<E, J>(
     BlockProcessReadJobArgs {
         storage_layout,
         block_header,
@@ -385,10 +381,10 @@ pub fn block_process_read_job<E, P>(
         pending_contexts,
         meister,
     }: BlockProcessReadJobArgs<E>,
-    thread_pool: &P,
+    thread_pool: &edeltraud::Handle<J>,
 )
 where E: EchoPolicy,
-      P: edeltraud::ThreadPool<job::Job<E>>,
+      J: From<performer_sklave::SklaveJob<E>>,
 {
     let output =
         run_block_process_read_job(

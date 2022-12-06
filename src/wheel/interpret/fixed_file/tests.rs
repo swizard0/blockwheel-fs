@@ -101,22 +101,17 @@ fn create_read_empty() {
 fn create_read_one() {
     init();
     let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-        .build()
+        .build::<_, JobUnit<_>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
     let (orders_tx, orders_rx) = mpsc::channel();
-    let endpoint_meister =
-        arbeitssklave::Freie::new(
-            EndpointWelt { tag: "create_read_one", orders_tx: Mutex::new(orders_tx), },
-        )
-        .versklaven_komm(&thread_pool)
+    let endpoint_meister = arbeitssklave::Freie::new()
+        .versklaven(EndpointWelt { tag: "create_read_one", orders_tx: Mutex::new(orders_tx), }, &thread_pool)
         .unwrap();
-    let sendegeraet = endpoint_meister.sendegeraet().clone();
-    let forwarder_meister =
-        arbeitssklave::Freie::new(
-            ForwarderWelt { endpoint_meister: endpoint_meister.clone(), },
-        )
-        .versklaven(&thread_pool)
+    let sendegeraet =
+        komm::Sendegeraet::starten(endpoint_meister.clone(), thread_pool.clone());
+    let forwarder_meister = arbeitssklave::Freie::new()
+        .versklaven(ForwarderWelt { endpoint_meister: endpoint_meister.clone(), }, &thread_pool)
         .unwrap();
 
     let blocks_pool = BytesPool::new();
@@ -310,22 +305,17 @@ fn create_read_one() {
 fn create_write_overlap_read_one() {
     init();
     let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-        .build()
+        .build::<_, JobUnit<_>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
     let (orders_tx, orders_rx) = mpsc::channel();
-    let endpoint_meister =
-        arbeitssklave::Freie::new(
-            EndpointWelt { tag: "create_write_overlap_read_one", orders_tx: Mutex::new(orders_tx), },
-        )
-        .versklaven_komm(&thread_pool)
+    let endpoint_meister = arbeitssklave::Freie::new()
+        .versklaven(EndpointWelt { tag: "create_write_overlap_read_one", orders_tx: Mutex::new(orders_tx), }, &thread_pool)
         .unwrap();
-    let sendegeraet = endpoint_meister.sendegeraet().clone();
-    let forwarder_meister =
-        arbeitssklave::Freie::new(
-            ForwarderWelt { endpoint_meister: endpoint_meister.clone(), },
-        )
-        .versklaven(&thread_pool)
+    let sendegeraet =
+        komm::Sendegeraet::starten(endpoint_meister.clone(), thread_pool.clone());
+    let forwarder_meister = arbeitssklave::Freie::new()
+        .versklaven(ForwarderWelt { endpoint_meister: endpoint_meister.clone(), }, &thread_pool)
         .unwrap();
 
     let blocks_pool = BytesPool::new();
@@ -585,22 +575,17 @@ fn create_write_overlap_read_one() {
 #[test]
 fn create_write_delete_read_one() {
     let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-        .build()
+        .build::<_, JobUnit<_>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
     let (orders_tx, orders_rx) = mpsc::channel();
-    let endpoint_meister =
-        arbeitssklave::Freie::new(
-            EndpointWelt { tag: "create_write_delete_read_one", orders_tx: Mutex::new(orders_tx), },
-        )
-        .versklaven_komm(&thread_pool)
+    let endpoint_meister = arbeitssklave::Freie::new()
+        .versklaven(EndpointWelt { tag: "create_write_delete_read_one", orders_tx: Mutex::new(orders_tx), }, &thread_pool)
         .unwrap();
-    let sendegeraet = endpoint_meister.sendegeraet().clone();
-    let forwarder_meister =
-        arbeitssklave::Freie::new(
-            ForwarderWelt { endpoint_meister: endpoint_meister.clone(), },
-        )
-        .versklaven(&thread_pool)
+    let sendegeraet =
+        komm::Sendegeraet::starten(endpoint_meister.clone(), thread_pool.clone());
+    let forwarder_meister = arbeitssklave::Freie::new()
+        .versklaven(ForwarderWelt { endpoint_meister: endpoint_meister.clone(), }, &thread_pool)
         .unwrap();
 
     let blocks_pool = BytesPool::new();
@@ -1044,12 +1029,12 @@ struct EndpointWelt {
 }
 
 struct ForwarderWelt {
-    endpoint_meister: arbeitssklave::komm::Meister<EndpointWelt, Order>,
+    endpoint_meister: arbeitssklave::Meister<EndpointWelt, Order>,
 }
 
 enum Job {
     ForwarderSklave(arbeitssklave::SklaveJob<ForwarderWelt, performer_sklave::Order<LocalEchoPolicy>>),
-    EndpointSklave(arbeitssklave::komm::SklaveJob<EndpointWelt, Order>),
+    EndpointSklave(arbeitssklave::SklaveJob<EndpointWelt, Order>),
 }
 
 impl From<arbeitssklave::SklaveJob<ForwarderWelt, performer_sklave::Order<LocalEchoPolicy>>> for Job {
@@ -1058,15 +1043,29 @@ impl From<arbeitssklave::SklaveJob<ForwarderWelt, performer_sklave::Order<LocalE
     }
 }
 
-impl From<arbeitssklave::komm::SklaveJob<EndpointWelt, Order>> for Job {
-    fn from(sklave_job: arbeitssklave::komm::SklaveJob<EndpointWelt, Order>) -> Job {
+impl From<arbeitssklave::SklaveJob<EndpointWelt, Order>> for Job {
+    fn from(sklave_job: arbeitssklave::SklaveJob<EndpointWelt, Order>) -> Job {
         Job::EndpointSklave(sklave_job)
     }
 }
 
-impl edeltraud::Job for Job {
-    fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-        match self {
+pub struct JobUnit<J>(edeltraud::JobUnit<J, Job>);
+
+impl<J> From<edeltraud::JobUnit<J, Job>> for JobUnit<J> {
+    fn from(job_unit: edeltraud::JobUnit<J, Job>) -> Self {
+        Self(job_unit)
+    }
+}
+
+impl<J> edeltraud::Job for JobUnit<J>
+where J: From<arbeitssklave::SklaveJob<EndpointWelt, Order>>,
+// where J: From<performer_sklave::SklaveJob<LocalEchoPolicy>>,
+//       J: From<interpret::BlockPrepareWriteJobArgs<LocalEchoPolicy>>,
+//       J: From<interpret::BlockPrepareDeleteJobArgs<LocalEchoPolicy>>,
+//       J: From<interpret::BlockProcessReadJobArgs<LocalEchoPolicy>>,
+{
+    fn run(self) {
+        match self.0.job {
             Job::ForwarderSklave(mut sklave_job) => {
                 #[allow(clippy::while_let_loop)]
                 loop {
@@ -1079,7 +1078,7 @@ impl edeltraud::Job for Job {
                                         mehr_befehle,
                                     } => {
                                         befehle = mehr_befehle;
-                                        befehle.endpoint_meister.befehl(befehl.into(), thread_pool).unwrap();
+                                        befehle.endpoint_meister.befehl(befehl.into(), &self.0.handle).unwrap();
                                     },
                                     arbeitssklave::SklavenBefehl::Ende {
                                         sklave_job: next_sklave_job,
@@ -1149,15 +1148,17 @@ fn hello_world_bytes() -> Bytes {
     block_bytes_mut.freeze()
 }
 
-fn make_interpreter<P>(
+fn make_interpreter<J>(
     wheel_filename: PathBuf,
     forwarder_meister: arbeitssklave::Meister<ForwarderWelt, performer_sklave::Order<LocalEchoPolicy>>,
-    endpoint_meister: arbeitssklave::komm::Meister<EndpointWelt, Order>,
+    endpoint_meister: arbeitssklave::Meister<EndpointWelt, Order>,
     blocks_pool: BytesPool,
-    thread_pool: P,
+    thread_pool: edeltraud::Handle<J>,
 )
-    -> interpret::Interpreter<ForwarderWelt, LocalEchoPolicy>
-where P: edeltraud::ThreadPool<Job> + Clone + Send + 'static
+    -> interpret::Interpreter<LocalEchoPolicy>
+where J: From<arbeitssklave::SklaveJob<ForwarderWelt, performer_sklave::Order<LocalEchoPolicy>>>,
+      J: From<arbeitssklave::SklaveJob<EndpointWelt, Order>>,
+      J: Send + 'static,
 {
     let interpreter_meister = ewig::Freie::new()
         .versklaven_als(
@@ -1175,6 +1176,7 @@ where P: edeltraud::ThreadPool<Job> + Clone + Send + 'static
                         64 * 1024,
                         &blocks_pool,
                     ).unwrap(),
+                    forwarder_meister,
                     blocks_pool,
                     thread_pool.clone(),
                 );
@@ -1185,7 +1187,5 @@ where P: edeltraud::ThreadPool<Job> + Clone + Send + 'static
             },
         )
         .unwrap();
-    let interpreter = interpret::Interpreter { interpreter_meister, };
-    interpreter.commit_start(forwarder_meister).unwrap();
-    interpreter
+    interpret::Interpreter { interpreter_meister, }
 }

@@ -51,24 +51,38 @@ pub static JOB_BLOCK_PROCESS_READ: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_BLOCK_PREPARE_DELETE: AtomicUsize = AtomicUsize::new(0);
 pub static JOB_PERFORMER_SKLAVE: AtomicUsize = AtomicUsize::new(0);
 
-impl<E> edeltraud::Job for Job<E> where E: EchoPolicy {
-    fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-        match self {
+pub struct JobUnit<E, J>(edeltraud::JobUnit<J, Job<E>>) where E: EchoPolicy;
+
+impl<E, J> From<edeltraud::JobUnit<J, Job<E>>> for JobUnit<E, J> where E: EchoPolicy {
+    fn from(job_unit: edeltraud::JobUnit<J, Job<E>>) -> Self {
+        Self(job_unit)
+    }
+}
+
+impl<E, J> edeltraud::Job for JobUnit<E, J>
+where E: EchoPolicy,
+      J: From<performer_sklave::SklaveJob<E>>,
+      J: From<interpret::BlockPrepareWriteJobArgs<E>>,
+      J: From<interpret::BlockPrepareDeleteJobArgs<E>>,
+      J: From<interpret::BlockProcessReadJobArgs<E>>,
+{
+    fn run(self) {
+        match self.0.job {
             Job::BlockPrepareWrite(args) => {
                 JOB_BLOCK_PREPARE_WRITE.fetch_add(1, Ordering::Relaxed);
-                interpret::block_prepare_write_job(args, thread_pool);
+                interpret::block_prepare_write_job(args, &self.0.handle);
             },
             Job::BlockProcessRead(args) => {
                 JOB_BLOCK_PROCESS_READ.fetch_add(1, Ordering::Relaxed);
-                interpret::block_process_read_job(args, thread_pool);
+                interpret::block_process_read_job(args, &self.0.handle);
             },
             Job::BlockPrepareDelete(args) => {
                 JOB_BLOCK_PREPARE_DELETE.fetch_add(1, Ordering::Relaxed);
-                interpret::block_prepare_delete_job(args, thread_pool);
+                interpret::block_prepare_delete_job(args, &self.0.handle);
             },
             Job::PerformerSklave(sklave_job) => {
                 JOB_PERFORMER_SKLAVE.fetch_add(1, Ordering::Relaxed);
-                performer_sklave::run_job(sklave_job, thread_pool);
+                performer_sklave::run_job(sklave_job, &self.0.handle);
             },
         }
     }

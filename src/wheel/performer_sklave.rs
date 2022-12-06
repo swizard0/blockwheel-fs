@@ -11,7 +11,6 @@ use arbeitssklave::{
 };
 
 use crate::{
-    job,
     proto,
     context,
     wheel::{
@@ -69,7 +68,7 @@ pub struct OrderPreparedDeleteBlockDone<E> where E: EchoPolicy {
 }
 
 pub struct Env<E> where E: EchoPolicy {
-    pub interpreter: interpret::Interpreter<Welt<E>, E>,
+    pub interpreter: interpret::Interpreter<E>,
     pub blocks_pool: BytesPool,
     pub incoming_orders: Vec<Order<E>>,
     pub delayed_orders: Vec<Order<E>>,
@@ -109,18 +108,22 @@ pub enum Error {
     InterpretBlockProcessRead(interpret::BlockProcessReadJobError),
 }
 
-pub fn run_job<E, P>(sklave_job: SklaveJob<E>, thread_pool: &P)
+pub fn run_job<E, J>(sklave_job: SklaveJob<E>, thread_pool: &edeltraud::Handle<J>)
 where E: EchoPolicy,
-      P: edeltraud::ThreadPool<job::Job<E>>,
+      J: From<interpret::BlockPrepareWriteJobArgs<E>>,
+      J: From<interpret::BlockPrepareDeleteJobArgs<E>>,
+      J: From<interpret::BlockProcessReadJobArgs<E>>,
 {
     if let Err(error) = job(sklave_job, thread_pool) {
         log::error!("terminated with an error: {error:?}");
     }
 }
 
-fn job<E, P>(mut sklave_job: SklaveJob<E>, thread_pool: &P) -> Result<(), Error>
-where P: edeltraud::ThreadPool<job::Job<E>>,
-      E: EchoPolicy,
+fn job<E, J>(mut sklave_job: SklaveJob<E>, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error>
+where E: EchoPolicy,
+      J: From<interpret::BlockPrepareWriteJobArgs<E>>,
+      J: From<interpret::BlockPrepareDeleteJobArgs<E>>,
+      J: From<interpret::BlockProcessReadJobArgs<E>>,
 {
     loop {
         let mut performer_op = 'op: loop {

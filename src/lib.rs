@@ -141,13 +141,13 @@ pub struct Meister<E> where E: EchoPolicy {
 }
 
 impl<E> Meister<E> where E: EchoPolicy {
-    pub fn versklaven<P>(
+    pub fn versklaven<J>(
         params: Params,
         blocks_pool: BytesPool,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<Self, Error>
-    where P: edeltraud::ThreadPool<job::Job<E>> + Clone + Send + 'static,
+    where J: From<wheel::performer_sklave::SklaveJob<E>> + Send + 'static,
     {
         if let InterpreterParams::Dummy(..) = params.interpreter {
             return Ok(Meister {
@@ -155,31 +155,32 @@ impl<E> Meister<E> where E: EchoPolicy {
             });
         }
 
+        let performer_sklave_freie =
+            arbeitssklave::Freie::new();
+
         let interpreter =
             wheel::interpret::Interpreter::starten(
                 params,
                 blocks_pool.clone(),
+                performer_sklave_freie.meister(),
                 thread_pool,
             )
             .map_err(Error::Interpreter)?;
 
-        let performer_sklave_meister =
-            arbeitssklave::Freie::new(
+        let performer_sklave_meister = performer_sklave_freie
+            .versklaven(
                 wheel::performer_sklave::Welt {
                     env: wheel::performer_sklave::Env {
-                        interpreter: interpreter.clone(),
+                        interpreter,
                         blocks_pool,
                         incoming_orders: Vec::new(),
                         delayed_orders: Vec::new(),
                     },
                     kont: wheel::performer_sklave::Kont::Initialize,
                 },
+                thread_pool,
             )
-            .versklaven(thread_pool)
             .map_err(Error::Arbeitssklave)?;
-
-        interpreter.commit_start(performer_sklave_meister.clone())
-            .map_err(Error::Interpreter)?;
 
         Ok(Meister {
             inner: MeisterInner::Blockwheel(
@@ -228,13 +229,13 @@ impl<E> Clone for BlockwheelMeister<E> where E: EchoPolicy {
 }
 
 impl<E> Meister<E> where E: EchoPolicy {
-    pub fn info<P>(
+    pub fn info<J>(
         &self,
         echo: <blockwheel_context::Context<E> as context::Context>::Info,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         match &self.inner {
             MeisterInner::Blockwheel(meister) =>
@@ -244,13 +245,13 @@ impl<E> Meister<E> where E: EchoPolicy {
         }
     }
 
-    pub fn flush<P>(
+    pub fn flush<J>(
         &self,
         echo: <blockwheel_context::Context<E> as context::Context>::Flush,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         match &self.inner {
             MeisterInner::Blockwheel(meister) =>
@@ -260,14 +261,14 @@ impl<E> Meister<E> where E: EchoPolicy {
         }
     }
 
-    pub fn write_block<P>(
+    pub fn write_block<J>(
         &self,
         block_bytes: Bytes,
         echo: <blockwheel_context::Context<E> as context::Context>::WriteBlock,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         match &self.inner {
             MeisterInner::Blockwheel(meister) =>
@@ -277,14 +278,14 @@ impl<E> Meister<E> where E: EchoPolicy {
         }
     }
 
-    pub fn read_block<P>(
+    pub fn read_block<J>(
         &self,
         block_id: block::Id,
         echo: <blockwheel_context::Context<E> as context::Context>::ReadBlock,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         match &self.inner {
             MeisterInner::Blockwheel(meister) =>
@@ -294,14 +295,14 @@ impl<E> Meister<E> where E: EchoPolicy {
         }
     }
 
-    pub fn delete_block<P>(
+    pub fn delete_block<J>(
         &self,
         block_id: block::Id,
         echo: <blockwheel_context::Context<E> as context::Context>::DeleteBlock,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         match &self.inner {
             MeisterInner::Blockwheel(meister) =>
@@ -311,13 +312,13 @@ impl<E> Meister<E> where E: EchoPolicy {
         }
     }
 
-    pub fn iter_blocks_init<P>(
+    pub fn iter_blocks_init<J>(
         &self,
         echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksInit,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         match &self.inner {
             MeisterInner::Blockwheel(meister) =>
@@ -327,14 +328,14 @@ impl<E> Meister<E> where E: EchoPolicy {
         }
     }
 
-    pub fn iter_blocks_next<P>(
+    pub fn iter_blocks_next<J>(
         &self,
         iterator_next: IterBlocksIterator,
         echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksNext,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         match &self.inner {
             MeisterInner::Blockwheel(meister) =>
@@ -347,38 +348,38 @@ impl<E> Meister<E> where E: EchoPolicy {
 }
 
 impl<E> BlockwheelMeister<E> where E: EchoPolicy {
-    pub fn info<P>(
+    pub fn info<J>(
         &self,
         echo: <blockwheel_context::Context<E> as context::Context>::Info,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         self.order(proto::Request::Info(proto::RequestInfo { context: echo, }), thread_pool)
             .map_err(Error::RequestInfo)
     }
 
-    pub fn flush<P>(
+    pub fn flush<J>(
         &self,
         echo: <blockwheel_context::Context<E> as context::Context>::Flush,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         self.order(proto::Request::Flush(proto::RequestFlush { context: echo, }), thread_pool)
             .map_err(Error::RequestFlush)
     }
 
-    pub fn write_block<P>(
+    pub fn write_block<J>(
         &self,
         block_bytes: Bytes,
         echo: <blockwheel_context::Context<E> as context::Context>::WriteBlock,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         self.order(
             proto::Request::WriteBlock(
@@ -391,14 +392,14 @@ impl<E> BlockwheelMeister<E> where E: EchoPolicy {
         ).map_err(Error::RequestWriteBlock)
     }
 
-    pub fn read_block<P>(
+    pub fn read_block<J>(
         &self,
         block_id: block::Id,
         echo: <blockwheel_context::Context<E> as context::Context>::ReadBlock,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         self.order(
             proto::Request::ReadBlock(
@@ -411,14 +412,14 @@ impl<E> BlockwheelMeister<E> where E: EchoPolicy {
         ).map_err(Error::RequestReadBlock)
     }
 
-    pub fn delete_block<P>(
+    pub fn delete_block<J>(
         &self,
         block_id: block::Id,
         echo: <blockwheel_context::Context<E> as context::Context>::DeleteBlock,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         self.order(
             proto::Request::DeleteBlock(
@@ -431,13 +432,13 @@ impl<E> BlockwheelMeister<E> where E: EchoPolicy {
         ).map_err(Error::RequestDeleteBlock)
     }
 
-    pub fn iter_blocks_init<P>(
+    pub fn iter_blocks_init<J>(
         &self,
         echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksInit,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         self.order(
             proto::Request::IterBlocksInit(
@@ -449,14 +450,14 @@ impl<E> BlockwheelMeister<E> where E: EchoPolicy {
         ).map_err(Error::RequestIterBlocksInit)
     }
 
-    pub fn iter_blocks_next<P>(
+    pub fn iter_blocks_next<J>(
         &self,
         iterator_next: IterBlocksIterator,
         echo: <blockwheel_context::Context<E> as context::Context>::IterBlocksNext,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         self.order(
             proto::Request::IterBlocksNext(
@@ -469,13 +470,13 @@ impl<E> BlockwheelMeister<E> where E: EchoPolicy {
         ).map_err(Error::RequestIterBlocksNext)
     }
 
-    fn order<P>(
+    fn order<J>(
         &self,
         request: proto::Request<blockwheel_context::Context<E>>,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<(), arbeitssklave::Error>
-    where P: edeltraud::ThreadPool<job::Job<E>>
+    where J: From<wheel::performer_sklave::SklaveJob<E>>,
     {
         self.performer_sklave_meister
             .befehl(

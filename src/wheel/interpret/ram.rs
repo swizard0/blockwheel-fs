@@ -57,31 +57,18 @@ pub enum WheelCreateError {
     },
 }
 
-pub(super) fn bootstrap<E, W, P, J>(
-    sklave: &mut ewig::Sklave<Order<W, E>, InterpretError>,
+pub(super) fn bootstrap<E, W, J>(
+    sklave: &mut ewig::Sklave<Order<E>, InterpretError>,
     params: RamInterpreterParams,
     performer_builder: performer::PerformerBuilderInit<Context<E>>,
+    performer_sklave_meister: arbeitssklave::Meister<W, performer_sklave::Order<E>>,
     blocks_pool: BytesPool,
-    thread_pool: P,
+    thread_pool: edeltraud::Handle<J>,
 )
     -> Result<(), InterpretError>
 where E: EchoPolicy,
-      P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, performer_sklave::Order<E>>>,
+      J: From<arbeitssklave::SklaveJob<W, performer_sklave::Order<E>>>,
 {
-    let performer_sklave_meister = 'outer: loop {
-        let orders = sklave.zu_ihren_diensten()?;
-        #[allow(clippy::never_loop)]
-        for order in orders {
-            match order {
-                Order::CommitStart { performer_sklave_meister, } =>
-                    break 'outer performer_sklave_meister,
-                _other =>
-                    return Err(Error::UnexpectedOrderBeforeCommitStart.into()),
-            }
-        }
-    };
-
     let WheelData { memory, storage_layout, performer, } =
         create(&params, &blocks_pool, performer_builder)
         .map_err(Error::WheelCreate)?;
@@ -152,18 +139,17 @@ struct WheelData<E> where E: EchoPolicy {
     performer: performer::Performer<Context<E>>,
 }
 
-fn run<E, W, P, J>(
-    sklave: &mut ewig::Sklave<Order<W, E>, InterpretError>,
+fn run<E, W, J>(
+    sklave: &mut ewig::Sklave<Order<E>, InterpretError>,
     memory: BytesMut,
     storage_layout: storage::Layout,
     performer_sklave_meister: arbeitssklave::Meister<W, performer_sklave::Order<E>>,
     blocks_pool: BytesPool,
-    thread_pool: P,
+    thread_pool: edeltraud::Handle<J>,
 )
     -> Result<(), InterpretError>
 where E: EchoPolicy,
-      P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job + From<arbeitssklave::SklaveJob<W, performer_sklave::Order<E>>>,
+      J: From<arbeitssklave::SklaveJob<W, performer_sklave::Order<E>>>,
 {
     log::debug!("running background interpreter job");
 
@@ -179,9 +165,6 @@ where E: EchoPolicy,
         let orders = sklave.zu_ihren_diensten()?;
         for order in orders {
             match order {
-
-                Order::CommitStart { .. } =>
-                    return Err(Error::UnexpectedCommitStartOrder.into()),
 
                 Order::Request(Request { offset, task, }) => {
                     stats.count_total += 1;
