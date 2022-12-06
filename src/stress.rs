@@ -139,6 +139,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
     let ftd_sklave_meister = arbeitssklave::Freie::new()
         .versklaven(Welt { ftd_tx: Mutex::new(ftd_tx), }, &thread_pool)
         .unwrap();
+    #[allow(clippy::redundant_clone)]
     let ftd_sendegeraet =
         komm::Sendegeraet::starten(ftd_sklave_meister.clone(), thread_pool.clone());
 
@@ -380,7 +381,7 @@ where J: From<JobVerifyBlockArgs>,
                 },
                 job_complete: ftd_sendegeraet.rueckkopplung(VerifyBlockJob),
             };
-            edeltraud::job(&thread_pool, job)
+            edeltraud::job(thread_pool, job)
                 .map_err(Error::Edeltraud)?;
             counter.reads += 1;
             active_tasks_counter.reads -= 1;

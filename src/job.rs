@@ -23,26 +23,26 @@ pub enum Job<E> where E: EchoPolicy {
 }
 
 impl<E> From<interpret::BlockPrepareWriteJobArgs<E>> for Job<E> where E: EchoPolicy {
-    fn from(job_args: interpret::BlockPrepareWriteJobArgs<E>) -> Job<E> {
-        Job::BlockPrepareWrite(job_args)
+    fn from(job_args: interpret::BlockPrepareWriteJobArgs<E>) -> Self {
+        Self::BlockPrepareWrite(job_args)
     }
 }
 
 impl<E> From<interpret::BlockProcessReadJobArgs<E>> for Job<E> where E: EchoPolicy {
-    fn from(job_args: interpret::BlockProcessReadJobArgs<E>) -> Job<E> {
-        Job::BlockProcessRead(job_args)
+    fn from(job_args: interpret::BlockProcessReadJobArgs<E>) -> Self {
+        Self::BlockProcessRead(job_args)
     }
 }
 
 impl<E> From<interpret::BlockPrepareDeleteJobArgs<E>> for Job<E> where E: EchoPolicy {
-    fn from(job_args: interpret::BlockPrepareDeleteJobArgs<E>) -> Job<E> {
-        Job::BlockPrepareDelete(job_args)
+    fn from(job_args: interpret::BlockPrepareDeleteJobArgs<E>) -> Self {
+        Self::BlockPrepareDelete(job_args)
     }
 }
 
 impl<E> From<performer_sklave::SklaveJob<E>> for Job<E> where E: EchoPolicy {
-    fn from(sklave_job: performer_sklave::SklaveJob<E>) -> Job<E> {
-        Job::PerformerSklave(sklave_job)
+    fn from(sklave_job: performer_sklave::SklaveJob<E>) -> Self {
+        Self::PerformerSklave(sklave_job)
     }
 }
 
