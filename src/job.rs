@@ -15,11 +15,13 @@ use crate::{
     },
 };
 
+pub use performer_sklave::SklaveJob;
+
 pub enum Job<E> where E: EchoPolicy {
     BlockPrepareWrite(interpret::BlockPrepareWriteJobArgs<E>),
     BlockProcessRead(interpret::BlockProcessReadJobArgs<E>),
     BlockPrepareDelete(interpret::BlockPrepareDeleteJobArgs<E>),
-    PerformerSklave(performer_sklave::SklaveJob<E>),
+    PerformerSklave(SklaveJob<E>),
 }
 
 impl<E> From<interpret::BlockPrepareWriteJobArgs<E>> for Job<E> where E: EchoPolicy {
@@ -40,8 +42,8 @@ impl<E> From<interpret::BlockPrepareDeleteJobArgs<E>> for Job<E> where E: EchoPo
     }
 }
 
-impl<E> From<performer_sklave::SklaveJob<E>> for Job<E> where E: EchoPolicy {
-    fn from(sklave_job: performer_sklave::SklaveJob<E>) -> Self {
+impl<E> From<SklaveJob<E>> for Job<E> where E: EchoPolicy {
+    fn from(sklave_job: SklaveJob<E>) -> Self {
         Self::PerformerSklave(sklave_job)
     }
 }
@@ -61,7 +63,7 @@ impl<E, J> From<edeltraud::JobUnit<J, Job<E>>> for JobUnit<E, J> where E: EchoPo
 
 impl<E, J> edeltraud::Job for JobUnit<E, J>
 where E: EchoPolicy,
-      J: From<performer_sklave::SklaveJob<E>>,
+      J: From<SklaveJob<E>>,
       J: From<interpret::BlockPrepareWriteJobArgs<E>>,
       J: From<interpret::BlockPrepareDeleteJobArgs<E>>,
       J: From<interpret::BlockProcessReadJobArgs<E>>,
