@@ -109,7 +109,7 @@ fn create_read_one() {
         .versklaven(EndpointWelt { tag: "create_read_one", orders_tx: Mutex::new(orders_tx), }, &thread_pool)
         .unwrap();
     let sendegeraet =
-        komm::Sendegeraet::starten(endpoint_meister.clone(), thread_pool.clone());
+        komm::Sendegeraet::starten(&endpoint_meister, thread_pool.clone());
     let forwarder_meister = arbeitssklave::Freie::new()
         .versklaven(ForwarderWelt { endpoint_meister: endpoint_meister.clone(), }, &thread_pool)
         .unwrap();
@@ -313,7 +313,7 @@ fn create_write_overlap_read_one() {
         .versklaven(EndpointWelt { tag: "create_write_overlap_read_one", orders_tx: Mutex::new(orders_tx), }, &thread_pool)
         .unwrap();
     let sendegeraet =
-        komm::Sendegeraet::starten(endpoint_meister.clone(), thread_pool.clone());
+        komm::Sendegeraet::starten(&endpoint_meister, thread_pool.clone());
     let forwarder_meister = arbeitssklave::Freie::new()
         .versklaven(ForwarderWelt { endpoint_meister: endpoint_meister.clone(), }, &thread_pool)
         .unwrap();
@@ -583,7 +583,7 @@ fn create_write_delete_read_one() {
         .versklaven(EndpointWelt { tag: "create_write_delete_read_one", orders_tx: Mutex::new(orders_tx), }, &thread_pool)
         .unwrap();
     let sendegeraet =
-        komm::Sendegeraet::starten(endpoint_meister.clone(), thread_pool.clone());
+        komm::Sendegeraet::starten(&endpoint_meister, thread_pool.clone());
     let forwarder_meister = arbeitssklave::Freie::new()
         .versklaven(ForwarderWelt { endpoint_meister: endpoint_meister.clone(), }, &thread_pool)
         .unwrap();

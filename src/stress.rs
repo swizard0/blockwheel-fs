@@ -141,7 +141,7 @@ pub fn stress_loop(params: Params, blocks: &mut Vec<BlockTank>, counter: &mut Co
         .unwrap();
     #[allow(clippy::redundant_clone)]
     let ftd_sendegeraet =
-        komm::Sendegeraet::starten(ftd_sklave_meister.clone(), thread_pool.clone());
+        komm::Sendegeraet::starten(&ftd_sklave_meister, thread_pool.clone());
 
     blockwheel_fs_meister.info(ftd_sendegeraet.rueckkopplung(ReplyInfo), &thread_pool)
         .map_err(Error::RequestInfo)?;
