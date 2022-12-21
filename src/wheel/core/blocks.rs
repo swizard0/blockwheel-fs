@@ -21,6 +21,12 @@ pub struct Index {
     blocks_total_size: u64,
 }
 
+impl Drop for Index {
+    fn drop(&mut self) {
+        println!(" ;; Index::drop: index len = {}, blocks_total_size = {}", self.index.len(), self.blocks_total_size);
+    }
+}
+
 impl Index {
     pub fn new() -> Index {
         Index {
